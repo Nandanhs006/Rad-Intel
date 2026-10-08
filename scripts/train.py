@@ -30,7 +30,7 @@ def parse_args():
         "--model",
         type=str,
         default="densenet121",
-        choices=["densenet121", "hybrid"],
+        choices=["densenet121", "swin_t", "resnet50", "hybrid_no_cbam", "hybrid"],
         help="Model architecture to train (default: densenet121 for fast CPU transfer learning, hybrid for dual-branch attention)",
     )
     parser.add_argument(

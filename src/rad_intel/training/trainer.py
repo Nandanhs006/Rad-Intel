@@ -23,6 +23,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from rad_intel.config import settings
 from rad_intel.models.factory import create_model
 from rad_intel.models.hybrid import HybridDenseNetSwinCBAM
+from rad_intel.models.swin import SwinTransformerBaseline
+from rad_intel.models.factory import ResNet50Baseline
 from rad_intel.models.densenet import DenseNet121Baseline
 from rad_intel.training.dataset import (
     CXRDataset,
@@ -84,10 +86,10 @@ class HybridTrainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.config.checkpoint_name:
-            if self.config.model_type == "densenet121":
-                self.checkpoint_name = "best_densenet121_model.pt"
-            else:
-                self.checkpoint_name = "best_hybrid_model.pt"
+            # Name the checkpoint after the architecture that produced it.
+            # Defaulting every non-DenseNet run to "best_hybrid_model.pt" made
+            # a Swin or ResNet checkpoint masquerade as the hybrid.
+            self.checkpoint_name = f"best_{self.config.model_type}_model.pt"
         else:
             self.checkpoint_name = self.config.checkpoint_name
 
@@ -130,8 +132,15 @@ class HybridTrainer:
             for batch_idx, (images, labels) in enumerate(loader):
                 images = images.to(self.device)
 
-                if self.config.model_type == "densenet121" and isinstance(model, DenseNet121Baseline):
-                    feat = model.extractor(images)  # (B, 1024, 7, 7)
+                if isinstance(model, (DenseNet121Baseline, SwinTransformerBaseline)):
+                    # Both expose .extractor -> (B, C, 7, 7); C is 1024 / 768.
+                    feat = model.extractor(images)
+                elif isinstance(model, ResNet50Baseline):
+                    # Everything up to, but excluding, avgpool + fc.
+                    r = model.model
+                    x = r.conv1(images); x = r.bn1(x); x = r.relu(x); x = r.maxpool(x)
+                    x = r.layer1(x); x = r.layer2(x); x = r.layer3(x)
+                    feat = r.layer4(x)  # (B, 2048, 7, 7)
                 elif isinstance(model, HybridDenseNetSwinCBAM):
                     local_feat = model.densenet_branch(images)
                     global_feat = model.swin_branch(images)
@@ -237,12 +246,20 @@ class HybridTrainer:
         )
 
         # 5. Define head forward pass and trainable parameters
-        if self.config.model_type == "densenet121" and isinstance(model, DenseNet121Baseline):
+        if isinstance(model, (DenseNet121Baseline, SwinTransformerBaseline)):
             head_params = list(model.classifier.parameters())
 
             def forward_head(feat: torch.Tensor) -> torch.Tensor:
                 pooled = model.pool(feat).flatten(1)
                 return model.classifier(pooled)
+
+        elif isinstance(model, ResNet50Baseline):
+            # torchvision ResNet keeps its head at .model.fc (Dropout + Linear).
+            head_params = list(model.model.fc.parameters())
+
+            def forward_head(feat: torch.Tensor) -> torch.Tensor:
+                pooled = model.model.avgpool(feat).flatten(1)
+                return model.model.fc(pooled)
 
         elif isinstance(model, HybridDenseNetSwinCBAM):
             head_params = (
@@ -399,8 +416,10 @@ class HybridTrainer:
         torch.save(checkpoint, self.checkpoint_path)
         print(f"\n[SUCCESS] Checkpoint saved successfully to: {self.checkpoint_path}")
 
-        # Also save as best_hybrid_model.pt if it's the primary model or requested
-        if self.config.model_type == "hybrid" or not (self.checkpoint_dir / "best_hybrid_model.pt").exists():
+        # Previously this also wrote best_hybrid_model.pt whenever that file was
+        # absent, so training ANY architecture produced a file claiming to be the
+        # hybrid. Only the hybrid writes the hybrid checkpoint.
+        if self.config.model_type == "hybrid":
             torch.save(checkpoint, self.checkpoint_dir / "best_hybrid_model.pt")
             print(f"[INFO] Synced active default checkpoint: {self.checkpoint_dir / 'best_hybrid_model.pt'}")
 
