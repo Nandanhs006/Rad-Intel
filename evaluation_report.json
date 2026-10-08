@@ -1,0 +1,19 @@
+{
+  "accuracy": 0.9038,
+  "accuracy_percent": "90.38%",
+  "auc_roc": 0.9472,
+  "sensitivity": 0.9359,
+  "sensitivity_percent": "93.59%",
+  "specificity": 0.8504,
+  "specificity_percent": "85.04%",
+  "precision": 0.9125,
+  "f1_score": 0.9241,
+  "confusion_matrix": {
+    "TP": 365,
+    "FP": 35,
+    "TN": 199,
+    "FN": 25
+  },
+  "optimal_threshold": 0.7,
+  "total_samples": 624
+}

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
+  <meta name="description" content="Minimalist, light-themed clinical decision support system for automated pneumonia detection and radiology reporting from chest X-rays.">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="header">
+    <div class="header-container">
+      <a href="/" class="brand">
+        <div class="brand-icon">🫁</div>
+        <div>
+          <span class="brand-title">Rad-Intel</span>
+        </div>
+        <span class="brand-badge">Clinical AI</span>
+      </a>
+
+      <div class="header-meta">
+        <div class="model-pill">
+          <span class="status-dot"></span>
+          <span>90.38% Test Acc (AUC 0.947)</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    <div class="app-grid">
+
+      <!-- Left Column: Upload & Parameters -->
+      <section class="card" aria-label="Upload Radiograph">
+        <h1 class="card-title">Chest Radiograph</h1>
+        <p class="card-subtitle">Upload a frontal Chest X-Ray (CXR) for automated pneumonia screening.</p>
+
+        <!-- Drag & Drop Zone -->
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload chest x-ray image">
+          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-prompt">Drag & drop radiograph, or <span>browse</span></div>
+          <div class="dropzone-hint">Supports JPEG, PNG (DICOM converted) • Max 20MB</div>
+          <input type="file" id="file-input" accept="image/jpeg,image/png,image/jpg">
+        </div>
+
+        <!-- Selected Image Preview -->
+        <div id="preview-container" class="preview-container">
+          <img id="preview-img" class="preview-img" alt="Selected CXR Preview">
+          <button id="preview-clear" class="preview-clear" title="Remove image" aria-label="Remove image">✕</button>
+        </div>
+
+        <!-- Quick 1-Click Sample Radiographs -->
+        <div class="sample-section">
+          <div class="sample-title">Quick Test with Benchmark CXRs</div>
+          <div class="sample-buttons">
+            <button id="btn-sample-pneumonia" class="sample-btn" type="button">
+              <span>🫁</span> Load Pneumonia CXR
+            </button>
+            <button id="btn-sample-normal" class="sample-btn" type="button">
+              <span>✨</span> Load Normal CXR
+            </button>
+          </div>
+        </div>
+
+        <!-- Optional Patient Metadata Accordion -->
+        <div class="meta-accordion">
+          <button id="meta-toggle" class="meta-toggle" type="button" aria-expanded="false">
+            <span>⚙️</span> Clinical Context & Model Settings ▾
+          </button>
+          <div id="meta-fields" class="meta-fields">
+            <div class="input-row">
+              <div class="input-group">
+                <label for="input-patient-id">Patient ID</label>
+                <input type="text" id="input-patient-id" placeholder="e.g. PT-2026-089">
+              </div>
+              <div class="input-group">
+                <label for="select-model">Model Architecture</label>
+                <select id="select-model">
+                  <option value="densenet121" selected>DenseNet121 (Trained: 90.4% Acc)</option>
+                  <option value="hybrid">Hybrid (DenseNet + Swin + CBAM)</option>
+                  <option value="resnet50">ResNet50 Baseline</option>
+                </select>
+              </div>
+            </div>
+            <div class="input-row">
+              <div class="input-group">
+                <label for="input-patient-age">Age</label>
+                <input type="number" id="input-patient-age" placeholder="e.g. 54">
+              </div>
+              <div class="input-group">
+                <label for="select-patient-sex">Sex</label>
+                <select id="select-patient-sex">
+                  <option value="">Unspecified</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                </select>
+              </div>
+            </div>
+            <div class="input-group">
+              <label for="input-patient-history">Clinical Presentation / History</label>
+              <textarea id="input-patient-history" rows="2" placeholder="e.g. Cough, fever for 4 days, localized dullness to percussion."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Primary Action Button -->
+        <button id="btn-analyze" class="btn-analyze" disabled>
+          <span>🔍</span> Analyze Radiograph
+        </button>
+      </section>
+
+      <!-- Right Column: Results & Report -->
+      <section class="card" aria-label="Diagnostic Results">
+
+        <!-- Empty Placeholder State -->
+        <div id="results-empty" class="results-empty">
+          <div class="results-empty-icon">🩺</div>
+          <div class="results-empty-title">Awaiting Radiograph</div>
+          <p class="results-empty-desc">Upload or select a sample Chest X-Ray on the left and click "Analyze Radiograph" to generate the diagnostic assessment and clinical report.</p>
+        </div>
+
+        <!-- Loading State with Progress Steps -->
+        <div id="loading-panel" class="loading-panel">
+          <div class="spinner"></div>
+          <div class="loading-title">Analyzing Radiograph</div>
+          <div id="loading-step" class="loading-step">Preprocessing image with CLAHE...</div>
+        </div>
+
+        <!-- Live Analysis Results Content -->
+        <div id="results-content" class="results-content">
+
+          <!-- Diagnosis Banner -->
+          <div id="verdict-banner" class="verdict-banner">
+            <div class="verdict-main">
+              <span id="verdict-icon" class="verdict-icon">⚠️</span>
+              <div>
+                <div id="verdict-title" class="verdict-title">PNEUMONIA DETECTED</div>
+                <div id="verdict-subtitle" style="font-size: 0.78rem; color: var(--text-muted);">Calibrated decision threshold applied</div>
+              </div>
+            </div>
+            <div id="verdict-confidence" class="verdict-conf-badge">94.2% Confidence</div>
+          </div>
+
+          <!-- Probability Distribution Bar -->
+          <div class="prob-bar-container">
+            <div class="prob-header">
+              <span>Normal: <strong id="prob-normal-pct">5.8%</strong></span>
+              <span>Pneumonia: <strong id="prob-pneumonia-pct">94.2%</strong></span>
+            </div>
+            <div class="prob-track">
+              <div id="prob-fill-normal" class="prob-fill-normal" style="width: 5.8%;"></div>
+              <div id="prob-fill-pneumonia" class="prob-fill-pneumonia" style="width: 94.2%;"></div>
+            </div>
+          </div>
+
+          <!-- Radiograph Visualizer: Original + Grad-CAM Heatmap -->
+          <div class="images-grid">
+            <div class="image-card">
+              <div class="image-label">Original Radiograph</div>
+              <div class="image-frame">
+                <img id="img-original" src="" alt="Preprocessed Chest X-Ray">
+              </div>
+            </div>
+            <div class="image-card">
+              <div class="image-label">Grad-CAM Saliency Heatmap</div>
+              <div class="image-frame">
+                <img id="img-gradcam" src="" alt="Grad-CAM Opacity Localization">
+              </div>
+            </div>
+          </div>
+
+          <!-- Anatomical Localization Findings -->
+          <div class="findings-panel">
+            <div class="findings-header">Anatomical Localization & Opacity Patterns</div>
+            <div id="findings-text" class="findings-text">Focal consolidations dominant in the right lower lung field / retrocardiac & basal zone.</div>
+          </div>
+
+          <!-- AI Generated Radiology Report -->
+          <div class="report-card">
+            <div class="report-header">
+              <div class="report-title">
+                <span>📋</span> Clinical Radiology Report
+              </div>
+              <div id="report-engine" class="report-engine-pill">Gemini 3.5 Flash-Lite</div>
+            </div>
+
+            <div class="report-section">
+              <div class="report-section-label">Findings</div>
+              <div id="report-findings" class="report-section-content">-</div>
+            </div>
+
+            <div class="report-section">
+              <div class="report-section-label">Impression</div>
+              <div id="report-impression" class="report-section-content">-</div>
+            </div>
+
+            <div class="report-section">
+              <div class="report-section-label">Recommendations</div>
+              <div id="report-recommendations" class="report-section-content">-</div>
+            </div>
+
+            <div class="report-disclaimer">
+              *Notice: Rad-Intel is an automated clinical decision support system designed to assist licensed clinicians. Final diagnostic verification and therapeutic intervention must be validated by a physician.*
+            </div>
+          </div>
+
+          <!-- Report Actions -->
+          <div class="report-actions">
+            <button id="btn-download-pdf" class="btn-primary" type="button">
+              <span>📄</span> Download PDF Report
+            </button>
+            <button id="btn-copy-report" class="btn-secondary" type="button">
+              <span>📋</span> Copy Text
+            </button>
+            <button id="btn-download-latex" class="btn-secondary" type="button">
+              <span>📜</span> Export LaTeX (.tex)
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">Copied to clipboard</div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
