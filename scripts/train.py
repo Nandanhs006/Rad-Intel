@@ -89,6 +89,12 @@ def parse_args():
         help="Phase 2 end-to-end fine-tuning epochs; 0 keeps backbones frozen (default: 10)",
     )
     parser.add_argument(
+        "--finetune-batch-size",
+        type=int,
+        default=12,
+        help="Batch size for phase-2 end-to-end fine-tuning (default: 12; lower if CUDA OOM)",
+    )
+    parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
@@ -110,6 +116,7 @@ def main():
         model_type=args.model,
         epochs=args.epochs,
         finetune_epochs=args.finetune_epochs,
+        finetune_batch_size=args.finetune_batch_size,
         batch_size=args.batch_size,
         learning_rate=args.lr,
         loss_type=args.loss,

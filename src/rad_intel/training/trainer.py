@@ -7,6 +7,7 @@ Implements Early Stopping, Cosine Annealing, Focal Loss, and Checkpointing.
 from __future__ import annotations
 
 import os
+import gc
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,11 @@ class TrainingConfig:
     finetune_epochs: int = 10
     finetune_lr_head: float = 1e-4
     finetune_lr_backbone: float = 1e-5
+    # Phase 2 backprops through both backbones, which needs far more memory
+    # than the frozen-feature head training in phase 1. A 16-GB T4 cannot hold
+    # DenseNet121 + Swin-T activations at batch 32, so phase 2 uses its own
+    # smaller batch size.
+    finetune_batch_size: int = 12
     data_dir: Path | str | None = None
 
 
@@ -206,6 +212,14 @@ class HybridTrainer:
         """
         print(f"\n[PHASE 2] End-to-end fine-tuning for {self.config.finetune_epochs} epochs...", flush=True)
 
+        # Phase 1 leaves cached feature tensors and autograd state around.
+        # Release them before allocating phase 2's much larger activations.
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            free, total = torch.cuda.mem_get_info()
+            print(f"  GPU memory free: {free/2**30:.2f} / {total/2**30:.2f} GiB", flush=True)
+
         for p in model.parameters():
             p.requires_grad = True
 
@@ -233,11 +247,13 @@ class HybridTrainer:
 
         # Augmentation is applied only in phase 2; phase 1 reads cached features
         # from deterministic transforms and cannot be augmented.
+        bs = self.config.finetune_batch_size
+        print(f"  phase-2 batch size: {bs}", flush=True)
         train_loader = DataLoader(
             CXRDataset(train_ds.samples, transform=get_transforms(is_train=True)),
-            batch_size=self.config.batch_size, shuffle=True, num_workers=2, pin_memory=True,
+            batch_size=bs, shuffle=True, num_workers=2, pin_memory=True,
         )
-        val_loader = DataLoader(val_ds, batch_size=self.config.batch_size, shuffle=False, num_workers=2)
+        val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=2)
 
         best_auc, best_state, best_epoch, patience = -1.0, None, 0, 0
         for epoch in range(1, self.config.finetune_epochs + 1):
@@ -497,7 +513,7 @@ class HybridTrainer:
         if self.config.finetune_epochs > 0:
             # The backbones changed during phase 2, so cached features are stale.
             test_loader = DataLoader(
-                test_ds, batch_size=self.config.batch_size, shuffle=False, num_workers=2
+                test_ds, batch_size=self.config.finetune_batch_size, shuffle=False, num_workers=2
             )
             _, test_y, test_p = self._run_epoch_full(
                 model, test_loader,
