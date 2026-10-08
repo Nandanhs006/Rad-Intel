@@ -11,7 +11,11 @@ from pytorch_grad_cam import GradCAM, GradCAMPlusPlus
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
 from rad_intel.models.factory import get_model_target_layer
-from rad_intel.xai.visualizer import overlay_heatmap_on_image, image_to_base64
+from rad_intel.xai.visualizer import (
+    overlay_heatmap_on_image,
+    image_to_base64,
+    compute_body_mask,
+)
 
 
 class GradCAMExplainer:
@@ -129,10 +133,30 @@ class GradCAMExplainer:
         Complete explanation pipeline: produces heatmap, overlay, base64 data URL,
         and radiological anatomical quadrant localization.
         """
-        heatmap = self.generate_heatmap(input_tensor, target_category)
+        raw_heatmap = self.generate_heatmap(input_tensor, target_category)
+
+        # Confine the explanation to the patient. Saliency landing on letterbox
+        # padding or background cannot correspond to an anatomical finding, and
+        # including it also skews the quadrant means in
+        # analyze_anatomical_localization, which average over whole quadrants.
+        #
+        # The share of saliency that fell outside the thorax is NOT discarded --
+        # it is reported as off_thorax_fraction, because a high value is a real
+        # signal that the model is keying on framing or acquisition artefacts
+        # rather than lung parenchyma (shortcut learning), and that belongs in
+        # the output rather than hidden by the mask.
+        body_mask = compute_body_mask(original_rgb)
+        total = float(raw_heatmap.sum())
+        off_thorax = float(raw_heatmap[~body_mask].sum() / total) if total > 0 else 0.0
+
+        heatmap = raw_heatmap * body_mask
+        if heatmap.max() <= 0:  # nothing survived; keep the unmasked map
+            heatmap = raw_heatmap
+
         overlay_rgb = overlay_heatmap_on_image(original_rgb, heatmap, alpha=alpha)
         base64_overlay = image_to_base64(overlay_rgb)
         localization = self.analyze_anatomical_localization(heatmap)
+        localization["off_thorax_fraction"] = round(off_thorax, 4)
 
         return {
             "method": self.method,
@@ -140,5 +164,6 @@ class GradCAMExplainer:
             "heatmap": heatmap,
             "overlay_rgb": overlay_rgb,
             "overlay_base64": base64_overlay,
+            "preprocessed_base64": image_to_base64(original_rgb),
             "localization": localization,
         }

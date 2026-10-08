@@ -46,12 +46,20 @@ class AnatomicalLocalization(BaseModel):
     left_lung_intensity: float
     is_bilateral: bool
     distribution_summary: str
+    # Share of raw saliency that fell outside the thorax before masking. A high
+    # value indicates the model is responding to framing/background rather than
+    # lung parenchyma; surfaced rather than silently discarded.
+    off_thorax_fraction: float | None = None
 
 
 class ExplanationResponse(BaseModel):
     method: str
     target_category: int | None
     overlay_base64: str
+    # The 224x224 preprocessed image the overlay was drawn on. The UI must show
+    # this beside the heatmap, not the raw upload: the raw file has a different
+    # aspect ratio and no letterbox padding, so the two panels cannot align.
+    preprocessed_base64: str | None = None
     localization: AnatomicalLocalization | None = None
     execution_time_ms: float
 

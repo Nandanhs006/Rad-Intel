@@ -18,7 +18,19 @@ class ModelManager:
     def __init__(self):
         self.device = settings.torch_device
         self._models: dict[str, torch.nn.Module] = {}
+        # Per-model operating point recovered from the checkpoint. Training
+        # selects this on validation data and stores it as "optimal_threshold";
+        # serving must apply the same value or the deployed decision boundary
+        # silently reverts to argmax (0.5) and disagrees with the reported
+        # sensitivity/specificity.
+        self._thresholds: dict[str, float] = {}
         self.active_model_name: str = settings.DEFAULT_MODEL
+
+    def get_threshold(self, model_name: str | None = None) -> float:
+        """Operating threshold on P(PNEUMONIA); 0.5 when the checkpoint has none."""
+        target_name = self._clean_model_name(model_name)
+        self.get_model(target_name)
+        return self._thresholds.get(target_name, 0.5)
 
     def _clean_model_name(self, model_name: str | None) -> str:
         if not model_name or str(model_name).strip().lower() in ("", "string", "null", "none"):
@@ -46,6 +58,21 @@ class ModelManager:
                 device=self.device,
             )
             self._models[target_name] = model
+
+            # Recover the validation-selected operating point from the same
+            # checkpoint, but only when the checkpoint actually belongs to this
+            # architecture -- create_model discards mismatched weights, and
+            # applying a threshold calibrated for another model would be worse
+            # than falling back to 0.5.
+            if weights_to_load:
+                try:
+                    meta = torch.load(weights_to_load, map_location="cpu", weights_only=False)
+                    if isinstance(meta, dict) and meta.get("model_type") in (None, target_name):
+                        thr = meta.get("optimal_threshold")
+                        if isinstance(thr, (int, float)) and 0.0 < float(thr) < 1.0:
+                            self._thresholds[target_name] = float(thr)
+                except Exception:
+                    pass
         return self._models[target_name]
 
     def predict(
@@ -74,9 +101,15 @@ class ModelManager:
             class_names[i]: float(probs[i]) for i in range(len(class_names))
         }
 
-        pred_idx = int(probs.argmax())
-        pred_class = class_names[pred_idx]
-        confidence = float(probs[pred_idx])
+        # Apply the checkpoint's calibrated operating point rather than argmax.
+        # With PNEUMONIA as the positive class, argmax is the special case
+        # threshold == 0.5; this model's validation-selected value is 0.70, so
+        # argmax was over-calling pneumonia on every borderline radiograph.
+        threshold = self._thresholds.get(target_name, 0.5)
+        p_pneumonia = prob_dict.get("PNEUMONIA", float(probs[-1]))
+        is_pneumonia = p_pneumonia >= threshold
+        pred_class = "PNEUMONIA" if is_pneumonia else "NORMAL"
+        confidence = p_pneumonia if is_pneumonia else 1.0 - p_pneumonia
 
         return pred_class, confidence, prob_dict, latency_ms
 

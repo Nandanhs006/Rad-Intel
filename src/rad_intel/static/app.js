@@ -249,9 +249,19 @@ document.addEventListener("DOMContentLoaded", () => {
     probFillPneumonia.style.width = pnaPct;
 
     // Visualizer Images
-    imgOriginal.src = currentPreviewUrl;
+    // Show the preprocessed 224x224 image the heatmap was drawn on. Using the
+    // raw upload here made the two panels different crops/aspect ratios, so the
+    // overlay looked misaligned with the anatomy next to it.
+    imgOriginal.src =
+      (data.explanation && data.explanation.preprocessed_base64) || currentPreviewUrl;
     if (data.explanation && data.explanation.overlay_base64) {
-      imgGradcam.src = `data:image/png;base64,${data.explanation.overlay_base64}`;
+      // The API already returns a complete data URL (see xai/visualizer.py:
+      // image_to_base64). Only add the prefix if it is somehow missing, so we
+      // never emit "data:image/png;base64,data:image/png;base64,..." again.
+      const overlay = data.explanation.overlay_base64;
+      imgGradcam.src = overlay.startsWith("data:")
+        ? overlay
+        : `data:image/png;base64,${overlay}`;
     }
 
     // Anatomical Localization

@@ -43,3 +43,15 @@ cache/
 uploads/
 rad_intel.db
 *.log
+
+# Paper working folder: local only. The dataset, build artefacts and scratch
+# PDFs here are large and reproducible; main.tex and references.bib are kept.
+Rad-Intel paper/chest_xray/
+Rad-Intel paper/tmp/
+Rad-Intel paper/output/
+Rad-Intel paper/*.pdf
+
+# Datasets and trained weights
+chest_xray/
+*.pt
+.DS_Store

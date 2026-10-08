@@ -21,8 +21,10 @@ def normalize_heatmap(heatmap: np.ndarray) -> np.ndarray:
 def overlay_heatmap_on_image(
     image_rgb: np.ndarray,
     heatmap: np.ndarray,
-    alpha: float = 0.5,
+    alpha: float = 0.6,
     colormap: int = cv2.COLORMAP_JET,
+    threshold: float = 0.6,
+    gamma: float = 1.5,
 ) -> np.ndarray:
     """
     Overlays a 2D saliency heatmap onto an RGB background image.
@@ -47,8 +49,26 @@ def overlay_heatmap_on_image(
     colored_bgr = cv2.applyColorMap(uint8_map, colormap)
     colored_rgb = cv2.cvtColor(colored_bgr, cv2.COLOR_BGR2RGB)
 
-    # Alpha blending: image * (1 - alpha) + colored_rgb * alpha
-    blended = np.float32(image_rgb) * (1.0 - alpha) + np.float32(colored_rgb) * alpha
+    # Thresholded, saliency-weighted alpha blending.
+    #
+    # A constant alpha paints EVERY pixel, and JET is vivid at every value
+    # (zero maps to saturated blue), so the radiograph used to disappear under
+    # a full-frame colour wash. Grad-CAM on this model is also diffuse -- after
+    # min-max normalisation roughly half the frame sits above 0.5 -- so merely
+    # scaling opacity by saliency is not enough on its own.
+    #
+    # `threshold` sets where colour starts (below it the pixel is left as the
+    # original radiograph), and `gamma` fades the lower part of what remains,
+    # leaving colour only on the region the model actually responded to.
+    # `alpha` is the peak opacity reached at maximum saliency.
+    # `threshold` is interpreted as a quantile of this map, not an absolute
+    # value, so the painted area stays comparable between a sharply peaked CAM
+    # and a diffuse one. A fixed absolute cut shows half the frame on a flat
+    # map and a single speck on a peaked one.
+    cut = float(np.quantile(norm_map, np.clip(threshold, 0.0, 0.99)))
+    ramp = np.clip((norm_map - cut) / max(1.0 - cut, 1e-6), 0.0, 1.0) ** gamma
+    pixel_alpha = (alpha * ramp).astype(np.float32)[..., None]
+    blended = np.float32(image_rgb) * (1.0 - pixel_alpha) + np.float32(colored_rgb) * pixel_alpha
     blended = np.clip(blended, 0, 255).astype(np.uint8)
     return blended
 
@@ -69,3 +89,36 @@ def save_overlay(image_rgb: np.ndarray, output_path: str | Path) -> Path:
     img_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     cv2.imwrite(str(path), img_bgr)
     return path
+
+
+def compute_body_mask(image_rgb: np.ndarray) -> np.ndarray:
+    """
+    Boolean mask of the thorax/patient region in a preprocessed radiograph.
+
+    Chest radiographs in this dataset arrive letterboxed, with black padding
+    and background surrounding the patient. Saliency falling there explains
+    nothing anatomical, and quadrant statistics computed over it are diluted by
+    pixels that contain no tissue. Otsu thresholding plus a morphological close
+    and largest-connected-component selection isolates the body reliably enough
+    for both purposes.
+
+    Returns an all-True mask if segmentation fails, so callers degrade to the
+    previous unmasked behaviour rather than losing the explanation entirely.
+    """
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY) if image_rgb.ndim == 3 else image_rgb
+    try:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+        n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+        if n_labels <= 1:
+            return np.ones(gray.shape, dtype=bool)
+        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        mask = labels == largest
+    except cv2.error:
+        return np.ones(gray.shape, dtype=bool)
+
+    # A mask covering almost nothing means segmentation failed; prefer the
+    # unmasked map over returning an empty explanation.
+    if mask.mean() < 0.15:
+        return np.ones(gray.shape, dtype=bool)
+    return mask

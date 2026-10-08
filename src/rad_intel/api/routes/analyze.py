@@ -160,6 +160,7 @@ async def analyze_xray(
                 method="gradcam",
                 target_category=target_cat,
                 overlay_base64=xai_result["overlay_base64"],
+                preprocessed_base64=xai_result.get("preprocessed_base64"),
                 localization=localization,
                 execution_time_ms=round(xai_ms, 2),
             ),

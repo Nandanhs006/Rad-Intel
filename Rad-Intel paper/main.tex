@@ -1,0 +1,607 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% --- Draft placeholders -------------------------------------------------
+% \TBD marks a cell or value reserved for a MEASURED quantity. It is not an
+% estimate, a prediction, or an expected result. Replace every occurrence
+% with a logged number before submission; search the source for "TBD".
+\newcommand{\TBD}{\textsc{tbd}}
+% \figbox renders a visible, compiling placeholder for a figure that has not
+% been produced yet. Replace the whole call with \includegraphics.
+\newcommand{\figbox}[3]{%
+  \fbox{\begin{minipage}[c][#2][c]{#1}\centering
+  \scriptsize\textsc{figure placeholder}\\[3pt]#3
+  \end{minipage}}}
+% ------------------------------------------------------------------------
+\setlength{\textfloatsep}{7pt plus 1pt minus 2pt}
+\setlength{\floatsep}{6pt plus 1pt minus 2pt}
+\setlength{\intextsep}{6pt plus 1pt minus 2pt}
+
+\title{DenseNet--Swin Transformer Classification with Evidence-Constrained Summarization of Pneumonia Radiography}
+
+\author{
+\setlength{\tabcolsep}{3pt}%
+\begin{tabular}{ccc}
+\begin{tabular}{c}
+1\textsuperscript{st} \textit{Tejonidhi M R}\\
+\textit{Malnad College of Engineering,}\\
+\textit{Karnataka, India}\\
+tmr@mcehassan.ac.in
+\end{tabular}
+&
+\begin{tabular}{c}
+2\textsuperscript{nd} \textit{Nandan H S}\\
+\textit{Malnad College of Engineering,}\\
+\textit{Karnataka, India}\\
+nandanhs.146@gmail.com
+\end{tabular}
+&
+\begin{tabular}{c}
+3\textsuperscript{rd} \textit{Poorab N G}\\
+\textit{Malnad College of Engineering,}\\
+\textit{Karnataka, India}\\
+poorabng@gmail.com
+\end{tabular}
+\\[1.1em]
+\multicolumn{3}{c}{
+\begin{tabular}{cc}
+\begin{tabular}{c}
+4\textsuperscript{th} \textit{Kushal H S}\\
+\textit{Malnad College of Engineering,}\\
+\textit{Karnataka, India}\\
+kushalhs456@gmail.com
+\end{tabular}
+& \hspace{4em}
+\begin{tabular}{c}
+5\textsuperscript{th} \textit{Poornachandra N}\\
+\textit{Malnad College of Engineering,}\\
+\textit{Karnataka, India}\\
+poornagowda425@gmail.com
+\end{tabular}
+\end{tabular}
+}
+\end{tabular}
+}
+
+\begin{document}
+\bstctlcite{IEEEexample:BSTcontrol}
+\maketitle
+
+\begin{abstract}
+Chest radiographs are routinely used to assess pneumonia, but a classification probability alone does not show how a model reached its decision. This paper presents an image-analysis pipeline that combines DenseNet121 and Swin Transformer-Tiny (Swin-T) for binary classification of pediatric chest X-rays as normal or pneumonia. DenseNet121 captures local radiographic patterns, while Swin-T models wider spatial relationships. Their feature maps are aligned, projected, concatenated, and refined with a post-fusion Convolutional Block Attention Module (CBAM) before classification. Grad-CAM provides a gradient-based heatmap from the fused representation, and LIME supplies a complementary perturbation-based explanation. A deterministic serializer converts the probability and explanation outputs into neutral evidence fields. Gemini 3.5 Flash-Lite receives only this structured evidence and returns a short JSON summary under a fixed schema. Validation rules, a bounded correction attempt, and a deterministic template fallback block summaries that violate the permitted schema or recorded evidence. The system is implemented in PyTorch behind a service interface that exposes classification, explanation, and summarization as separate endpoints, and uses the public Kaggle Chest X-Ray Images (Pneumonia) dataset. Classification, explanation, and language generation remain separate, allowing displayed statements to be checked against recorded model outputs. The system is intended for technical research and education, not clinical diagnosis.
+\end{abstract}
+
+\begin{IEEEkeywords}
+chest radiography, pneumonia classification, DenseNet121, Swin Transformer, CBAM, Grad-CAM, LIME, explainable artificial intelligence, constrained summarization
+\end{IEEEkeywords}
+
+\section{Introduction}
+Pneumonia remains an important cause of childhood mortality worldwide \cite{who2026childmortality}. Chest radiography supports its assessment, though reading a film is affected by acquisition quality, projection, overlapping anatomy, and variation between observers \cite{lim2021pneumonia}. Deep networks pick up useful patterns in these images. What they do not supply is any account of which regions produced a given score.
+
+Convolutional neural networks (CNNs), particularly DenseNet \cite{huang2017densenet}, are effective at encoding local texture and morphology. Hierarchical vision transformers such as Swin Transformer \cite{liu2021swin} complement this behavior by modeling longer-range spatial relationships through shifted-window attention. The system combines both representations and uses CBAM \cite{woo2018cbam} to refine the fused feature tensor across channel and spatial dimensions.
+
+The output is split into three layers that stay separate: classification, visual explanation, and evidence-constrained summarization. Grad-CAM \cite{selvaraju2017gradcam} and LIME \cite{ribeiro2016lime} expose different aspects of model sensitivity, and neither is treated here as proof of a radiological finding. The language model never sees the radiograph. It receives a machine-generated evidence object and nothing else.
+
+The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with explicit feature alignment and post-fusion CBAM; (2) a reproducible explanation pipeline using Grad-CAM and LIME; (3) deterministic conversion of model outputs into a constrained evidence schema; and (4) an end-to-end interface that exposes the probability, explanations, summary source, and limitations without presenting the output as a diagnosis.
+
+Section~\ref{sec:related} positions the system against prior pneumonia classifiers and radiology-language models, Section~\ref{sec:method} specifies the architecture and the evidence pipeline, Section~\ref{sec:setup} defines the training and evaluation protocol, Section~\ref{sec:results} reports measured behavior, and Sections~\ref{sec:discussion}--\ref{sec:limits} discuss the findings and their constraints.
+
+\section{Related Work}
+\label{sec:related}
+CNN-based pneumonia classifiers commonly rely on transfer learning, residual connections, and attention. DenseNet supports feature reuse across layers \cite{huang2017densenet}, while ResNet \cite{he2016resnet} and EfficientNet \cite{tan2019efficientnet} provide strong comparison architectures. Recent pneumonia systems incorporate CBAM, squeeze-and-excitation (SE) blocks, ensembles, or transformer components \cite{rashid2025cbam,potharaju2025cbamse,ifty2024explainable,mustapha2025hybrid}. Singh \emph{et al.} separately evaluated vision-transformer models on chest X-rays \cite{singh2024vit}.
+
+Hybrid feature learning has also been applied outside medical imaging. Swathi and Shivakumar combined gray-level co-occurrence matrix (GLCM) descriptors with AlexNet features for crowd-behavior analysis \cite{swathi2021hybrid}; their later audio--visual model fused heterogeneous visual and acoustic features through explicit concatenation \cite{swathi2023audiovisual}. Both studies illustrate how complementary representations can be combined at feature level, although their surveillance setting, inputs, and classifiers differ from the chest-radiography system considered here.
+
+Grad-CAM attributes a selected score to a convolutional feature tensor, whereas LIME approximates local behavior around a perturbed image. Their assumptions differ, making them complementary rather than interchangeable. Khadidos \emph{et al.} similarly used both methods for pediatric pneumonia classification \cite{khadidos2026explainable}.
+
+Systems such as MAIRA-1 and RaDialog generate or discuss radiology reports directly from multimodal inputs \cite{hyland2023maira,pellegrini2023radialog}. The present system serves a narrower purpose: it summarizes serialized classifier evidence instead of generating a diagnostic report from the image. Consequently, the text component is assessed for schema compliance and agreement with the evidence object. GREEN is relevant only when the output and reference text satisfy its radiology-report evaluation assumptions \cite{ostmeier2024green}.
+
+Table~\ref{tab:related} summarizes the distinction between classification-and-explanation systems, radiology-language models, and the evidence-constrained workflow used in this study.
+
+\begin{table*}[t]
+\centering
+\caption{Representative comparison of pneumonia-classification and radiology-language systems.}
+\label{tab:related}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{L{2.5cm}L{3.2cm}L{2.5cm}L{3.0cm}L{4.0cm}}
+\toprule
+Study & Architecture & Attention or fusion & Explanation & Text component \\
+\midrule
+Rashid \emph{et al.} \cite{rashid2025cbam} & CNN ensemble & CBAM & Grad-CAM & None \\
+Potharaju \emph{et al.} \cite{potharaju2025cbamse} & Ensemble CNN & CBAM and SE & Grad-CAM & None \\
+Benzorgat \emph{et al.} \cite{mustapha2025hybrid} & CNN--ViT hybrid & Feature fusion & Model visualization & None \\
+Ifty \emph{et al.} \cite{ifty2024explainable} & Deep ensemble & Ensemble fusion & Explainability module & None \\
+Khadidos \emph{et al.} \cite{khadidos2026explainable} & Pediatric CXR classifiers & Model dependent & Grad-CAM and LIME & None \\
+MAIRA-1 / RaDialog \cite{hyland2023maira,pellegrini2023radialog} & Vision--language systems & Cross-modal & Text-grounded behavior & Report generation or dialogue \\
+This work & DenseNet121 + Swin-T & Projection, concatenation, CBAM & Grad-CAM and LIME & Evidence-constrained summary \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Methodology}
+\label{sec:method}
+\subsection{Dataset and Preprocessing}
+The implementation uses the Kaggle \emph{Chest X-Ray Images (Pneumonia)} dataset, a public distribution of the pediatric radiographs described by Kermany \emph{et al.} \cite{kermany2018identifying}. It contains 5,856 anterior--posterior JPEG radiographs from children aged one to five years: 4,273 pneumonia images and 1,583 normal images. The study treats each chest X-ray as a binary normal-or-pneumonia classification instance.
+
+The Kaggle release contains 5,216 training images, 16 validation images, and 624 test images. Because the supplied validation folder is too small for stable model selection, the training and validation folders are combined and then divided into stratified development and validation sets using a fixed 85:15 split and random seed 42. The original 624-image test folder remains untouched. Reliable patient identifiers are not available in the public release; consequently, the partition is image-level and cannot guarantee patient-level independence.
+
+Each image is converted to three channels, resized with its aspect ratio preserved, padded to $224\times224$, converted to a floating-point tensor, and normalized with ImageNet mean and standard deviation. Training augmentation consists of rotation within $\pm10^{\circ}$, horizontal flipping with probability $0.5$, and mild brightness and contrast jitter. Validation and test images receive only deterministic preprocessing. Vertical flips are not used because they produce anatomically implausible orientation changes.
+
+Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and hybrid classification to visual explanation and evidence-constrained summarization.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{architecture.png}
+\caption{End-to-end classification, explanation, and evidence-constrained summarization workflow.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Feature Extraction and Fusion}
+DenseNet121 \cite{huang2017densenet} and Swin-T \cite{liu2021swin} are initialized with ImageNet weights and operate in parallel on the same preprocessed image. For a $224\times224$ input, the DenseNet121 trunk produces $\mathbf{F}_D\in\mathbb{R}^{1024\times7\times7}$. The final Swin-T stage produces a representation corresponding to $768$ channels on a $7\times7$ grid. An explicit adapter $\mathcal{A}$ converts the Swin output to channels-first (NCHW) layout before fusion.
+
+The DenseNet and adapted Swin tensors are concatenated along the channel axis, giving a $1792\times7\times7$ tensor, which a $1\times1$ convolution--batch-normalization--ReLU block $\mathcal{P}_F$ projects to the 512-channel fused embedding used by CBAM and the classifier:
+\begin{align}
+\mathbf{F} &= \mathcal{P}_F\!\left([\mathbf{F}_D;\mathcal{A}(\mathbf{F}_S)]\right),
+\qquad \mathbf{F}\in\mathbb{R}^{512\times7\times7}.
+\label{eq:fusion}
+\end{align}
+Equation~\ref{eq:fusion} defines the project-specific fusion operation, where $[\cdot;\cdot]$ denotes channel concatenation. Runtime assertions check the layout and spatial dimensions before concatenation, helping to detect channels-last/channels-first mismatches. This explicit concatenation follows the general feature-level fusion pattern used in hybrid visual and multimodal systems \cite{swathi2021hybrid,swathi2023audiovisual}. Here, trainable projections place both radiographic feature tensors on a common spatial and channel basis.
+
+\subsection{CBAM and Classification}
+CBAM is applied once, after feature fusion, following the sequential channel- and spatial-attention formulation of Woo \emph{et al.} \cite{woo2018cbam}. Channel attention uses spatial average and maximum pooling followed by a shared multilayer perceptron. Spatial attention pools across channels and applies a $7\times7$ convolution:
+\begin{align}
+\mathbf{M}_c &= \sigma\!\left(\mathrm{MLP}(\mathrm{AvgPool}(\mathbf{F}))+
+\mathrm{MLP}(\mathrm{MaxPool}(\mathbf{F}))\right), \nonumber\\
+\mathbf{F}' &= \mathbf{M}_c\odot\mathbf{F}, \nonumber\\
+\mathbf{M}_s &= \sigma\!\left(f^{7\times7}([\mathrm{AvgPool}_c(\mathbf{F}');
+\mathrm{MaxPool}_c(\mathbf{F}')])\right), \nonumber\\
+\mathbf{F}'' &= \mathbf{M}_s\odot\mathbf{F}'.
+\label{eq:cbam}
+\end{align}
+In Eq.~\ref{eq:cbam}, $\sigma$ is the sigmoid function, $\odot$ is element-wise multiplication, and $[\cdot;\cdot]$ is channel concatenation. Pooling without a subscript runs over the spatial dimensions, so $\mathbf{M}_c\in\mathbb{R}^{C\times1\times1}$; the subscript $c$ marks pooling across channels, so $\mathbf{M}_s\in\mathbb{R}^{1\times H\times W}$. Both products in Eq.~\ref{eq:cbam} broadcast the attention map over the axes of size one. No residual path bypasses CBAM. Global average pooling, dropout with probability $0.3$, and a linear layer over the 512-channel embedding produce two logits, whose softmax gives $p$, the probability of pneumonia. The equivalent one-logit form is written below because it states the class weighting compactly:
+\begin{align}
+\mathbf{h}&=\mathrm{GAP}(\mathbf{F}''), \nonumber\\
+\ell&=\mathbf{w}^{\top}\mathrm{Dropout}(\mathbf{h})+b,
+\qquad p=\sigma(\ell), \nonumber\\
+\mathcal{L}_{\mathrm{WBCE}}&=-\Big[\beta y\log p \nonumber\\
+&\hspace{20mm}+(1-y)\log(1-p)\Big].
+\label{eq:classifier}
+\end{align}
+The deployed configuration optimises the two-class focal form of Eq.~\ref{eq:classifier} with $\gamma=2$ and inverse-frequency class weights; the weighted binary cross-entropy above is the equivalent one-logit expression and is retained as the reference formulation. In Eq.~\ref{eq:classifier}, $y=1$ denotes pneumonia and $y=0$ normal, and $\beta=N_0/N_1$ weights the positive term, with $N_0$ and $N_1$ the normal and pneumonia counts in the development set. Pneumonia is the majority class in this dataset, so $\beta\approx0.37$ rather than a value above one; the weight down-weights the abundant class, which is the same correction a value above one would apply had the minority class been positive. Training evaluates the equivalent logit-space expression through \texttt{BCEWithLogitsLoss}, which is numerically stable for large $|\ell|$. The operating threshold is selected from validation predictions using Youden's index \cite{youden1950index}:
+\begin{align}
+J(t)&=\operatorname{Sens}(t)+\operatorname{Spec}(t)-1,
+\nonumber\\
+t^*&=\arg\max_t J(t).
+\label{eq:youden}
+\end{align}
+In Eq.~\ref{eq:youden}, $\operatorname{Sens}(t)$ and $\operatorname{Spec}(t)$ denote sensitivity and specificity at threshold $t$. The selected threshold $t^*$ is stored with the checkpoint; results at the fixed threshold $0.5$ are retained as a reference.
+
+\subsection{Explainability and Evidence Serialization}
+Grad-CAM \cite{selvaraju2017gradcam} targets the named post-CBAM tensor $\mathbf{F}''$. For selected class score $s$, its channel weights and coarse localization map are
+\begin{align}
+\alpha_k&=\frac{1}{HW}\sum_{i,j}\frac{\partial s}{\partial F''_{kij}}, \nonumber\\
+\widetilde{\mathbf{L}}_{\mathrm{GC}}&=\operatorname{ReLU}
+\left(\sum_k\alpha_k\mathbf{F}''_k\right).
+\label{eq:gradcam}
+\end{align}
+Here $H=W=7$ are the spatial dimensions of $\mathbf{F}''$ and $k$ indexes its 512 channels, so $\alpha_k$ is the spatially averaged gradient of $s$ with respect to channel $k$. Equation~\ref{eq:gradcam} follows the original Grad-CAM weighting. The classification head emits two logits and a softmax, so the explanation targets the logit of the predicted class directly: index 1 for pneumonia and index 0 for normal. The displayed map is obtained by min--max normalizing $\widetilde{\mathbf{L}}_{\mathrm{GC}}$ to $[0,1]$. A named identity layer exposes the target tensor, avoiding hooks that depend on library-specific internal layer names.
+
+LIME \cite{ribeiro2016lime} uses simple linear iterative clustering (SLIC) superpixels \cite{achanta2012slic} and fits a locally weighted sparse surrogate $g$ around image $\mathbf{x}$:
+\begin{align}
+\xi(\mathbf{x})&=\arg\min_{g\in\mathcal{G}}
+\mathcal{L}(f,g,\pi_{\mathbf{x}})+\Omega(g), \nonumber\\
+\mathcal{L}(f,g,\pi_{\mathbf{x}})
+&=\sum_{(\mathbf{z},\mathbf{z}')\in\mathcal{Z}}
+\pi_{\mathbf{x}}(\mathbf{z})
+\big(f(\mathbf{z})-g(\mathbf{z}')\big)^2.
+\label{eq:lime}
+\end{align}
+In Eq.~\ref{eq:lime}, $\mathbf{z}'$ is a binary vector marking which superpixels are retained, $\mathbf{z}$ is the image that vector produces, $\mathcal{Z}$ is the sampled set of such pairs, $f(\mathbf{z})$ is the classifier probability, $\pi_{\mathbf{x}}$ weights each sample by its proximity to $\mathbf{x}$, and $\Omega(g)$ penalizes surrogate complexity. The implementation requests 50 SLIC regions, evaluates 1,000 perturbations, retains the ten highest-weighted regions, and uses random seed 42. Grad-CAM remains the primary explanation because it is directly linked to the hybrid model's class score; LIME provides a slower model-agnostic comparison.
+
+A deterministic serializer records the predicted label, probability, threshold, normalized Grad-CAM peak coordinates, heatmap concentration, selected LIME region identifiers and weights, agreement indicators, preprocessing version, and checkpoint hash.
+
+The serializer additionally reduces the saliency map to four radiographic quadrants, taking the mean response in each and reporting the dominant quadrant together with a left/right balance ratio. Image left is treated as the patient's right in the standard frontal convention. This mapping is deterministic and arithmetic: it is a summary of where the map concentrated, computed from the map alone, with no segmentation of anatomy and no detection of a lesion. Quadrant statistics are computed over the segmented thorax rather than the full frame, so letterbox padding and background do not dilute them. The resulting zone label is the only spatial language the downstream summary is permitted to use, and the constraint enforced on that summary is not that spatial terms are forbidden but that it may use no field the serializer did not compute.
+
+\subsection{Evidence-Constrained Summarization and Interface}
+Gemini 3.5 Flash-Lite receives only the serialized evidence object and returns three JSON strings: \texttt{classification\_summary}, \texttt{model\_evidence}, and \texttt{limitations}. The request uses temperature $0$, a fixed prompt, and a fixed response schema. The application adds a non-generated research-use notice. Gemini models have been studied in medical tasks, but that evidence does not establish the correctness of this summarization pipeline \cite{saab2024gemini}.
+
+The validator rejects missing or additional keys, non-string values, unsupported anatomy, diagnostic or treatment instructions, probability disagreements, and numbers absent from the evidence object. One bounded correction request reuses the same evidence and asks only for schema repair. If validation fails again or the service is unavailable, a deterministic template renders the same fields. The browser-based interface displays the input image, class probability and threshold, Grad-CAM overlay, LIME regions, serialized evidence, summary source, checkpoint version, and limitations.
+
+\section{Implementation and Evaluation Setup}
+\label{sec:setup}
+\subsection{Training Configuration}
+The model is implemented in PyTorch using \texttt{torchvision} and \texttt{timm}. Training uses AdamW \cite{loshchilov2019adamw} with cosine annealing, a batch size of 32, weight decay $10^{-4}$, and a maximum of 20 epochs. The fusion, CBAM, and classification layers are trained for five epochs with both pretrained branches frozen. The complete network is then fine-tuned with learning rates of $10^{-4}$ for the new layers and $10^{-5}$ for the backbones. Validation area under the receiver operating characteristic curve (AUROC) selects the checkpoint, and early stopping uses a patience of five epochs. Five fixed seeds (42, 52, 62, 72, and 82) are used for repeated runs.
+
+\begin{table}[t]
+\centering
+\caption{Controlled comparison configurations.}
+\label{tab:baselines}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{L{2.2cm}L{4.4cm}}
+\toprule
+Configuration & Purpose \\
+\midrule
+DenseNet121 & CNN-only transfer-learning baseline \\
+Swin-T & Transformer-only baseline \\
+ResNet50 & Residual-CNN baseline \\
+Fusion without CBAM & Isolates post-fusion attention \\
+Complete classifier & DenseNet121--Swin-T fusion with CBAM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Comparison Protocol}
+Every configuration in Table~\ref{tab:baselines} uses the same data partitions, deterministic preprocessing, augmentation policy, class-weighted loss, checkpoint rule, threshold procedure, seed set, and search budget. The ablation set also removes each feature branch separately. Explainability and language generation are applied after classification and do not alter the class probability.
+
+\subsection{Metrics and Reproducibility}
+Classification is scored with AUROC, area under the precision--recall curve, sensitivity, specificity, precision, F1, balanced accuracy, and the confusion matrix. Calibration is reported separately, through the Brier score \cite{brier1950verification}, expected calibration error \cite{guo2017calibration}, and reliability diagrams, since a classifier can rank cases well and still be badly calibrated. Every number is summarized over the five seeds with bootstrap confidence intervals. Paired McNemar tests \cite{mcnemar1947note} compare thresholded errors; DeLong \cite{delong1988comparing} and paired bootstrap procedures compare AUROC. A Holm correction \cite{holm1979simple} covers the prespecified family of model comparisons.
+
+Explanation analysis covers deletion and insertion curves \cite{petsiuk2018rise}, stability under small label-preserving perturbations, map concentration, and Grad-CAM/LIME agreement. No localization score appears anywhere in this paper. The Kaggle release ships class labels, not lesion masks or bounding boxes, and scoring localization without them would report an assumption as a measurement. Text analysis records schema-valid rate, evidence agreement, forbidden-claim rate, fallback frequency, repeatability under identical inputs, and component-level latency, with the deterministic template as the direct comparator.
+
+The displayed output is also reviewed by a practising clinician, credited by name in the acknowledgment. Cases are drawn as a stratified sample before any result is inspected and cover correct and incorrect predictions in both classes. The reviewer sees the radiograph, the Grad-CAM overlay, the LIME regions, and the generated summary, and is blinded to which configuration produced them. Four items are scored on a five-point scale: whether the highlighted region is plausible given the radiograph, whether the summary is consistent with the displayed evidence, whether it avoids unsupported clinical claims, and whether it is acceptable as a research-use description. Each case is also marked for any statement that could be read as a diagnosis. What this review can establish is narrow. It tests whether the output is defensible to a reader with clinical training; it is not a reference standard for the labels, and it does not replace the quantitative metrics above.
+
+Reproducibility records include the Kaggle dataset version, split manifest, file hashes, source-code commit, environment lock file, PyTorch and CUDA versions, hardware, seeds, checkpoint hashes, preprocessing parameters, threshold, Grad-CAM target, LIME configuration, serializer/schema versions, prompt hash, Gemini model identifier, and API access date.
+
+\section{Results}
+\label{sec:results}
+Results cover the five configurations of Table~\ref{tab:baselines} under the
+protocol fixed in Section~\ref{sec:setup}. At the time of writing only the
+DenseNet121 baseline has completed training, so its row reports a single run
+(seed 42) on the held-out 624-image test partition rather than the five-seed
+mean the protocol specifies; the remaining rows, the bootstrap intervals, and
+every paired comparison await the full sweep and are marked \TBD{}. No cell
+marked \TBD{} carries an estimate or a projected value, and the single-run
+entries are labelled as such wherever they appear.
+
+\subsection{Implementation Details}
+Training was performed on \TBD{} (GPU). Inference and explanation figures in
+this section were measured on an Apple M-series CPU under Python 3.14.0,
+PyTorch 2.14.1, \texttt{torchvision} 0.29.1, and \texttt{timm} 1.0.30, with
+the environment lock file recorded in Section~\ref{sec:setup}. The complete
+classifier contains 35{,}425{,}632 trainable parameters, against 6{,}955{,}906
+for DenseNet121 and 27{,}520{,}892 for Swin-T in isolation; removing CBAM
+leaves 35{,}392{,}764, so the attention module accounts for 32{,}868
+parameters, under $0.1\%$ of the total. The ResNet50 baseline contains 23{,}512{,}130 parameters. One training run required
+\TBD{} minutes, and the full five-seed sweep required \TBD{} GPU-hours.
+
+\subsection{Classification Performance and Ablation}
+Table~\ref{tab:main} carries the primary comparison and the ablation in one
+block, since the single-branch rows serve both purposes and splitting them
+would repeat the same six runs across two tables. Rows one and two isolate
+each representation. Row three gives the residual CNN reference.
+Row four keeps the fusion path but drops post-fusion CBAM, and row five is
+the complete classifier. Two differences carry the architectural claims: rows
+four against five for the attention module, and rows one and two against row
+four for fusion itself.
+
+For the DenseNet121 baseline the confusion matrix at $t^*=0.70$ over the 624
+test images is 365 true positives, 35 false positives, 199 true negatives,
+and 25 false negatives, giving an accuracy of $0.904$ and a precision of
+$0.913$. The gap between sensitivity ($0.936$) and specificity ($0.850$)
+reflects the class ratio of the development set, in which pneumonia
+outnumbers normal by roughly $2.9{:}1$; the inverse-frequency weights used in
+training were $1.939$ for the normal class and $0.674$ for pneumonia.
+
+\begin{table*}[t]
+\centering
+\caption{Test-set classification results at the validation-selected threshold $t^*$, on the held-out 624-image partition. Entries are mean [95\% bootstrap CI] over seeds 42, 52, 62, 72, and 82, except $^{\dagger}$, which is a single run at seed 42 and carries no interval. ECE is computed with 15 equal-width bins.}
+\label{tab:main}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{L{2.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.6cm}C{1.3cm}}
+\toprule
+Configuration & AUROC & AUPRC & Sensitivity & Specificity & F1 & Bal.\ acc. & ECE \\
+\midrule
+DenseNet121$^{\dagger}$ & 0.947 & \TBD & 0.936 & 0.850 & 0.924 & 0.893 & \TBD \\
+Swin-T                 & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+ResNet50               & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+Fusion without CBAM    & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+Complete classifier    & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Threshold Selection and Calibration}
+For the DenseNet121 baseline the Youden threshold selected on validation was
+$t^*=0.70$, well above the $0.5$ reference. That displacement is itself
+informative: it is the magnitude by which the class imbalance pushes the
+decision boundary, and applying the default $0.5$ instead costs specificity
+on every borderline radiograph. The selected threshold is stored in the
+checkpoint and applied unchanged at inference, so the deployed operating
+point and the reported metrics describe the same classifier. Across the five
+seeds $t^*$ averaged \TBD{} with a range of \TBD{} to \TBD{}; the
+validation-to-test gap in the operating point was \TBD{}, and the Brier
+score at $t^*$ was \TBD{}. Fig.~\ref{fig:roc} gives the reliability curve
+over 15 equal-width bins.
+
+\begin{figure}[t]
+\centering
+\figbox{0.88\columnwidth}{3.6cm}{ROC curves for all six configurations (left)\\ and reliability diagram for the complete\\ classifier with 15 equal-width bins (right)}
+\caption{Discrimination and calibration behavior on the held-out test partition.}
+\label{fig:roc}
+\end{figure}
+
+\subsection{Statistical Comparison}
+Table~\ref{tab:stats} sets the complete classifier against every other
+configuration. AUROC differences use the paired bootstrap over the test
+partition; thresholded errors use McNemar's test on the paired decisions
+\cite{mcnemar1947note}; reported $p$-values carry a Holm adjustment across
+the four comparisons \cite{holm1979simple}. A confidence interval
+accompanies every difference. With 624 test images those intervals are wide,
+and a small point gap between two configurations will not survive them.
+
+\begin{table}[t]
+\centering
+\caption{Complete classifier against each comparison configuration. $p$-values are Holm-adjusted across the four comparisons.}
+\label{tab:stats}
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{L{2.1cm}C{1.9cm}C{1.1cm}C{1.1cm}}
+\toprule
+Comparison & $\Delta$AUROC [95\% CI] & Boot.\ $p$ & McNemar $p$ \\
+\midrule
+vs.\ DenseNet121         & \TBD & \TBD & \TBD \\
+vs.\ Swin-T              & \TBD & \TBD & \TBD \\
+vs.\ ResNet50            & \TBD & \TBD & \TBD \\
+vs.\ Fusion w/o CBAM     & \TBD & \TBD & \TBD \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Explanation Behavior}
+Table~\ref{tab:xai} summarizes explanation behavior for the complete
+classifier. Deletion and insertion scores \cite{petsiuk2018rise} ask whether
+removing or restoring the highest-ranked regions moves the class probability
+the way the explanation implies it should. Stability is the mean rank
+correlation between an image's explanation and the explanations of its
+label-preserving perturbations. Agreement is the intersection-over-union
+between the thresholded Grad-CAM map and the superpixels LIME selects, which
+measures how far two methods built on different assumptions land in the same
+place. None of these is a localization score. The dataset carries no lesion
+annotations, so every entry in the table describes model sensitivity and
+nothing about anatomical correctness.
+
+Two preliminary observations on the DenseNet121 baseline motivated changes to
+the explanation pipeline and are reported here because they bear on how the
+maps should be read. First, the choice of target tensor is not neutral:
+attaching Grad-CAM to the final $1024$-channel block output rather than to
+the last convolution inside the terminal dense layer, which emits only the
+$32$ new growth-rate channels, lowered the deletion AUC from $0.723$ to
+$0.683$. Second, between $21\%$ and $48\%$ of raw saliency mass fell outside
+a thresholded thorax mask, and on normal radiographs the global maximum lay
+outside the patient entirely. Agreement with an occlusion-sensitivity
+reference computed on the same $7\times7$ grid was positive but modest
+($r=0.32$ to $0.67$ on pneumonia cases), which indicates that the maps track
+the model faithfully and that the model itself is partly responding to
+framing. Explanations are therefore confined to the segmented thorax for
+display and for the quadrant statistics, and the off-thorax fraction is
+reported alongside each explanation rather than discarded.
+
+\begin{table}[t]
+\centering
+\caption{Explanation behavior for the complete classifier on the test partition.}
+\label{tab:xai}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{L{3.3cm}C{1.6cm}C{1.6cm}}
+\toprule
+Measure & Grad-CAM & LIME \\
+\midrule
+Deletion AUC (lower better)   & \TBD & \TBD \\
+Insertion AUC (higher better) & \TBD & \TBD \\
+Map concentration             & \TBD & \TBD \\
+Stability under perturbation  & \TBD & \TBD \\
+Mean runtime per image (s)    & \TBD & \TBD \\
+\midrule
+\multicolumn{3}{l}{Grad-CAM / LIME region agreement (IoU): \TBD} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\figbox{0.88\columnwidth}{4.2cm}{Four test cases in rows: true normal, true\\ pneumonia, false positive, false negative.\\ Columns: radiograph, Grad-CAM overlay,\\ LIME regions, serialized evidence excerpt}
+\caption{Qualitative explanation output, including two misclassified cases. Highlighted regions indicate model sensitivity and are not radiological findings.}
+\label{fig:qualitative}
+\end{figure}
+
+Fig.~\ref{fig:qualitative} shows correct and incorrect cases under identical
+display settings. The misclassified rows matter more than the correct ones.
+Explanation maps stay confident when the prediction is wrong, and making
+that visible is the reason the probability, the threshold, and the evidence
+object are shown beside every overlay.
+
+\subsection{Evidence-Constrained Summarization}
+Table~\ref{tab:text} sets the constrained Gemini summaries against the
+deterministic template on identical evidence objects. The template is
+schema-valid and evidence-consistent by construction, so it bounds form and
+says nothing about readability. The forbidden-claim rate counts summaries
+containing anatomical localization, diagnostic language, or treatment
+instruction before validation; the post-validation figure is what survived
+the validator and the single bounded repair attempt. Repeatability is the
+share of identical outputs over repeated requests at temperature $0$ with a
+fixed prompt. The Gemini column is unmeasured at the time of writing: the
+reference deployment runs without an API key and therefore exercises the
+deterministic path on every request, which is the configuration all latency
+figures in Section~V-H describe.
+
+One change to the template is worth recording, because it was prompted by
+inspection rather than by a metric. The initial template asserted focal
+airspace consolidation in the dominant saliency zone and recommended
+initiating empiric antimicrobial therapy, in identical wording at $71\%$ and
+at $99\%$ classifier confidence. Both exceed what a probability and a
+saliency peak support. Certainty language is now tiered by confidence, the
+findings sentence attributes the location to the model's region of maximal
+response rather than to observed consolidation, and the treatment directive
+has been removed.
+
+\begin{table}[t]
+\centering
+\caption{Summarization behavior over the test partition. The deterministic template is correct by construction on the schema and evidence rows.}
+\label{tab:text}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{L{3.3cm}C{1.6cm}C{1.6cm}}
+\toprule
+Measure & Gemini 3.5 Flash-Lite & Template \\
+\midrule
+Schema-valid on first request (\%) & \TBD & 100 \\
+Schema-valid after one repair (\%) & \TBD & 100 \\
+Evidence agreement (\%)            & \TBD & 100 \\
+Forbidden claim, pre-validation (\%)  & \TBD & 0 \\
+Forbidden claim, post-validation (\%) & \TBD & 0 \\
+Fallback invoked (\%)              & \TBD & --- \\
+Repeatability (\%)                 & \TBD & 100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Clinical Review}
+\label{sec:review}
+A practising clinician with \TBD{} years of reporting experience, named in
+the acknowledgment, reviewed \TBD{} stratified test cases under the blinded
+protocol of Section~\ref{sec:setup}. Table~\ref{tab:expert} gives the mean
+score for each rubric item and the share of cases flagged as carrying a
+statement that could be read as a diagnosis. The reviewer judged
+presentation, not labels. Review notes recorded \TBD{} as the most frequent
+objection, and \TBD{} cases came back with a request to reword the
+summary.
+
+\begin{table}[t]
+\centering
+\caption{Blinded clinical review of \TBD{} stratified test cases. Scores are means on a five-point scale. The reviewer is credited in the acknowledgment.}
+\label{tab:expert}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{L{4.4cm}C{1.3cm}C{1.3cm}}
+\toprule
+Rubric item & Correct & Incorrect \\
+ & cases & cases \\
+\midrule
+Plausibility of highlighted region  & \TBD & \TBD \\
+Consistency with displayed evidence & \TBD & \TBD \\
+Absence of unsupported claims       & \TBD & \TBD \\
+Overall acceptability, research use & \TBD & \TBD \\
+\midrule
+Cases flagged as diagnosis-like (\%) & \TBD & \TBD \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Latency}
+With the deterministic template in place of the language service, end-to-end
+latency from upload to displayed summary was $251$ ms for the DenseNet121
+baseline on an Apple M-series CPU, with no GPU acceleration. Preprocessing
+accounted for $16$ ms, the forward pass for $27$ ms, Grad-CAM including
+thorax segmentation for $98$ ms, and template rendering with LaTeX and PDF
+generation for $16$ ms. LIME is not included in this figure: at 1{,}000
+perturbations it costs \TBD{} s per image and dominates the explanation
+budget, which is why Grad-CAM is the default view and LIME is computed on
+request. Latency with the live summarization service was \TBD{} ms. These
+figures indicate the pipeline is interactive on commodity hardware without a
+GPU, which is the deployment constraint a teaching setting imposes.
+
+\section{Discussion}
+\label{sec:discussion}
+Each architectural claim in this paper rests on one controlled difference,
+not on an aggregate score. Fusion is credited only by the gap between the
+single-branch rows and row four of Table~\ref{tab:main}; post-fusion CBAM
+only by the gap between rows four and five. The reason for that strictness is
+the dataset. The Kaggle partition is small, imbalanced, and drawn from a
+single institution, and across 624 test images a one- or two-point
+difference in accuracy sits well inside what seed variation alone produces.
+Bootstrap intervals and Holm-adjusted comparisons are not decoration on
+Table~\ref{tab:stats}. Without them the table cannot be read at all.
+
+The explanation numbers in Table~\ref{tab:xai} measure agreement between two
+methods that disagree about what an explanation is. Grad-CAM weights a
+feature tensor by the gradient of a class score. LIME fits a sparse linear
+surrogate over superpixel occlusions. Where the two converge, the decision
+depends on a consistent region of the image; where they diverge, at least
+one approximation has failed for that case. Neither outcome says anything
+about consolidation. That is also why no localization score appears in this
+paper: computing one would need lesion annotations the dataset does not
+contain, and a number produced without them would report an assumption as a
+finding.
+
+Keeping the classifier and the language model apart is what makes
+Table~\ref{tab:text} interpretable. The model never sees the radiograph and
+never receives an anatomical label, so a factual error in a summary has to
+originate either in the serialized evidence or in a schema violation. Both
+are machine-checkable.
+
+The deterministic template sits in that table for a specific reason. It is
+correct by construction on schema and evidence, which bounds what
+constrained generation can contribute to readability alone. A fallback rate
+of more than a few percent would mean the generation step is not reliably
+delivering even that, and the template would become the better default.
+
+The clinical review in Table~\ref{tab:expert} answers a question no metric
+in Table~\ref{tab:main} can reach. A validator confirms that a summary
+carries no forbidden anatomical term and no number absent from the evidence
+object. It cannot confirm that the result reads as a defensible account of
+model behavior to someone trained to read radiographs. The rubric targets
+presentation, and its incorrect-case column is the one worth reading
+closely: a system that produces confident, plausible-looking explanations
+for wrong predictions is exactly the failure mode that would make it
+unsuitable even for the research and teaching use it is scoped to.
+
+One failure encountered during deployment is worth recording because it is
+invisible to the usual checks. The evaluation script read the calibrated
+threshold from the checkpoint while the serving path applied \texttt{argmax},
+so the deployed decision boundary silently reverted to $0.5$ while the
+reported sensitivity and specificity continued to describe $t^{*}=0.70$. The
+test suite passed throughout, because it verified output shapes and response
+codes rather than agreement between the two paths. A threshold selected and
+reported but not applied is indistinguishable, from the outside, from one
+that was never selected at all; regression tests now assert that the served
+threshold equals the stored one.
+
+Several results depend on choices that could have gone the other way. CBAM
+is applied once after fusion, which keeps the Grad-CAM target unambiguous
+but leaves branch-specific features unrefined. Fusion is concatenation with
+a learned projection, not cross-attention: cheaper, easier to assert shape
+invariants over, and unable to let either branch condition on the other.
+Youden's index weights sensitivity and specificity equally, which is not the
+operating point a screening deployment would choose. Each is recorded so the
+numbers are read against the configuration that produced them.
+
+\section{Limitations, Ethics, and Privacy}
+\label{sec:limits}
+The Kaggle dataset holds pediatric images from one institution and is strongly class-imbalanced. Its public directory structure carries no dependable patient identifier, so an image-level partition cannot establish patient-level independence. The binary labels also collapse bacterial and viral pneumonia into a single class. Nothing here extends to other ages, institutions, devices, or acquisition protocols without external validation.
+
+The clinical review rests on one reader and a stratified sample. It supports statements about how the output is presented, not an inter-reader agreement estimate, and it is not a clinical validation of the classifier.
+
+Measured saliency on the trained baseline falls substantially outside the thorax, between $21\%$ and $48\%$ of total mass, and on normal radiographs the global maximum lay outside the patient. Because an occlusion reference agrees with these maps, the behaviour is attributable to the classifier rather than to the attribution method, and it is consistent with the shortcut learning this dataset is known to permit: systematic differences in framing, cropping, and acquisition between the two class folders are predictive without reference to lung parenchyma. Masking the explanation to the segmented thorax improves what is displayed but does not alter what the model uses. Lung-field cropping during preprocessing is the appropriate mitigation and is not yet applied.
+
+Grad-CAM and LIME visualize model sensitivity, not pathology and not causal reasoning. Their outputs can be unstable, and an image coordinate is not an anatomical finding. Schema validation enforces form and evidence consistency; it cannot enforce medical correctness. The fallback reduces dependence on an external service, and it inherits every error the classifier makes.
+
+The dataset contains de-identified images from real patients and is handled under its source terms. No patient identifier or source image is sent to the language service; only the minimal serialized evidence object is transmitted. Logs exclude sensitive metadata, access is controlled, and the interface identifies whether text came from Gemini or the deterministic fallback. The system is restricted to technical research and education and does not provide diagnosis, treatment, triage, or autonomous decision support.
+
+\section{Conclusion}
+The pipeline joins DenseNet121 and Swin-T representations through explicit projection and fusion, applies CBAM once to the fused tensor, and emits a binary pneumonia probability. Grad-CAM and LIME expose complementary aspects of model behavior. Deterministic serialization keeps the language model away from the source image, and schema validation with a template fallback leaves every displayed sentence traceable to a recorded field. What the workflow connects is classification, explanation, and readable output. What it deliberately does not do is convert model sensitivity into a medical claim.
+
+\section*{Acknowledgment}
+The authors thank \TBD{} (\TBD{}, \TBD{}) for the blinded review of the
+explanation overlays and generated summaries reported in
+Section~\ref{sec:review}, and for the comments recorded there. The review
+was carried out without sight of the configuration labels, and the reviewer
+received no compensation. Responsibility for the system, the analysis, and
+any error in this paper rests with the authors.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
