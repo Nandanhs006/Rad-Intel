@@ -83,6 +83,12 @@ def parse_args():
         help="Optional limit on test samples",
     )
     parser.add_argument(
+        "--finetune-epochs",
+        type=int,
+        default=10,
+        help="Phase 2 end-to-end fine-tuning epochs; 0 keeps backbones frozen (default: 10)",
+    )
+    parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
@@ -103,6 +109,7 @@ def main():
     config = TrainingConfig(
         model_type=args.model,
         epochs=args.epochs,
+        finetune_epochs=args.finetune_epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
         loss_type=args.loss,

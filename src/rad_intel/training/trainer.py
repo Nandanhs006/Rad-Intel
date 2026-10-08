@@ -54,6 +54,15 @@ class TrainingConfig:
     max_train_samples: int | None = None
     max_val_samples: int | None = None
     max_test_samples: int | None = None
+    # Phase 2: end-to-end fine-tuning. train_cached() alone freezes both
+    # backbones, which measures head capacity rather than architecture quality:
+    # the hybrid's ~950K-parameter head reaches 100% train accuracy on frozen
+    # features while DenseNet's ~2K-parameter head cannot overfit, so the
+    # comparison inverts. Section IV-A of the paper specifies two-phase
+    # training, which this implements.
+    finetune_epochs: int = 10
+    finetune_lr_head: float = 1e-4
+    finetune_lr_backbone: float = 1e-5
     data_dir: Path | str | None = None
 
 
@@ -164,6 +173,114 @@ class HybridTrainer:
         feature_tensor = torch.cat(all_feats, dim=0)
         label_tensor = torch.tensor(all_labels, dtype=torch.long)
         return feature_tensor, label_tensor
+
+    # ------------------------------------------------------------------
+    # Phase 2: end-to-end fine-tuning
+    # ------------------------------------------------------------------
+    def _run_epoch_full(self, model, loader, criterion, optimizer=None):
+        """One pass over real images through the whole network."""
+        train = optimizer is not None
+        model.train(train)
+        total_loss, probs, labels = 0.0, [], []
+        ctx = torch.enable_grad() if train else torch.no_grad()
+        with ctx:
+            for images, lbls in loader:
+                images, lbls = images.to(self.device), lbls.to(self.device)
+                if train:
+                    optimizer.zero_grad()
+                logits = model(images)
+                loss = criterion(logits, lbls)
+                if train:
+                    loss.backward()
+                    optimizer.step()
+                total_loss += loss.item() * images.size(0)
+                probs.extend(torch.softmax(logits.detach(), dim=1)[:, 1].cpu().tolist())
+                labels.extend(lbls.cpu().tolist())
+        return total_loss / max(len(labels), 1), np.array(labels), np.array(probs)
+
+    def finetune(self, model, train_ds, val_ds, test_ds, class_weights):
+        """
+        Unfreeze everything and fine-tune end to end with discriminative
+        learning rates: a higher rate for the newly initialised head, a lower
+        one for the pretrained backbones so their features are not destroyed.
+        """
+        print(f"\n[PHASE 2] End-to-end fine-tuning for {self.config.finetune_epochs} epochs...", flush=True)
+
+        for p in model.parameters():
+            p.requires_grad = True
+
+        # Split parameters: anything in a pretrained backbone gets the low rate.
+        backbone_markers = ("densenet", "swin", "extractor", "model.conv1", "model.bn1", "model.layer")
+        backbone, head = [], []
+        for name, param in model.named_parameters():
+            (backbone if any(m in name for m in backbone_markers) else head).append(param)
+        print(f"  backbone tensors: {len(backbone)} @ lr={self.config.finetune_lr_backbone}")
+        print(f"  head tensors:     {len(head)} @ lr={self.config.finetune_lr_head}")
+
+        criterion = get_loss_function(
+            loss_type=self.config.loss_type,
+            class_weights=class_weights.to(self.device),
+            gamma=self.config.focal_gamma,
+        )
+        optimizer = AdamW(
+            [
+                {"params": backbone, "lr": self.config.finetune_lr_backbone},
+                {"params": head, "lr": self.config.finetune_lr_head},
+            ],
+            weight_decay=self.config.weight_decay,
+        )
+        scheduler = CosineAnnealingLR(optimizer, T_max=self.config.finetune_epochs, eta_min=1e-7)
+
+        # Augmentation is applied only in phase 2; phase 1 reads cached features
+        # from deterministic transforms and cannot be augmented.
+        train_loader = DataLoader(
+            CXRDataset(train_ds.samples, transform=get_transforms(is_train=True)),
+            batch_size=self.config.batch_size, shuffle=True, num_workers=2, pin_memory=True,
+        )
+        val_loader = DataLoader(val_ds, batch_size=self.config.batch_size, shuffle=False, num_workers=2)
+
+        best_auc, best_state, best_epoch, patience = -1.0, None, 0, 0
+        for epoch in range(1, self.config.finetune_epochs + 1):
+            tr_loss, tr_y, tr_p = self._run_epoch_full(model, train_loader, criterion, optimizer)
+            va_loss, va_y, va_p = self._run_epoch_full(model, val_loader, criterion)
+            scheduler.step()
+            tr_m, va_m = compute_metrics(tr_y, tr_p), compute_metrics(va_y, va_p)
+            print(
+                f"  FT Epoch {epoch:02d}/{self.config.finetune_epochs} | "
+                f"Train Loss: {tr_loss:.4f}, Acc: {tr_m.accuracy*100:.2f}% | "
+                f"Val Loss: {va_loss:.4f}, Acc: {va_m.accuracy*100:.2f}%, AUC: {va_m.auc_roc:.4f}, "
+                f"Sens: {va_m.sensitivity*100:.1f}%, Spec: {va_m.specificity*100:.1f}%",
+                flush=True,
+            )
+            if va_m.auc_roc > best_auc:
+                best_auc, best_epoch, patience = va_m.auc_roc, epoch, 0
+                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            else:
+                patience += 1
+                if patience >= self.config.patience:
+                    print(f"  [Early Stopping] No improvement for {self.config.patience} epochs.")
+                    break
+
+        print(f"\n[PHASE 2] Best validation AUC {best_auc:.4f} at fine-tune epoch {best_epoch}")
+        if best_state:
+            model.load_state_dict(best_state)
+        return model
+
+    def _save_checkpoint(self, model, final_test_metrics, best_epoch, class_weights):
+        """Persist the trained model plus the metadata serving depends on."""
+        checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "model_type": self.config.model_type,
+            "epoch": best_epoch,
+            "metrics": final_test_metrics.to_dict(),
+            "optimal_threshold": final_test_metrics.optimal_threshold,
+            "class_weights": class_weights.tolist(),
+            "timestamp": time.time(),
+        }
+        torch.save(checkpoint, self.checkpoint_path)
+        print(f"\n[SUCCESS] Checkpoint saved successfully to: {self.checkpoint_path}")
+        if self.config.model_type == "hybrid":
+            torch.save(checkpoint, self.checkpoint_dir / "best_hybrid_model.pt")
 
     def train_cached(self) -> tuple[nn.Module, EvaluationMetrics]:
         """
@@ -369,8 +486,34 @@ class HybridTrainer:
         if best_model_state:
             model.load_state_dict(best_model_state)
 
+        # 7b. Phase 2: unfreeze and fine-tune end to end. Skipped when
+        # finetune_epochs == 0, which reproduces the old frozen-backbone
+        # behaviour.
+        if self.config.finetune_epochs > 0:
+            model = self.finetune(model, train_ds, val_ds, test_ds, class_weights)
+
         # 8. Evaluate on strictly held-out test images
         print(f"\n[4/4] Evaluating Best Model on Held-Out Test Set ({len(test_samples)} images)...")
+        if self.config.finetune_epochs > 0:
+            # The backbones changed during phase 2, so cached features are stale.
+            test_loader = DataLoader(
+                test_ds, batch_size=self.config.batch_size, shuffle=False, num_workers=2
+            )
+            _, test_y, test_p = self._run_epoch_full(
+                model, test_loader,
+                get_loss_function(
+                    loss_type=self.config.loss_type,
+                    class_weights=class_weights.to(self.device),
+                    gamma=self.config.focal_gamma,
+                ),
+            )
+            opt_thresh = best_metrics.optimal_threshold if best_metrics else 0.5
+            final_test_metrics = compute_metrics(test_y, test_p, threshold=opt_thresh)
+            print("\n" + final_test_metrics.summary_table(
+                f"Final Test Set Results ({self.config.model_type.upper()})"))
+            self._save_checkpoint(model, final_test_metrics, best_epoch, class_weights)
+            return model, final_test_metrics
+
         if test_cache_path.exists():
             print(f"  Loading cached test features from {test_cache_path}...")
             test_feats, test_labels = torch.load(test_cache_path, weights_only=True)
@@ -404,17 +547,7 @@ class HybridTrainer:
         print("\n" + final_test_metrics.summary_table(f"Final Test Set Results ({self.config.model_type.upper()})"))
 
         # 9. Save complete model checkpoint
-        checkpoint = {
-            "model_state_dict": model.state_dict(),
-            "model_type": self.config.model_type,
-            "epoch": best_epoch,
-            "metrics": final_test_metrics.to_dict(),
-            "optimal_threshold": final_test_metrics.optimal_threshold,
-            "class_weights": class_weights.tolist(),
-            "timestamp": time.time(),
-        }
-        torch.save(checkpoint, self.checkpoint_path)
-        print(f"\n[SUCCESS] Checkpoint saved successfully to: {self.checkpoint_path}")
+        self._save_checkpoint(model, final_test_metrics, best_epoch, class_weights)
 
         # Previously this also wrote best_hybrid_model.pt whenever that file was
         # absent, so training ANY architecture produced a file claiming to be the
