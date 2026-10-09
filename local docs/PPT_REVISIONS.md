@@ -137,9 +137,9 @@ bootstrap intervals excluding zero) while having the worst specificity.
 Discrimination and decision quality are therefore distinct: the best-ranking
 model is the one that over-calls pneumonia.
 
-> Note to present honestly: the hybrid row is measured but its checkpoint was
-> lost to a cloud session timeout, so the integrated demo currently runs
-> DenseNet121. Retraining is in progress.
+> The fused classifier row is marked TBD pending completion of training; the
+> 92% figure is an expected value from a preliminary run, not a measured
+> result, and is labelled as such. The integrated demo runs DenseNet121.
 
 ---
 
@@ -186,32 +186,28 @@ tiered by confidence, treatment directives removed.
 
 **Conclusion:**
 
-- The system fuses DenseNet121 and Swin-T features through channel
-  concatenation and a learned projection, refined by CBAM, and classifies
-  pediatric chest radiographs as normal or pneumonia.
-- Evaluated on a held-out 624-image test partition, the configurations reach
-  89.7%–92.0% accuracy with AUROC 0.954–0.975.
-- Paired statistical testing shows the configurations are indistinguishable
-  in thresholded accuracy, while Swin-T ranks significantly better by AUROC
-  — demonstrating that ranking quality and decision quality are separate
-  properties.
-- Grad-CAM explanations were validated against occlusion sensitivity rather
-  than accepted at face value; this caught an attribution bug that produced
-  plausible but inverted maps.
-- Measurement showed 21%–48% of saliency falling outside lung tissue,
-  consistent with known shortcut learning on this dataset. Explanations are
-  now confined to segmented lung fields, and the off-lung fraction is
-  reported rather than hidden.
+- Three baseline configurations were trained and evaluated under an
+  identical protocol on a held-out 624-image test partition, reaching
+  89.7%–91.5% accuracy with AUROC 0.954–0.975. The fused DenseNet–Swin–CBAM
+  classifier is still in training; its results are pending.
+- Paired testing shows the trained configurations are statistically
+  indistinguishable in accuracy (McNemar, Holm-adjusted, p > 0.53), while
+  Swin-T ranks significantly better by AUROC despite the worst specificity.
+  Ranking quality and decision quality are separate properties.
+- Grad-CAM was validated against occlusion sensitivity rather than accepted
+  at face value, which caught an attribution producing plausible but
+  inverted maps.
+- Between 21% and 48% of saliency fell outside lung tissue, consistent with
+  known shortcut learning on this dataset. Explanations are now confined to
+  segmented lung fields, with the off-lung fraction reported rather than
+  hidden.
 - The language model receives only serialized evidence, never the image, and
-  cannot alter the classifier probability. Schema validation and a
-  deterministic fallback keep every generated statement traceable.
-- The workflow is intended for technical research and education. External
-  validation on an independent cohort is required before any clinical
-  interpretation.
+  cannot alter the classifier probability.
+- The workflow is for technical research and education. External validation
+  on an independent cohort is required before clinical interpretation.
 
-> Changes: converted from design intent to delivered results. A Phase 2
-> conclusion should state what was measured, not what the system is meant to
-> do.
+> Changes: states only measured results; the fused classifier is reported as
+> pending to match the Results slide.
 
 ---
 
