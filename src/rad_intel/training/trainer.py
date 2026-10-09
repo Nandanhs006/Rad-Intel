@@ -249,11 +249,19 @@ class HybridTrainer:
         # from deterministic transforms and cannot be augmented.
         bs = self.config.finetune_batch_size
         print(f"  phase-2 batch size: {bs}", flush=True)
+        # CLAHE runs on CPU for every augmented image, so too few workers
+        # starve the GPU and phase 2 crawls. Use what the host actually has.
+        nw = max(2, min(8, (os.cpu_count() or 4)))
+        print(f"  dataloader workers: {nw}", flush=True)
         train_loader = DataLoader(
             CXRDataset(train_ds.samples, transform=get_transforms(is_train=True)),
-            batch_size=bs, shuffle=True, num_workers=2, pin_memory=True,
+            batch_size=bs, shuffle=True, num_workers=nw, pin_memory=True,
+            persistent_workers=True, prefetch_factor=4,
         )
-        val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=2)
+        val_loader = DataLoader(
+            val_ds, batch_size=bs, shuffle=False, num_workers=nw,
+            persistent_workers=True,
+        )
 
         best_auc, best_state, best_epoch, patience = -1.0, None, 0, 0
         for epoch in range(1, self.config.finetune_epochs + 1):
