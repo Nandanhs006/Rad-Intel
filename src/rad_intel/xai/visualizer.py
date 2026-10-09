@@ -124,45 +124,77 @@ def compute_body_mask(image_rgb: np.ndarray) -> np.ndarray:
     return mask
 
 
-def compute_lung_field_mask(
-    image_rgb: np.ndarray,
-    top: float = 0.18,
-    bottom: float = 0.82,
-    side: float = 0.10,
-) -> np.ndarray:
+_LUNG_SEGMENTER = None
+_LUNG_SEG_FAILED = False
+
+
+def _get_lung_segmenter():
+    """Lazily load the ChestX-Det PSPNet, once per process."""
+    global _LUNG_SEGMENTER, _LUNG_SEG_FAILED
+    if _LUNG_SEGMENTER is not None or _LUNG_SEG_FAILED:
+        return _LUNG_SEGMENTER
+    try:
+        from torchxrayvision.baseline_models.chestx_det import PSPNet
+
+        model = PSPNet()
+        model.eval()
+        _LUNG_SEGMENTER = model
+    except Exception:
+        # No weights, no network, or the package is absent. Callers fall back
+        # to the body mask rather than losing the explanation.
+        _LUNG_SEG_FAILED = True
+    return _LUNG_SEGMENTER
+
+
+def compute_lung_field_mask(image_rgb: np.ndarray, prob_threshold: float = 0.5) -> np.ndarray:
     """
-    Approximate lung-field region: the body mask narrowed to the band where
-    lung parenchyma actually lies.
+    Segment the lung fields with a pretrained ChestX-Det PSPNet.
 
-    compute_body_mask keeps the whole patient silhouette, roughly 70% of a
-    224x224 frame, so shoulders, neck and upper arms count as "inside the
-    thorax" and saliency landing on a clavicle survives masking. On a frontal
-    chest radiograph the lungs occupy a predictable band of the body bounding
-    box, so the fractions above trim the apical/cervical region above the lung
-    apices, the sub-diaphragmatic region below the costophrenic angles, and
-    the lateral chest wall.
+    Earlier revisions masked with a body silhouette and then with an intensity
+    heuristic. Both failed on the cases that matter. A body mask keeps
+    shoulders, neck and clavicles, so apical saliency still counted as "inside
+    the thorax". An intensity rule assumes lung is darker than its
+    surroundings, which is true of aerated lung and false of consolidated
+    lung, so it carved out exactly the pathology an explanation should show.
 
-    This is a geometric prior, not a segmentation. It is deliberately crude:
-    it cannot follow the diaphragm or the mediastinal border, and on an
-    unusually rotated or cropped film it will clip real lung. It changes only
-    what is displayed and scored by zone -- the classifier is untouched, and
-    the share of saliency falling outside this region is still reported so the
-    underlying behaviour stays visible.
+    The segmentation network has no such failure mode: it was trained on chest
+    radiographs with anatomical labels and returns Left Lung and Right Lung as
+    classes distinct from Heart, Mediastinum and Facies Diaphragmatica, so the
+    diaphragm and sub-diaphragmatic structures are excluded by construction
+    while the lung bases and costophrenic angles are retained -- lower-lobe
+    pneumonia must stay inside the mask.
+
+    Masking changes only what is displayed and which zone is scored. The
+    classifier is untouched, and the fraction of saliency falling outside the
+    lungs is reported separately so the model's actual behaviour stays
+    visible.
     """
-    body = compute_body_mask(image_rgb)
-    rows = np.where(body.any(axis=1))[0]
-    cols = np.where(body.any(axis=0))[0]
-    if rows.size == 0 or cols.size == 0:
-        return body
+    seg = _get_lung_segmenter()
+    if seg is None:
+        return compute_body_mask(image_rgb)
 
-    r0, r1 = int(rows.min()), int(rows.max())
-    c0, c1 = int(cols.min()), int(cols.max())
-    h, w = r1 - r0 + 1, c1 - c0 + 1
+    try:
+        import torch
 
-    band = np.zeros_like(body)
-    band[r0 + int(h * top) : r0 + int(h * bottom),
-         c0 + int(w * side) : c0 + int(w * (1.0 - side))] = True
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY) if image_rgb.ndim == 3 else image_rgb
+        h, w = gray.shape[:2]
+        # The network expects the [-1024, 1024] range used by its training data.
+        x = torch.from_numpy((gray.astype(np.float32) / 255.0 * 2048.0) - 1024.0)[None, None]
+        x = torch.nn.functional.interpolate(x, size=(512, 512), mode="bilinear", align_corners=False)
+        with torch.no_grad():
+            probs = torch.sigmoid(seg(x))[0]
 
-    mask = body & band
-    # Never hand back an empty explanation.
-    return mask if mask.mean() >= 0.08 else body
+        idx = [seg.targets.index(name) for name in ("Left Lung", "Right Lung")]
+        lung = (probs[idx].max(dim=0).values > prob_threshold).float()[None, None]
+        lung = torch.nn.functional.interpolate(lung, size=(h, w), mode="nearest")
+        mask = lung[0, 0].numpy().astype(bool)
+    except Exception:
+        return compute_body_mask(image_rgb)
+
+    # A collapsed segmentation would hide the explanation entirely.
+    if mask.mean() < 0.05:
+        return compute_body_mask(image_rgb)
+
+    # Small dilation: peripheral and subpleural consolidation sits at the edge
+    # of the segmented field.
+    return cv2.dilate(mask.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)
