@@ -256,7 +256,7 @@ Reproducibility records include the Kaggle dataset version, split manifest, file
 
 \section{Results}
 \label{sec:results}
-Results cover the five configurations of Table~\ref{tab:baselines} under the
+Results cover all five configurations of Table~\ref{tab:baselines} under the
 protocol fixed in Section~\ref{sec:setup}. Every configuration was trained
 once, at seed 42, and evaluated on the held-out 624-image test partition.
 Single-run results cannot separate an architectural effect from seed
@@ -288,24 +288,29 @@ the complete classifier. Two differences carry the architectural claims: rows
 four against five for the attention module, and rows one and two against row
 four for fusion itself.
 
-Two patterns in Table~\ref{tab:main} matter more than the ordering. The
-first is that every configuration is far stronger at detecting pneumonia than
-at recognising a normal radiograph: sensitivity ranges from $0.933$ to
-$0.974$ while specificity ranges from $0.778$ to $0.872$. This follows the
-class ratio of the development set, where pneumonia outnumbers normal by
-roughly $2.9{:}1$; the inverse-frequency weights applied during training were
-$1.939$ for normal and $0.674$ for pneumonia, and the residual asymmetry is
-what those weights did not remove.
+Fusion separates from the single-branch baselines. Both fused
+configurations exceed every baseline on accuracy, specificity, F1 and
+balanced accuracy: $0.934$ and $0.920$ against $0.915$, $0.901$ and $0.897$.
+The gain is concentrated in specificity, which rises from a $0.778$--$0.846$
+band across the baselines to $0.914$ without CBAM and $0.855$ with it. Since
+specificity is the weaker direction for every architecture tested, this is
+where fusion contributes.
 
-The second is that the complete classifier does not win uniformly. It leads
-on accuracy ($0.920$), specificity, precision, F1 and balanced accuracy, but
-Swin-T attains the higher AUROC ($0.975$ against $0.970$) while operating at
-a specificity nearly ten points lower. Fusion therefore buys a better
-balanced operating point rather than better ranking, and the two should not
-be conflated. Confusion matrices at $t^*$ over the 624 test images are
-$204/30/20/370$ (TN/FP/FN/TP) for the complete classifier, $198/36/17/373$
-for DenseNet121, $182/52/10/380$ for Swin-T, and $197/37/26/364$ for
-ResNet50.
+Post-fusion CBAM does not add to that. The configuration without it leads on
+accuracy, AUROC, specificity, F1 and balanced accuracy, and the complete
+classifier leads only on sensitivity ($0.959$). Section~\ref{sec:results}-D
+tests whether that gap is real.
+
+Every configuration remains more reliable at detecting pneumonia than at
+recognising a normal radiograph, with sensitivity $0.933$--$0.959$ against
+specificity $0.778$--$0.914$. This follows the class ratio of the
+development set, in which pneumonia outnumbers normal by roughly $2.9{:}1$;
+inverse-frequency weights of $1.939$ and $0.674$ were applied during
+training, and the residual asymmetry is what those weights did not remove.
+Confusion matrices at $t^*$ over the 624 test images are $214/20/21/369$
+(TN/FP/FN/TP) for fusion without CBAM, $200/34/16/374$ for the complete
+classifier, $198/36/17/373$ for DenseNet121, $182/52/10/380$ for Swin-T, and
+$197/37/26/364$ for ResNet50.
 
 \begin{table*}[t]
 \centering
@@ -318,10 +323,10 @@ ResNet50.
 Configuration & AUROC & AUPRC & Sensitivity & Specificity & F1 & Bal.\ acc. & ECE \\
 \midrule
 DenseNet121         & 0.962 & 0.969 & 0.956 & 0.846 & 0.934 & 0.901 & \textbf{0.052} \\
-Swin-T              & \textbf{0.975} & \textbf{0.983} & 0.974 & 0.778 & 0.925 & 0.876 & 0.054 \\
+Swin-T              & 0.975 & \textbf{0.983} & 0.974 & 0.778 & 0.925 & 0.876 & 0.054 \\
 ResNet50            & 0.954 & 0.966 & 0.933 & 0.838 & 0.919 & 0.885 & 0.075 \\
-Fusion without CBAM & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
-Complete classifier & 0.970 & \TBD & 0.949 & \textbf{0.872} & \textbf{0.937} & \textbf{0.910} & \TBD \\
+Fusion without CBAM & \textbf{0.977} & 0.981 & 0.946 & \textbf{0.914} & \textbf{0.947} & \textbf{0.930} & 0.078 \\
+Complete classifier & 0.974 & 0.972 & \textbf{0.959} & 0.855 & 0.937 & 0.907 & 0.062 \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -366,22 +371,35 @@ Because both procedures compare two classifiers on identical images rather
 than aggregating across runs, they are informative even from single training
 runs.
 
-The result separates two questions that the accuracy column conflates. No
-pair of configurations differs significantly in thresholded accuracy: the
-largest discordance is 33 against 22 images, giving a Holm-adjusted
-$p=0.531$. The ordering $0.915$, $0.901$, $0.897$ in Table~\ref{tab:main} is
-therefore not a ranking, and should not be read as one. Discrimination tells
-a different story. Swin-T attains a significantly higher AUROC than both
-convolutional baselines, by $0.013$ against DenseNet121 and $0.021$ against
-ResNet50, with bootstrap intervals excluding zero in each case, while
-DenseNet121 and ResNet50 are indistinguishable. The configuration that ranks
-best is thus the one with the worst specificity, which is the clearest
-statement available of the distinction this paper draws between ranking
-quality and decision quality.
+The ablation does not support the attention module. Against fusion without
+CBAM, the complete classifier is correct on 9 radiographs its ablated
+counterpart misses and incorrect on 18 that the ablated model gets right,
+giving a Holm-adjusted $p=0.244$; the AUROC difference is $-0.003$ with an
+interval spanning zero. Post-fusion CBAM therefore produces no measurable
+improvement on this dataset. The point estimates favour the ablated
+configuration, but not significantly, so the defensible claim is an absence
+of effect rather than a reversal. CBAM contributes $32{,}868$ parameters,
+under $0.1\%$ of the model, and on this evidence it is not justified.
+
+No comparison against the single-branch baselines reaches significance after
+correction either. The closest is Swin-T, discordant 20 against 8 with an
+unadjusted $p=0.036$ that becomes $0.143$ once the family of four
+comparisons is accounted for. Against DenseNet121 the complete classifier is
+effectively tied, 18 against 15. Accuracy differences of one to two points
+on a 624-image partition are not resolvable from a single run, and the
+ordering of that column should not be read as a ranking.
+
+Discrimination behaves differently from accuracy. The complete classifier
+attains a significantly higher AUROC than DenseNet121 ($+0.012$) and
+ResNet50 ($+0.019$), with bootstrap intervals excluding zero in both cases,
+while being indistinguishable from Swin-T and from its own ablation. Fusion
+thus improves ranking over the convolutional baselines even where the
+thresholded decisions are statistically tied, which is the distinction this
+paper draws between ranking quality and decision quality.
 
 \begin{table}[t]
 \centering
-\caption{Paired comparisons on the same 624 test images. McNemar compares thresholded errors; $\Delta$AUROC uses a paired bootstrap with 2{,}000 resamples. $p$-values are Holm-adjusted across the three completed comparisons. Rows involving the fusion configurations await their checkpoints.}
+\caption{The complete classifier against each other configuration, on the same 624 test images. McNemar compares thresholded errors; $\Delta$AUROC uses a paired bootstrap with 2{,}000 resamples. $p$-values are Holm-adjusted across the four comparisons.}
 \label{tab:stats}
 \scriptsize
 \setlength{\tabcolsep}{3.5pt}
@@ -389,10 +407,10 @@ quality and decision quality.
 \toprule
 Comparison & $\Delta$AUROC [95\% CI] & McN.\ $p$ & Holm $p$ \\
 \midrule
-DenseNet121 vs Swin-T    & $-0.013$ [$-0.022$, $-0.006$] & 0.243 & 0.531 \\
-DenseNet121 vs ResNet50  & $+0.008$ [$-0.002$, $+0.018$] & 0.177 & 0.531 \\
-Swin-T vs ResNet50       & $+0.021$ [$+0.011$, $+0.032$] & 0.890 & 0.890 \\
-Complete vs Fusion w/o CBAM & \TBD & \TBD & \TBD \\
+vs.\ DenseNet121         & $+0.012$ [$+0.005$, $+0.020$] & 0.728 & 0.728 \\
+vs.\ Swin-T              & $-0.001$ [$-0.006$, $+0.003$] & 0.036 & 0.143 \\
+vs.\ ResNet50            & $+0.019$ [$+0.009$, $+0.031$] & 0.065 & 0.195 \\
+vs.\ Fusion without CBAM & $-0.003$ [$-0.006$, $+0.001$] & 0.122 & 0.244 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -574,17 +592,31 @@ deployment imposes.
 
 \section{Discussion}
 \label{sec:discussion}
-The margins in Table~\ref{tab:main} are small, and the paired tests in
-Table~\ref{tab:stats} settle what that means. No pair of configurations
-differs significantly in thresholded accuracy once the comparison is made on
-identical images: the strongest case, DenseNet121 against ResNet50,
-discords on 33 against 22 radiographs and yields a Holm-adjusted
-$p=0.531$. An accuracy spread of 1.8 points across three architectures is
-therefore consistent with sampling noise on a 624-image partition, and the
-ordering in that column carries no evidential weight. Reporting it as a
-ranking would be the single most likely error a reader could draw from this
-table, which is why the comparison is given alongside it rather than left to
-a reader's inference.
+The ablation does not support one of this paper's own design choices, and
+that is the result worth stating plainly. Post-fusion CBAM yields no
+measurable improvement: against the otherwise identical configuration
+without it, the complete classifier wins 9 radiographs and loses 18, at a
+Holm-adjusted $p=0.244$, with an AUROC difference whose interval spans zero.
+The same direction appeared under an earlier frozen-backbone protocol, so it
+is not an artefact of one training regime. Two readings are available and
+only one is supported: that CBAM degrades performance is not demonstrated,
+because the gap is not significant, but that CBAM helps is not demonstrated
+either. On this dataset the module earns no place in the architecture.
+
+What fusion itself contributes is clearer. Both fused configurations exceed
+every single-branch baseline on accuracy, specificity, F1 and balanced
+accuracy, and the complete classifier attains significantly higher AUROC
+than DenseNet121 and ResNet50. The gain concentrates in specificity, which
+is the weak direction for every architecture tested here. Combining a
+convolutional and a transformer branch is therefore justified by this
+evidence; refining the fused tensor with channel and spatial attention is
+not.
+
+Accuracy differences between configurations should not be read as a ranking.
+No comparison in Table~\ref{tab:stats} survives correction, and a one- to
+two-point gap on 624 images is not resolvable from a single run. The
+comparison is reported alongside the table for that reason rather than left
+to a reader's inference.
 
 What does separate the configurations is the operating point rather than the
 ordering. Swin-T achieves the best AUROC in the table, $0.975$, and the worst

@@ -1,0 +1,42 @@
+[
+  {
+    "vs": "DenseNet121",
+    "mcnemar_b": 18,
+    "mcnemar_c": 15,
+    "mcnemar_p": 0.7283,
+    "delta_auroc": 0.0121,
+    "ci_low": 0.0055,
+    "ci_high": 0.0197,
+    "mcnemar_p_holm": 0.7283
+  },
+  {
+    "vs": "Swin-T",
+    "mcnemar_b": 20,
+    "mcnemar_c": 8,
+    "mcnemar_p": 0.0357,
+    "delta_auroc": -0.0012,
+    "ci_low": -0.006,
+    "ci_high": 0.0033,
+    "mcnemar_p_holm": 0.1428
+  },
+  {
+    "vs": "ResNet50",
+    "mcnemar_b": 32,
+    "mcnemar_c": 18,
+    "mcnemar_p": 0.0649,
+    "delta_auroc": 0.0193,
+    "ci_low": 0.0091,
+    "ci_high": 0.0306,
+    "mcnemar_p_holm": 0.1947
+  },
+  {
+    "vs": "Fusion without CBAM",
+    "mcnemar_b": 9,
+    "mcnemar_c": 18,
+    "mcnemar_p": 0.1221,
+    "delta_auroc": -0.0028,
+    "ci_low": -0.0065,
+    "ci_high": 0.0007,
+    "mcnemar_p_holm": 0.2442
+  }
+]

@@ -11,8 +11,8 @@ validation AUROC. Test = held-out official 624-image folder.
 | DenseNet121    | 91.51 | 0.9618 | 95.64 | 84.62 | 91.20 | 0.9337 | 0.9013 | 0.4628 | 198 | 36 | 17 | 373 |
 | Swin-T         | 90.06 | 0.9749 | 97.44 | 77.78 | 87.96 | 0.9246 | 0.8761 | 0.4221 | 182 | 52 | 10 | 380 |
 | ResNet50       | 89.90 | 0.9545 | 93.33 | 84.19 | 90.77 | 0.9204 | 0.8876 | 0.5569 | 197 | 37 | 26 | 364 |
-| Fusion w/o CBAM| TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | | | | |
-| **Complete (hybrid)** | **91.99** | **0.9701** | **94.87** | **87.18** | **92.50** | **0.9367** | **0.9103** | 0.5826 | 204 | 30 | 20 | 370 |
+| Fusion w/o CBAM| 93.43 | 0.9765 | 94.62 | 91.45 | 94.86 | 0.9474 | 0.9303 | 0.7169 | 214 | 20 | 21 | 369 |
+| **Complete (hybrid)** | 91.99 | 0.9736 | 95.90 | 85.47 | 91.67 | 0.9373 | 0.9069 | 0.5574 | 200 | 34 | 16 | 374 |
 
 Hybrid run time: 48.5 min on a Colab T4. Phase 2 best val AUROC 0.9976 at
 fine-tune epoch 4; early stopping at epoch 9.
@@ -96,3 +96,28 @@ Swin-T ranks significantly better than both CNNs while having the worst
 specificity (0.778). Discrimination and decision quality separate cleanly:
 the configurations are statistically indistinguishable at their operating
 points, and only the ranking differs.
+
+
+## FINAL — all five configurations, two-phase protocol
+
+| Model | Acc | AUROC | AUPRC | Sens | Spec | F1 | BalAcc | ECE |
+|---|---|---|---|---|---|---|---|---|
+| DenseNet121 | 91.51 | 0.962 | 0.969 | 0.956 | 0.846 | 0.934 | 0.901 | 0.052 |
+| Swin-T | 90.06 | 0.975 | 0.983 | 0.974 | 0.778 | 0.925 | 0.876 | 0.054 |
+| ResNet50 | 89.74 | 0.954 | 0.966 | 0.933 | 0.838 | 0.919 | 0.885 | 0.075 |
+| Fusion w/o CBAM | **93.43** | **0.977** | 0.981 | 0.946 | **0.914** | **0.947** | **0.930** | 0.078 |
+| Complete (CBAM) | 91.99 | 0.974 | 0.972 | **0.959** | 0.855 | 0.937 | 0.907 | 0.062 |
+
+### Complete classifier vs each (McNemar + paired bootstrap, Holm over 4)
+
+| vs | dAUROC [95% CI] | McNemar p | Holm p | b / c | Verdict |
+|---|---|---|---|---|---|
+| DenseNet121 | +0.012 [+0.005,+0.020] | 0.728 | 0.728 | 18/15 | AUROC sig.; accuracy tied |
+| Swin-T | -0.001 [-0.006,+0.003] | 0.036 | 0.143 | 20/8 | ns after correction |
+| ResNet50 | +0.019 [+0.009,+0.031] | 0.065 | 0.195 | 32/18 | AUROC sig.; accuracy ns |
+| Fusion w/o CBAM | -0.003 [-0.006,+0.001] | 0.122 | **0.244** | 9/18 | **CBAM: no measurable effect** |
+
+CONCLUSION: fusion is supported (both fused configs beat all baselines;
+AUROC significantly higher than DenseNet121 and ResNet50). Post-fusion CBAM
+is NOT supported - no significant difference, point estimates favour the
+ablated model. Same direction observed under the earlier frozen protocol.

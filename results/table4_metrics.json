@@ -43,5 +43,35 @@
     "balanced_accuracy": 0.8855,
     "brier": 0.0848,
     "ece": 0.0747
+  },
+  {
+    "model": "Fusion without CBAM",
+    "key": "hybrid_no_cbam",
+    "threshold": 0.7169,
+    "accuracy": 0.9343,
+    "auroc": 0.9765,
+    "auprc": 0.9813,
+    "sensitivity": 0.9462,
+    "specificity": 0.9145,
+    "precision": 0.9486,
+    "f1": 0.9474,
+    "balanced_accuracy": 0.9303,
+    "brier": 0.0655,
+    "ece": 0.0783
+  },
+  {
+    "model": "Complete classifier",
+    "key": "hybrid",
+    "threshold": 0.5574,
+    "accuracy": 0.9199,
+    "auroc": 0.9736,
+    "auprc": 0.9723,
+    "sensitivity": 0.959,
+    "specificity": 0.8547,
+    "precision": 0.9167,
+    "f1": 0.9373,
+    "balanced_accuracy": 0.9068,
+    "brier": 0.065,
+    "ece": 0.0621
   }
 ]
