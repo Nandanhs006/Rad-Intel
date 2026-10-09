@@ -357,8 +357,8 @@ bins.
 
 \begin{figure}[t]
 \centering
-\figbox{0.88\columnwidth}{3.6cm}{ROC curves for all six configurations (left)\\ and reliability diagram for the complete\\ classifier with 15 equal-width bins (right)}
-\caption{Discrimination and calibration behavior on the held-out test partition.}
+\includegraphics[width=\columnwidth]{fig_roc_reliability.png}
+\caption{Discrimination and calibration on the held-out test partition. ROC curves for all five configurations (left) and reliability curves over 15 equal-width bins (right).}
 \label{fig:roc}
 \end{figure}
 
@@ -453,8 +453,19 @@ moved the same configuration to $r=+0.31$. A negative correlation is the
 only reliable signal that such a bug exists, since the maps remain visually
 plausible throughout.
 
-With all three corrected, agreement is positive but modest across
-configurations, $r=0.27$ to $0.31$. The maps track the models, and the
+With all three corrected, agreement is positive for every configuration,
+but it is markedly weaker for the fused models: $r=0.27$ to $0.31$ for the
+single-branch baselines against $r=0.10$ for the complete classifier and
+$r=0.04$ for its ablation. Attribution through a fused representation is
+evidently harder, since the gradient at the fusion point mixes contributions
+from two backbones with different inductive biases, and a single map must
+summarise both. The fused models classify better and explain less
+faithfully, which is a trade-off worth stating explicitly in a system whose
+purpose is to show its reasoning. A further target had to be corrected for
+the complete classifier: hooking the spatial-attention convolution inside
+CBAM captures a single-channel attention mask rather than the refined
+feature tensor, and only two of six sample peaks then fell inside the lung
+fields, against six of six once the module output was targeted instead. The maps track the models, and the
 models are only partly attending to lung parenchyma: before masking, between
 $21\%$ and $48\%$ of saliency mass fell outside the segmented lung fields,
 and on normal radiographs the global maximum frequently lay over the
@@ -486,8 +497,8 @@ Mean runtime per image (s)    & \TBD & \TBD \\
 
 \begin{figure}[t]
 \centering
-\figbox{0.88\columnwidth}{4.2cm}{Four test cases in rows: true normal, true\\ pneumonia, false positive, false negative.\\ Columns: radiograph, Grad-CAM overlay,\\ LIME regions, serialized evidence excerpt}
-\caption{Qualitative explanation output, including two misclassified cases. Highlighted regions indicate model sensitivity and are not radiological findings.}
+\includegraphics[width=0.78\columnwidth]{fig_qualitative.png}
+\caption{Qualitative output of the complete classifier on four held-out cases, including one false positive and one false negative. $P$ is the predicted probability of pneumonia. Highlighted regions indicate model sensitivity confined to the segmented lung fields; they are not radiological findings.}
 \label{fig:qualitative}
 \end{figure}
 
