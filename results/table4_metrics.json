@@ -1,0 +1,47 @@
+[
+  {
+    "model": "DenseNet121",
+    "key": "densenet121",
+    "threshold": 0.4628,
+    "accuracy": 0.9151,
+    "auroc": 0.9617,
+    "auprc": 0.9688,
+    "sensitivity": 0.9564,
+    "specificity": 0.8462,
+    "precision": 0.912,
+    "f1": 0.9337,
+    "balanced_accuracy": 0.9013,
+    "brier": 0.0689,
+    "ece": 0.0521
+  },
+  {
+    "model": "Swin-T",
+    "key": "swin_t",
+    "threshold": 0.4221,
+    "accuracy": 0.9006,
+    "auroc": 0.9749,
+    "auprc": 0.9827,
+    "sensitivity": 0.9744,
+    "specificity": 0.7778,
+    "precision": 0.8796,
+    "f1": 0.9246,
+    "balanced_accuracy": 0.8761,
+    "brier": 0.0618,
+    "ece": 0.0545
+  },
+  {
+    "model": "ResNet50",
+    "key": "resnet50",
+    "threshold": 0.5569,
+    "accuracy": 0.8974,
+    "auroc": 0.9543,
+    "auprc": 0.9664,
+    "sensitivity": 0.9333,
+    "specificity": 0.8376,
+    "precision": 0.9055,
+    "f1": 0.9192,
+    "balanced_accuracy": 0.8855,
+    "brier": 0.0848,
+    "ece": 0.0747
+  }
+]

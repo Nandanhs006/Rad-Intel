@@ -317,9 +317,9 @@ ResNet50.
 \toprule
 Configuration & AUROC & AUPRC & Sensitivity & Specificity & F1 & Bal.\ acc. & ECE \\
 \midrule
-DenseNet121         & 0.962 & \TBD & 0.956 & 0.846 & 0.934 & 0.901 & \TBD \\
-Swin-T              & \textbf{0.975} & \TBD & 0.974 & 0.778 & 0.925 & 0.876 & \TBD \\
-ResNet50            & 0.955 & \TBD & 0.933 & 0.842 & 0.920 & 0.888 & \TBD \\
+DenseNet121         & 0.962 & 0.969 & 0.956 & 0.846 & 0.934 & 0.901 & \textbf{0.052} \\
+Swin-T              & \textbf{0.975} & \textbf{0.983} & 0.974 & 0.778 & 0.925 & 0.876 & 0.054 \\
+ResNet50            & 0.954 & 0.966 & 0.933 & 0.838 & 0.919 & 0.885 & 0.075 \\
 Fusion without CBAM & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
 Complete classifier & 0.970 & \TBD & 0.949 & \textbf{0.872} & \textbf{0.937} & \textbf{0.910} & \TBD \\
 \bottomrule
@@ -333,11 +333,22 @@ informative: it is the magnitude by which the class imbalance pushes the
 decision boundary, and applying the default $0.5$ instead costs specificity
 on every borderline radiograph. The selected threshold is stored in the
 checkpoint and applied unchanged at inference, so the deployed operating
-point and the reported metrics describe the same classifier. Across the five
-seeds $t^*$ averaged \TBD{} with a range of \TBD{} to \TBD{}; the
-validation-to-test gap in the operating point was \TBD{}, and the Brier
-score at $t^*$ was \TBD{}. Fig.~\ref{fig:roc} gives the reliability curve
-over 15 equal-width bins.
+point and the reported metrics describe the same classifier. The thresholds the four configurations
+selected differ substantially, from $0.422$ for Swin-T to $0.583$ for the
+complete classifier, which is itself a reason to report each model at its own
+operating point rather than at a shared default.
+
+Calibration is better than the spread of thresholded accuracies might
+suggest. Brier scores over the test partition were $0.069$ for DenseNet121,
+$0.062$ for Swin-T and $0.085$ for ResNet50, with expected calibration errors
+of $0.052$, $0.054$ and $0.075$ as listed in Table~\ref{tab:main}. Emitted
+probabilities therefore track observed frequencies reasonably closely even
+where the thresholded decisions diverge, which supports the earlier reading
+that these configurations differ more in where they cut than in how they
+rank. Across the full seed set $t^*$ averaged \TBD{} with a range of \TBD{}
+to \TBD{}, and the validation-to-test gap in the operating point was
+\TBD{}. Fig.~\ref{fig:roc} gives the reliability curves over 15 equal-width
+bins.
 
 \begin{figure}[t]
 \centering
