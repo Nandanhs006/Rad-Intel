@@ -55,3 +55,6 @@ Rad-Intel paper/*.pdf
 chest_xray/
 *.pt
 .DS_Store
+
+results/*.html
+results/*.csv
