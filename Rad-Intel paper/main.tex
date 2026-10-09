@@ -221,7 +221,7 @@ The validator rejects missing or additional keys, non-string values, unsupported
 \section{Implementation and Evaluation Setup}
 \label{sec:setup}
 \subsection{Training Configuration}
-The model is implemented in PyTorch using \texttt{torchvision} and \texttt{timm}. Training uses AdamW \cite{loshchilov2019adamw} with cosine annealing, a batch size of 32, weight decay $10^{-4}$, and a maximum of 20 epochs. The fusion, CBAM, and classification layers are trained for five epochs with both pretrained branches frozen. The complete network is then fine-tuned with learning rates of $10^{-4}$ for the new layers and $10^{-5}$ for the backbones. Validation area under the receiver operating characteristic curve (AUROC) selects the checkpoint, and early stopping uses a patience of five epochs. Five fixed seeds (42, 52, 62, 72, and 82) are used for repeated runs.
+The model is implemented in PyTorch using \texttt{torchvision} and \texttt{timm}. Training uses AdamW \cite{loshchilov2019adamw} with cosine annealing, a batch size of 32, weight decay $10^{-4}$, and a maximum of 20 epochs. Training proceeds in two phases. The fusion, CBAM, and classification layers are first trained for eight epochs with both pretrained branches frozen, reading feature maps extracted once and cached. The complete network is then unfrozen and fine-tuned end to end for up to twelve epochs with discriminative learning rates, $10^{-4}$ for the new layers and $10^{-5}$ for the backbones, at a reduced batch size of 12 to fit the activations of both branches. Augmentation applies in the second phase only, since the cached features of the first are computed under deterministic preprocessing. Validation area under the receiver operating characteristic curve (AUROC) selects the checkpoint in both phases, with early stopping at a patience of five epochs. Results below are from single runs at seed 42; the prespecified seed set (42, 52, 62, 72, and 82) for repeated runs is not yet complete.
 
 \begin{table}[t]
 \centering
@@ -246,7 +246,7 @@ Complete classifier & DenseNet121--Swin-T fusion with CBAM \\
 Every configuration in Table~\ref{tab:baselines} uses the same data partitions, deterministic preprocessing, augmentation policy, class-weighted loss, checkpoint rule, threshold procedure, seed set, and search budget. The ablation set also removes each feature branch separately. Explainability and language generation are applied after classification and do not alter the class probability.
 
 \subsection{Metrics and Reproducibility}
-Classification is scored with AUROC, area under the precision--recall curve, sensitivity, specificity, precision, F1, balanced accuracy, and the confusion matrix. Calibration is reported separately, through the Brier score \cite{brier1950verification}, expected calibration error \cite{guo2017calibration}, and reliability diagrams, since a classifier can rank cases well and still be badly calibrated. Every number is summarized over the five seeds with bootstrap confidence intervals. Paired McNemar tests \cite{mcnemar1947note} compare thresholded errors; DeLong \cite{delong1988comparing} and paired bootstrap procedures compare AUROC. A Holm correction \cite{holm1979simple} covers the prespecified family of model comparisons.
+Classification is scored with AUROC, area under the precision--recall curve, sensitivity, specificity, precision, F1, balanced accuracy, and the confusion matrix. Calibration is reported separately, through the Brier score \cite{brier1950verification}, expected calibration error \cite{guo2017calibration}, and reliability diagrams, since a classifier can rank cases well and still be badly calibrated. Where repeated runs are available, numbers are summarized over the seed set with bootstrap confidence intervals. Paired McNemar tests \cite{mcnemar1947note} compare thresholded errors between configurations on the same test images; DeLong \cite{delong1988comparing} and paired bootstrap procedures compare AUROC. A Holm correction \cite{holm1979simple} covers the prespecified family of model comparisons. These comparisons require paired per-image predictions rather than summary statistics, and are reported separately from the single-run results in Table~\ref{tab:main}.
 
 Explanation analysis covers deletion and insertion curves \cite{petsiuk2018rise}, stability under small label-preserving perturbations, map concentration, and Grad-CAM/LIME agreement. No localization score appears anywhere in this paper. The Kaggle release ships class labels, not lesion masks or bounding boxes, and scoring localization without them would report an assumption as a measurement. Text analysis records schema-valid rate, evidence agreement, forbidden-claim rate, fallback frequency, repeatability under identical inputs, and component-level latency, with the deterministic template as the direct comparator.
 
@@ -257,13 +257,15 @@ Reproducibility records include the Kaggle dataset version, split manifest, file
 \section{Results}
 \label{sec:results}
 Results cover the five configurations of Table~\ref{tab:baselines} under the
-protocol fixed in Section~\ref{sec:setup}. At the time of writing only the
-DenseNet121 baseline has completed training, so its row reports a single run
-(seed 42) on the held-out 624-image test partition rather than the five-seed
-mean the protocol specifies; the remaining rows, the bootstrap intervals, and
-every paired comparison await the full sweep and are marked \TBD{}. No cell
-marked \TBD{} carries an estimate or a projected value, and the single-run
-entries are labelled as such wherever they appear.
+protocol fixed in Section~\ref{sec:setup}. Every configuration was trained
+once, at seed 42, and evaluated on the held-out 624-image test partition.
+Single-run results cannot separate an architectural effect from seed
+variation, and the margins reported below are small enough that this
+limitation governs how they may be read; it is stated here rather than left
+to the reader to infer. Repeated runs across the seed set remain the
+prespecified protocol and are marked \TBD{}, as are every bootstrap interval
+and paired comparison that depends on them. No cell marked \TBD{} carries an
+estimate or a projected value.
 
 \subsection{Implementation Details}
 Training was performed on \TBD{} (GPU). Inference and explanation figures in
@@ -286,17 +288,28 @@ the complete classifier. Two differences carry the architectural claims: rows
 four against five for the attention module, and rows one and two against row
 four for fusion itself.
 
-For the DenseNet121 baseline the confusion matrix at $t^*=0.70$ over the 624
-test images is 365 true positives, 35 false positives, 199 true negatives,
-and 25 false negatives, giving an accuracy of $0.904$ and a precision of
-$0.913$. The gap between sensitivity ($0.936$) and specificity ($0.850$)
-reflects the class ratio of the development set, in which pneumonia
-outnumbers normal by roughly $2.9{:}1$; the inverse-frequency weights used in
-training were $1.939$ for the normal class and $0.674$ for pneumonia.
+Two patterns in Table~\ref{tab:main} matter more than the ordering. The
+first is that every configuration is far stronger at detecting pneumonia than
+at recognising a normal radiograph: sensitivity ranges from $0.933$ to
+$0.974$ while specificity ranges from $0.778$ to $0.872$. This follows the
+class ratio of the development set, where pneumonia outnumbers normal by
+roughly $2.9{:}1$; the inverse-frequency weights applied during training were
+$1.939$ for normal and $0.674$ for pneumonia, and the residual asymmetry is
+what those weights did not remove.
+
+The second is that the complete classifier does not win uniformly. It leads
+on accuracy ($0.920$), specificity, precision, F1 and balanced accuracy, but
+Swin-T attains the higher AUROC ($0.975$ against $0.970$) while operating at
+a specificity nearly ten points lower. Fusion therefore buys a better
+balanced operating point rather than better ranking, and the two should not
+be conflated. Confusion matrices at $t^*$ over the 624 test images are
+$204/30/20/370$ (TN/FP/FN/TP) for the complete classifier, $198/36/17/373$
+for DenseNet121, $182/52/10/380$ for Swin-T, and $197/37/26/364$ for
+ResNet50.
 
 \begin{table*}[t]
 \centering
-\caption{Test-set classification results at the validation-selected threshold $t^*$, on the held-out 624-image partition. Entries are mean [95\% bootstrap CI] over seeds 42, 52, 62, 72, and 82, except $^{\dagger}$, which is a single run at seed 42 and carries no interval. ECE is computed with 15 equal-width bins.}
+\caption{Test-set classification results at the validation-selected threshold $t^*$, on the held-out 624-image partition. All entries are single runs at seed 42 and carry no confidence interval; see Section~\ref{sec:discussion} on the size of the margins. Best value per column in bold. ECE is computed with 15 equal-width bins.}
 \label{tab:main}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
@@ -304,11 +317,11 @@ training were $1.939$ for the normal class and $0.674$ for pneumonia.
 \toprule
 Configuration & AUROC & AUPRC & Sensitivity & Specificity & F1 & Bal.\ acc. & ECE \\
 \midrule
-DenseNet121$^{\dagger}$ & 0.947 & \TBD & 0.936 & 0.850 & 0.924 & 0.893 & \TBD \\
-Swin-T                 & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
-ResNet50               & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
-Fusion without CBAM    & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
-Complete classifier    & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+DenseNet121         & 0.962 & \TBD & 0.956 & 0.846 & 0.934 & 0.901 & \TBD \\
+Swin-T              & \textbf{0.975} & \TBD & 0.974 & 0.778 & 0.925 & 0.876 & \TBD \\
+ResNet50            & 0.955 & \TBD & 0.933 & 0.842 & 0.920 & 0.888 & \TBD \\
+Fusion without CBAM & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+Complete classifier & 0.970 & \TBD & 0.949 & \textbf{0.872} & \textbf{0.937} & \textbf{0.910} & \TBD \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -515,15 +528,35 @@ GPU, which is the deployment constraint a teaching setting imposes.
 
 \section{Discussion}
 \label{sec:discussion}
-Each architectural claim in this paper rests on one controlled difference,
-not on an aggregate score. Fusion is credited only by the gap between the
-single-branch rows and row four of Table~\ref{tab:main}; post-fusion CBAM
-only by the gap between rows four and five. The reason for that strictness is
-the dataset. The Kaggle partition is small, imbalanced, and drawn from a
-single institution, and across 624 test images a one- or two-point
-difference in accuracy sits well inside what seed variation alone produces.
-Bootstrap intervals and Holm-adjusted comparisons are not decoration on
-Table~\ref{tab:stats}. Without them the table cannot be read at all.
+The margins in Table~\ref{tab:main} are small, and saying so plainly is more
+useful than ranking the rows. The complete classifier answers 574 of 624 test
+radiographs correctly against 571 for DenseNet121: a difference of three
+images. From a single run, with no confidence interval, that is not evidence
+of an architectural effect. The specificity gap is wider in relative terms,
+204 true negatives against 198, but it rests on six images and deserves the
+same caution. Bootstrap intervals and the paired comparisons of
+Table~\ref{tab:stats} are what would settle this, and until they exist the
+honest reading of the accuracy column is that four configurations perform
+comparably.
+
+What does separate the configurations is the operating point rather than the
+ordering. Swin-T achieves the best AUROC in the table, $0.975$, and the worst
+specificity, $0.778$: it ranks radiographs well and then commits to pneumonia
+too readily, returning 52 false positives against the complete classifier's
+30. Ranking quality and decision quality come apart here, which is why the
+paper reports AUROC alongside sensitivity and specificity at $t^*$ rather
+than leading with a single headline figure. On that reading the contribution
+of fusion is a balanced decision boundary, not superior discrimination, and
+the claim is correspondingly narrower than "the hybrid performs best."
+
+A second observation applies to every row. All four configurations detect
+pneumonia far more reliably than they recognise a normal radiograph, with
+sensitivity between $0.933$ and $0.974$ but specificity between $0.778$ and
+$0.872$. Inverse-frequency class weights were applied throughout and did not
+remove this; the $2.9{:}1$ class ratio of the development set survives into
+the decision behaviour of every architecture tested. Any deployment reading
+of these numbers should begin there, because the error the system makes most
+often is calling a healthy chest abnormal.
 
 The explanation numbers in Table~\ref{tab:xai} measure agreement between two
 methods that disagree about what an explanation is. Grad-CAM weights a
