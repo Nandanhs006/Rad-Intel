@@ -10,7 +10,7 @@ import torch.nn as nn
 from pytorch_grad_cam import GradCAM, GradCAMPlusPlus
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
-from rad_intel.models.factory import get_model_target_layer
+from rad_intel.models.factory import get_model_target_layer, get_gradcam_reshape_transform
 from rad_intel.xai.visualizer import (
     overlay_heatmap_on_image,
     image_to_base64,
@@ -35,10 +35,15 @@ class GradCAMExplainer:
         self.target_layer = target_layer or get_model_target_layer(model)
         self.method = method
 
+        # Transformer backbones hand back channels-last activations; without
+        # this adapter pytorch-grad-cam reads the channel axis as image width.
+        self.reshape_transform = get_gradcam_reshape_transform(model)
+
         cam_class = GradCAMPlusPlus if method == "gradcam++" else GradCAM
         self.cam = cam_class(
             model=self.model,
             target_layers=[self.target_layer],
+            reshape_transform=self.reshape_transform,
         )
 
     def generate_heatmap(

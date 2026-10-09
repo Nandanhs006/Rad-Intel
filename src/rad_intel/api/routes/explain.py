@@ -61,6 +61,7 @@ async def explain_xray(
                 left_lung_intensity=loc_data["left_lung_intensity"],
                 is_bilateral=loc_data["is_bilateral"],
                 distribution_summary=loc_data["distribution_summary"],
+                off_thorax_fraction=loc_data.get("off_thorax_fraction"),
             )
             overlay_b64 = result["overlay_base64"]
         else:
@@ -81,6 +82,7 @@ async def explain_xray(
             method=method,
             target_category=target_category,
             overlay_base64=overlay_b64,
+            preprocessed_base64=result.get("preprocessed_base64"),
             localization=localization,
             execution_time_ms=round(elapsed_ms, 2),
         )

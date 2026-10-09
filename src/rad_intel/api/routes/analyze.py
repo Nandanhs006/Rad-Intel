@@ -104,6 +104,7 @@ async def analyze_xray(
             left_lung_intensity=loc_data["left_lung_intensity"],
             is_bilateral=loc_data["is_bilateral"],
             distribution_summary=loc_data["distribution_summary"],
+            off_thorax_fraction=loc_data.get("off_thorax_fraction"),
         )
 
         # 4. Clinical Report & PDF Generation
