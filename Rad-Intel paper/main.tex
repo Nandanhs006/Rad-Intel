@@ -211,7 +211,7 @@ In Eq.~\ref{eq:lime}, $\mathbf{z}'$ is a binary vector marking which superpixels
 
 A deterministic serializer records the predicted label, probability, threshold, normalized Grad-CAM peak coordinates, heatmap concentration, selected LIME region identifiers and weights, agreement indicators, preprocessing version, and checkpoint hash.
 
-The serializer additionally reduces the saliency map to four radiographic quadrants, taking the mean response in each and reporting the dominant quadrant together with a left/right balance ratio. Image left is treated as the patient's right in the standard frontal convention. This mapping is deterministic and arithmetic: it is a summary of where the map concentrated, computed from the map alone, with no segmentation of anatomy and no detection of a lesion. Quadrant statistics are computed over the segmented thorax rather than the full frame, so letterbox padding and background do not dilute them. The resulting zone label is the only spatial language the downstream summary is permitted to use, and the constraint enforced on that summary is not that spatial terms are forbidden but that it may use no field the serializer did not compute.
+The serializer additionally reduces the saliency map to four radiographic quadrants, taking the mean response in each and reporting the dominant quadrant together with a left/right balance ratio. Image left is treated as the patient's right in the standard frontal convention. This mapping is deterministic and arithmetic: it is a summary of where the map concentrated, computed from the map alone, with no segmentation of anatomy and no detection of a lesion. Quadrant statistics are computed over segmented lung fields rather than the full frame, so letterbox padding, chest wall and sub-diaphragmatic structures do not dilute them. The segmentation is produced by a pretrained anatomical network distributed with TorchXRayVision \cite{cohen2022torchxrayvision}, which labels left and right lung separately from heart, mediastinum and diaphragm; only the two lung classes are retained. Two simpler alternatives were tried first and discarded. A body-silhouette mask obtained by Otsu thresholding keeps shoulders, clavicles and neck, so apical saliency still counted as thoracic, and the contrast-limited equalisation applied during preprocessing removes the global intensity structure the threshold depends on. A rule that treats darker regions as lung fails in the opposite direction, because consolidation is radiopaque: it excludes precisely the pathology an explanation is meant to show. The resulting zone label is the only spatial language the downstream summary is permitted to use, and the constraint enforced on that summary is not that spatial terms are forbidden but that it may use no field the serializer did not compute.
 
 \subsection{Evidence-Constrained Summarization and Interface}
 Gemini 3.5 Flash-Lite receives only the serialized evidence object and returns three JSON strings: \texttt{classification\_summary}, \texttt{model\_evidence}, and \texttt{limitations}. The request uses temperature $0$, a fixed prompt, and a fixed response schema. The application adds a non-generated research-use notice. Gemini models have been studied in medical tasks, but that evidence does not establish the correctness of this summarization pipeline \cite{saab2024gemini}.
@@ -358,28 +358,41 @@ bins.
 \end{figure}
 
 \subsection{Statistical Comparison}
-Table~\ref{tab:stats} sets the complete classifier against every other
-configuration. AUROC differences use the paired bootstrap over the test
-partition; thresholded errors use McNemar's test on the paired decisions
-\cite{mcnemar1947note}; reported $p$-values carry a Holm adjustment across
-the four comparisons \cite{holm1979simple}. A confidence interval
-accompanies every difference. With 624 test images those intervals are wide,
-and a small point gap between two configurations will not survive them.
+Table~\ref{tab:stats} reports the paired comparisons. Thresholded errors use
+McNemar's test on the paired decisions \cite{mcnemar1947note}, AUROC
+differences use a paired bootstrap with 2{,}000 resamples over the test
+partition, and $p$-values carry a Holm adjustment \cite{holm1979simple}.
+Because both procedures compare two classifiers on identical images rather
+than aggregating across runs, they are informative even from single training
+runs.
+
+The result separates two questions that the accuracy column conflates. No
+pair of configurations differs significantly in thresholded accuracy: the
+largest discordance is 33 against 22 images, giving a Holm-adjusted
+$p=0.531$. The ordering $0.915$, $0.901$, $0.897$ in Table~\ref{tab:main} is
+therefore not a ranking, and should not be read as one. Discrimination tells
+a different story. Swin-T attains a significantly higher AUROC than both
+convolutional baselines, by $0.013$ against DenseNet121 and $0.021$ against
+ResNet50, with bootstrap intervals excluding zero in each case, while
+DenseNet121 and ResNet50 are indistinguishable. The configuration that ranks
+best is thus the one with the worst specificity, which is the clearest
+statement available of the distinction this paper draws between ranking
+quality and decision quality.
 
 \begin{table}[t]
 \centering
-\caption{Complete classifier against each comparison configuration. $p$-values are Holm-adjusted across the four comparisons.}
+\caption{Paired comparisons on the same 624 test images. McNemar compares thresholded errors; $\Delta$AUROC uses a paired bootstrap with 2{,}000 resamples. $p$-values are Holm-adjusted across the three completed comparisons. Rows involving the fusion configurations await their checkpoints.}
 \label{tab:stats}
 \scriptsize
 \setlength{\tabcolsep}{3.5pt}
-\begin{tabular}{L{2.1cm}C{1.9cm}C{1.1cm}C{1.1cm}}
+\begin{tabular}{L{2.4cm}C{2.2cm}C{1.0cm}C{1.0cm}}
 \toprule
-Comparison & $\Delta$AUROC [95\% CI] & Boot.\ $p$ & McNemar $p$ \\
+Comparison & $\Delta$AUROC [95\% CI] & McN.\ $p$ & Holm $p$ \\
 \midrule
-vs.\ DenseNet121         & \TBD & \TBD & \TBD \\
-vs.\ Swin-T              & \TBD & \TBD & \TBD \\
-vs.\ ResNet50            & \TBD & \TBD & \TBD \\
-vs.\ Fusion w/o CBAM     & \TBD & \TBD & \TBD \\
+DenseNet121 vs Swin-T    & $-0.013$ [$-0.022$, $-0.006$] & 0.243 & 0.531 \\
+DenseNet121 vs ResNet50  & $+0.008$ [$-0.002$, $+0.018$] & 0.177 & 0.531 \\
+Swin-T vs ResNet50       & $+0.021$ [$+0.011$, $+0.032$] & 0.890 & 0.890 \\
+Complete vs Fusion w/o CBAM & \TBD & \TBD & \TBD \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -397,21 +410,40 @@ place. None of these is a localization score. The dataset carries no lesion
 annotations, so every entry in the table describes model sensitivity and
 nothing about anatomical correctness.
 
-Two preliminary observations on the DenseNet121 baseline motivated changes to
-the explanation pipeline and are reported here because they bear on how the
-maps should be read. First, the choice of target tensor is not neutral:
-attaching Grad-CAM to the final $1024$-channel block output rather than to
-the last convolution inside the terminal dense layer, which emits only the
-$32$ new growth-rate channels, lowered the deletion AUC from $0.723$ to
-$0.683$. Second, between $21\%$ and $48\%$ of raw saliency mass fell outside
-a thresholded thorax mask, and on normal radiographs the global maximum lay
-outside the patient entirely. Agreement with an occlusion-sensitivity
-reference computed on the same $7\times7$ grid was positive but modest
-($r=0.32$ to $0.67$ on pneumonia cases), which indicates that the maps track
-the model faithfully and that the model itself is partly responding to
-framing. Explanations are therefore confined to the segmented thorax for
-display and for the quadrant statistics, and the off-thorax fraction is
-reported alongside each explanation rather than discarded.
+Three findings during implementation bear directly on how these maps should
+be read, and each was settled by measurement rather than inspection. The
+reference used throughout is occlusion sensitivity: each $32\times32$ patch
+of the input is blanked in turn and the drop in the predicted probability
+recorded, giving a model-derived importance map against which an attribution
+can be correlated.
+
+The choice of target tensor is not neutral. For DenseNet121, attaching
+Grad-CAM to the final $1024$-channel block output rather than to the last
+convolution inside the terminal dense layer, which emits only the $32$ new
+growth-rate channels, lowered the deletion AUC from $0.723$ to $0.683$. For
+ResNet50, targeting the whole terminal block rather than its last
+convolution raised agreement with the occlusion reference from $r=0.23$ to
+$r=0.31$, because the convolution's output has yet to pass through the
+residual addition the pooled feature actually depends on.
+
+A layout mismatch can invert an attribution entirely. The Swin branch emits
+channels-last activations, and the attribution library assumes
+channels-first; read in the wrong layout, the resulting maps correlated
+$r=-0.12$ with the occlusion reference, that is, they highlighted regions
+the model demonstrably did not use. Inserting an explicit layout adapter
+moved the same configuration to $r=+0.31$. A negative correlation is the
+only reliable signal that such a bug exists, since the maps remain visually
+plausible throughout.
+
+With all three corrected, agreement is positive but modest across
+configurations, $r=0.27$ to $0.31$. The maps track the models, and the
+models are only partly attending to lung parenchyma: before masking, between
+$21\%$ and $48\%$ of saliency mass fell outside the segmented lung fields,
+and on normal radiographs the global maximum frequently lay over the
+clavicles or the image border. Explanations are therefore confined to lung
+fields obtained from a pretrained anatomical segmentation network for
+display and for the zone statistics, and the off-lung fraction is reported
+with each explanation rather than discarded.
 
 \begin{table}[t]
 \centering
@@ -525,30 +557,34 @@ Cases flagged as diagnosis-like (\%) & \TBD & \TBD \\
 \end{table}
 
 \subsection{Latency}
-With the deterministic template in place of the language service, end-to-end
-latency from upload to displayed summary was $251$ ms for the DenseNet121
-baseline on an Apple M-series CPU, with no GPU acceleration. Preprocessing
-accounted for $16$ ms, the forward pass for $27$ ms, Grad-CAM including
-thorax segmentation for $98$ ms, and template rendering with LaTeX and PDF
-generation for $16$ ms. LIME is not included in this figure: at 1{,}000
-perturbations it costs \TBD{} s per image and dominates the explanation
-budget, which is why Grad-CAM is the default view and LIME is computed on
-request. Latency with the live summarization service was \TBD{} ms. These
-figures indicate the pipeline is interactive on commodity hardware without a
-GPU, which is the deployment constraint a teaching setting imposes.
+Latency was measured on an Apple M-series CPU with no GPU acceleration.
+Preprocessing costs $16$ ms and the forward pass $21$--$31$ ms depending on
+the configuration. Lung-field segmentation adds roughly $950$ ms, by a wide
+margin the largest local cost and the price of replacing the intensity
+heuristics described in Section~\ref{sec:method}; it runs once per image and
+is independent of the classifier. Grad-CAM itself costs under $100$ ms, and
+template rendering with LaTeX and PDF generation a further $16$ ms. With the
+deterministic template in place of the language service, end-to-end latency
+is therefore near $1.1$ s. With the live service the request dominates, at
+$5$--$6$ s per analysis. LIME is excluded from these figures: at 1{,}000
+perturbations it costs \TBD{} s per image, which is why Grad-CAM is the
+default view and LIME is computed on request. The pipeline is interactive on
+commodity hardware without a GPU, which is the constraint a teaching
+deployment imposes.
 
 \section{Discussion}
 \label{sec:discussion}
-The margins in Table~\ref{tab:main} are small, and saying so plainly is more
-useful than ranking the rows. The complete classifier answers 574 of 624 test
-radiographs correctly against 571 for DenseNet121: a difference of three
-images. From a single run, with no confidence interval, that is not evidence
-of an architectural effect. The specificity gap is wider in relative terms,
-204 true negatives against 198, but it rests on six images and deserves the
-same caution. Bootstrap intervals and the paired comparisons of
-Table~\ref{tab:stats} are what would settle this, and until they exist the
-honest reading of the accuracy column is that four configurations perform
-comparably.
+The margins in Table~\ref{tab:main} are small, and the paired tests in
+Table~\ref{tab:stats} settle what that means. No pair of configurations
+differs significantly in thresholded accuracy once the comparison is made on
+identical images: the strongest case, DenseNet121 against ResNet50,
+discords on 33 against 22 radiographs and yields a Holm-adjusted
+$p=0.531$. An accuracy spread of 1.8 points across three architectures is
+therefore consistent with sampling noise on a 624-image partition, and the
+ordering in that column carries no evidential weight. Reporting it as a
+ranking would be the single most likely error a reader could draw from this
+table, which is why the comparison is given alongside it rather than left to
+a reader's inference.
 
 What does separate the configurations is the operating point rather than the
 ordering. Swin-T achieves the best AUROC in the table, $0.975$, and the worst

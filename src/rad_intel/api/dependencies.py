@@ -24,7 +24,39 @@ class ModelManager:
         # silently reverts to argmax (0.5) and disagrees with the reported
         # sensitivity/specificity.
         self._thresholds: dict[str, float] = {}
+        # Whether a trained checkpoint was actually loaded. Without this the
+        # API happily serves an ImageNet-initialised network with a random
+        # classifier head and returns confident-looking probabilities for it.
+        self._trained: dict[str, bool] = {}
         self.active_model_name: str = settings.DEFAULT_MODEL
+
+    def is_trained(self, model_name: str | None = None) -> bool:
+        """True when a matching trained checkpoint was loaded for this model."""
+        target_name = self._clean_model_name(model_name)
+        self.get_model(target_name)
+        return self._trained.get(target_name, False)
+
+    def require_trained(self, model_name: str | None = None) -> str:
+        """
+        Reject a request for a model with no trained weights.
+
+        Serving an untrained network is worse than serving an error: it returns
+        a plausible probability and a Grad-CAM map that look like results.
+        """
+        from fastapi import HTTPException
+
+        target_name = self._clean_model_name(model_name)
+        if not self.is_trained(target_name):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Model '{target_name}' has no trained checkpoint "
+                    f"(expected weights/best_{target_name}_model.pt). Its predictions "
+                    f"would be meaningless, so the request was refused. Train it first "
+                    f"or select a model that has weights."
+                ),
+            )
+        return target_name
 
     def get_threshold(self, model_name: str | None = None) -> float:
         """Operating threshold on P(PNEUMONIA); 0.5 when the checkpoint has none."""
@@ -64,10 +96,12 @@ class ModelManager:
             # architecture -- create_model discards mismatched weights, and
             # applying a threshold calibrated for another model would be worse
             # than falling back to 0.5.
+            self._trained[target_name] = False
             if weights_to_load:
                 try:
                     meta = torch.load(weights_to_load, map_location="cpu", weights_only=False)
                     if isinstance(meta, dict) and meta.get("model_type") in (None, target_name):
+                        self._trained[target_name] = True
                         thr = meta.get("optimal_threshold")
                         if isinstance(thr, (int, float)) and 0.0 < float(thr) < 1.0:
                             self._thresholds[target_name] = float(thr)

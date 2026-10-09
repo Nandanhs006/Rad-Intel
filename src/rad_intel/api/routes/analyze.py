@@ -76,8 +76,14 @@ async def analyze_xray(
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
         # 1. Preprocessing
-        tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
-        selected_model = manager._clean_model_name(model_name)
+        try:
+            tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
+        except Exception as decode_error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not decode the uploaded file as an image: {decode_error}",
+            )
+        selected_model = manager.require_trained(model_name)
 
         # 2. Prediction
         pred_class, confidence, prob_dict, inf_ms = manager.predict(
@@ -177,6 +183,8 @@ async def analyze_xray(
             ),
             total_pipeline_time_ms=round(total_elapsed_ms, 2),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {str(e)}")
 

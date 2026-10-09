@@ -66,3 +66,46 @@ def test_mismatched_checkpoint_warns_instead_of_failing_silently():
         warnings.simplefilter("always")
         create_model(model_name=other, pretrained=False, weights_path=str(CKPT))
     assert any(issubclass(w.category, RuntimeWarning) and "UNTRAINED" in str(w.message) for w in caught)
+
+
+# --- API error contract -------------------------------------------------
+# These guard behaviours that previously failed silently or misreported:
+# a deliberate 400 was being swallowed by a bare `except Exception` and
+# re-raised as 500, and a model with no checkpoint returned a confident
+# prediction from an untrained network.
+
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from rad_intel.api.main import app
+
+
+@pytest_asyncio.fixture
+async def client():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+async def test_empty_upload_is_client_error(client):
+    r = await client.post("/api/v1/predict", files={"file": ("x.jpeg", b"", "image/jpeg")})
+    assert r.status_code == 400, f"expected 400, got {r.status_code}"
+
+
+async def test_undecodable_upload_is_client_error(client):
+    r = await client.post(
+        "/api/v1/predict", files={"file": ("x.jpeg", b"this is not an image", "image/jpeg")}
+    )
+    assert r.status_code == 400, f"expected 400, got {r.status_code}"
+
+
+async def test_untrained_model_is_refused(client, dummy_cxr_bytes):
+    """A model with no checkpoint must not return a prediction."""
+    if (settings.BASE_DIR / "weights" / "best_hybrid_model.pt").exists():
+        pytest.skip("hybrid checkpoint present; nothing untrained to test")
+    r = await client.post(
+        "/api/v1/predict",
+        files={"file": ("cxr.jpeg", dummy_cxr_bytes, "image/jpeg")},
+        data={"model_name": "hybrid"},
+    )
+    assert r.status_code == 503, f"expected 503, got {r.status_code}"
+    assert "no trained checkpoint" in r.json()["detail"]

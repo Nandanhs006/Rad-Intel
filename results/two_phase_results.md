@@ -66,3 +66,33 @@ modest. Multiple seeds would be needed to claim significance.
 Every baseline still shows the sensitivity/specificity asymmetry: all four
 exceed 93% sensitivity while specificity ranges 77.8-87.2%, consistent with
 the 2.9:1 class ratio in the development set.
+
+
+## Paired statistical comparison (added after full evaluation)
+
+Computed from per-image predictions on the same 624 test images, so valid
+from single runs: McNemar compares two classifiers on identical inputs.
+
+### Thresholded accuracy - McNemar, Holm-adjusted over 3 comparisons
+
+| Comparison | A-only-right | B-only-right | p | Holm p | Verdict |
+|---|---|---|---|---|---|
+| DenseNet121 vs Swin-T   | 28 | 19 | 0.243 | 0.531 | not significant |
+| DenseNet121 vs ResNet50 | 33 | 22 | 0.177 | 0.531 | not significant |
+| Swin-T vs ResNet50      | 27 | 25 | 0.890 | 0.890 | not significant |
+
+No pair differs significantly in accuracy. The spread 91.51 / 90.06 / 89.74
+is NOT a ranking.
+
+### AUROC - paired bootstrap, 2000 resamples
+
+| Comparison | dAUROC [95% CI] | Verdict |
+|---|---|---|
+| DenseNet121 - Swin-T   | -0.0133 [-0.0222, -0.0055] | SIGNIFICANT (Swin-T better) |
+| DenseNet121 - ResNet50 | +0.0076 [-0.0018, +0.0176] | not significant |
+| Swin-T - ResNet50      | +0.0206 [+0.0105, +0.0315] | SIGNIFICANT (Swin-T better) |
+
+Swin-T ranks significantly better than both CNNs while having the worst
+specificity (0.778). Discrimination and decision quality separate cleanly:
+the configurations are statistically indistinguishable at their operating
+points, and only the ranking differs.

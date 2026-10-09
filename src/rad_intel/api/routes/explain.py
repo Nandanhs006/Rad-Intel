@@ -41,7 +41,14 @@ async def explain_xray(
         if not image_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
+        try:
+            tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
+        except Exception as decode_error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not decode the uploaded file as an image: {decode_error}",
+            )
+        manager.require_trained(model_name)
         model = manager.get_model(model_name)
 
         if method in ("gradcam", "gradcam++"):
@@ -86,5 +93,7 @@ async def explain_xray(
             localization=localization,
             execution_time_ms=round(elapsed_ms, 2),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Explainability error: {str(e)}")

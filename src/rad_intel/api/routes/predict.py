@@ -33,8 +33,14 @@ async def predict_xray(
         if not image_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        tensor, _ = preprocessor.preprocess(image_bytes, device=manager.device)
-        selected_model = model_name or manager.active_model_name
+        try:
+            tensor, _ = preprocessor.preprocess(image_bytes, device=manager.device)
+        except Exception as decode_error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not decode the uploaded file as an image: {decode_error}",
+            )
+        selected_model = manager.require_trained(model_name)
 
         pred_class, confidence, prob_dict, latency_ms = manager.predict(
             tensor, model_name=selected_model
@@ -47,5 +53,9 @@ async def predict_xray(
             probabilities=prob_dict,
             inference_time_ms=round(latency_ms, 2),
         )
+    except HTTPException:
+        # A deliberate 4xx/5xx must not be relabelled as a generic 500 by the
+        # catch-all below.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
