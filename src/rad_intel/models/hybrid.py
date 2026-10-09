@@ -87,5 +87,12 @@ class HybridDenseNetSwinCBAM(nn.Module):
     def get_target_gradcam_layer(self) -> nn.Module:
         """Returns the optimal target layer for Grad-CAM gradient backpropagation."""
         if self.use_cbam:
-            return self.cbam.spatial_att.conv
+            # The whole CBAM module, so the hook captures its OUTPUT: the
+            # refined 512-channel tensor the classifier pools, which is the
+            # post-CBAM representation the paper names as the Grad-CAM target.
+            # Targeting cbam.spatial_att.conv instead captured the 1-channel
+            # spatial attention mask, which carries no class evidence; with
+            # that target only 2 of 6 sample peaks landed inside the lung
+            # fields, against 6 of 6 for the ablated model.
+            return self.cbam
         return self.fusion_conv[0]

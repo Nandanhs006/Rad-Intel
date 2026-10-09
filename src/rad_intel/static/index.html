@@ -24,7 +24,7 @@
       <div class="header-meta">
         <div class="model-pill">
           <span class="status-dot"></span>
-          <span>DenseNet121: 91.5% Acc (AUC 0.962)</span>
+          <span>Hybrid: 92.0% Acc (AUC 0.974)</span>
         </div>
       </div>
     </div>
@@ -80,11 +80,11 @@
               <div class="input-group">
                 <label for="select-model">Model Architecture</label>
                 <select id="select-model">
-                  <option value="densenet121" selected>DenseNet121 &mdash; 91.5% acc, AUC 0.962</option>
+                  <option value="hybrid" selected>Hybrid (DenseNet + Swin + CBAM) &mdash; 92.0% acc, AUC 0.974</option>
+                  <option value="hybrid_no_cbam">Fusion without CBAM &mdash; 93.4% acc, AUC 0.977</option>
+                  <option value="densenet121">DenseNet121 &mdash; 91.5% acc, AUC 0.962</option>
                   <option value="swin_t">Swin-T &mdash; 90.1% acc, AUC 0.975</option>
                   <option value="resnet50">ResNet50 &mdash; 89.7% acc, AUC 0.954</option>
-                  <option value="hybrid">Hybrid (DenseNet + Swin + CBAM) &mdash; no checkpoint</option>
-                  <option value="hybrid_no_cbam">Fusion without CBAM &mdash; no checkpoint</option>
                 </select>
               </div>
             </div>
