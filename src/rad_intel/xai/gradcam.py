@@ -15,6 +15,7 @@ from rad_intel.xai.visualizer import (
     overlay_heatmap_on_image,
     image_to_base64,
     compute_body_mask,
+    compute_lung_field_mask,
 )
 
 
@@ -150,7 +151,7 @@ class GradCAMExplainer:
         # signal that the model is keying on framing or acquisition artefacts
         # rather than lung parenchyma (shortcut learning), and that belongs in
         # the output rather than hidden by the mask.
-        body_mask = compute_body_mask(original_rgb)
+        body_mask = compute_lung_field_mask(original_rgb)
         total = float(raw_heatmap.sum())
         off_thorax = float(raw_heatmap[~body_mask].sum() / total) if total > 0 else 0.0
 

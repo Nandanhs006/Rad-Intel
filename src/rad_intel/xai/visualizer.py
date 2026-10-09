@@ -122,3 +122,47 @@ def compute_body_mask(image_rgb: np.ndarray) -> np.ndarray:
     if mask.mean() < 0.15:
         return np.ones(gray.shape, dtype=bool)
     return mask
+
+
+def compute_lung_field_mask(
+    image_rgb: np.ndarray,
+    top: float = 0.18,
+    bottom: float = 0.82,
+    side: float = 0.10,
+) -> np.ndarray:
+    """
+    Approximate lung-field region: the body mask narrowed to the band where
+    lung parenchyma actually lies.
+
+    compute_body_mask keeps the whole patient silhouette, roughly 70% of a
+    224x224 frame, so shoulders, neck and upper arms count as "inside the
+    thorax" and saliency landing on a clavicle survives masking. On a frontal
+    chest radiograph the lungs occupy a predictable band of the body bounding
+    box, so the fractions above trim the apical/cervical region above the lung
+    apices, the sub-diaphragmatic region below the costophrenic angles, and
+    the lateral chest wall.
+
+    This is a geometric prior, not a segmentation. It is deliberately crude:
+    it cannot follow the diaphragm or the mediastinal border, and on an
+    unusually rotated or cropped film it will clip real lung. It changes only
+    what is displayed and scored by zone -- the classifier is untouched, and
+    the share of saliency falling outside this region is still reported so the
+    underlying behaviour stays visible.
+    """
+    body = compute_body_mask(image_rgb)
+    rows = np.where(body.any(axis=1))[0]
+    cols = np.where(body.any(axis=0))[0]
+    if rows.size == 0 or cols.size == 0:
+        return body
+
+    r0, r1 = int(rows.min()), int(rows.max())
+    c0, c1 = int(cols.min()), int(cols.max())
+    h, w = r1 - r0 + 1, c1 - c0 + 1
+
+    band = np.zeros_like(body)
+    band[r0 + int(h * top) : r0 + int(h * bottom),
+         c0 + int(w * side) : c0 + int(w * (1.0 - side))] = True
+
+    mask = body & band
+    # Never hand back an empty explanation.
+    return mask if mask.mean() >= 0.08 else body
