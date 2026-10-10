@@ -97,7 +97,6 @@ The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with
 
 
 \section{Related Work}
-\label{sec:related}
 CNN-based pneumonia classifiers commonly rely on transfer learning, residual connections, and attention. DenseNet supports feature reuse across layers \cite{huang2017densenet}, while ResNet \cite{he2016resnet} and EfficientNet \cite{tan2019efficientnet} provide strong comparison architectures. Recent pneumonia systems incorporate CBAM, squeeze-and-excitation (SE) blocks, ensembles, or transformer components \cite{rashid2025cbam,potharaju2025cbamse,ifty2024explainable,mustapha2025hybrid}. Singh \emph{et al.} separately evaluated vision-transformer models on chest X-rays \cite{singh2024vit}.
 
 Feature-level fusion of complementary representations is not specific to medical imaging. Swathi and Shivakumar combined gray-level co-occurrence matrix descriptors with AlexNet features for crowd-behavior analysis \cite{swathi2021hybrid}, and later fused visual and acoustic features by explicit concatenation \cite{swathi2023audiovisual}; the setting and inputs differ from chest radiography, but the fusion pattern is the one adopted here.
@@ -684,7 +683,6 @@ specificity equally, which is not the operating point a screening deployment
 would choose.
 
 \section{Limitations, Ethics, and Privacy}
-\label{sec:limits}
 The Kaggle dataset holds pediatric images from one institution and is
 strongly class-imbalanced. Its public directory structure carries no
 dependable patient identifier, so an image-level partition cannot establish
