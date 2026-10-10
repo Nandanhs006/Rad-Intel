@@ -233,27 +233,10 @@ The validator rejects missing or additional keys, non-string values, unsupported
 \subsection{Training Configuration}
 The model is implemented in PyTorch using \texttt{torchvision} and \texttt{timm}. Training uses AdamW \cite{loshchilov2019adamw} with cosine annealing, a batch size of 32, weight decay $10^{-4}$, and a maximum of 20 epochs. Training proceeds in two phases. The fusion, CBAM, and classification layers are first trained for eight epochs with both pretrained branches frozen, reading feature maps extracted once and cached. The complete network is then unfrozen and fine-tuned end to end for up to twelve epochs with discriminative learning rates, $10^{-4}$ for the new layers and $10^{-5}$ for the backbones, at a reduced batch size of 12 to fit the activations of both branches. Augmentation applies in the second phase only, since the cached features of the first are computed under deterministic preprocessing. Validation area under the receiver operating characteristic curve (AUROC) selects the checkpoint in both phases, with early stopping at a patience of five epochs. Results below are from single runs at seed 42; the prespecified seed set (42, 52, 62, 72, and 82) for repeated runs is not yet complete.
 
-\begin{table}[t]
-\centering
-\caption{Controlled comparison configurations.}
-\label{tab:baselines}
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{L{2.2cm}L{4.4cm}}
-\toprule
-Configuration & Purpose \\
-\midrule
-DenseNet121 & CNN-only transfer-learning baseline \\
-Swin-T & Transformer-only baseline \\
-ResNet50 & Residual-CNN baseline \\
-Fusion without CBAM & Isolates post-fusion attention \\
-Complete classifier & DenseNet121--Swin-T fusion with CBAM \\
-\bottomrule
-\end{tabular}
-\end{table}
+
 
 \subsection{Comparison Protocol}
-Every configuration in Table~\ref{tab:baselines} shares the same partitions, preprocessing, augmentation policy, loss, checkpoint rule, threshold procedure and budget, so each row differs from the others only in architecture. Explainability and language generation run after classification and do not alter the class probability.
+Every configuration shares the same partitions, preprocessing, augmentation policy, loss, checkpoint rule, threshold procedure and budget, so each row differs from the others only in architecture. Explainability and language generation run after classification and do not alter the class probability.
 
 \subsection{Metrics and Reproducibility}
 Classification is scored with AUROC, area under the precision--recall curve,
@@ -288,16 +271,17 @@ case is also marked for any statement that could be read as a diagnosis.
 The review tests whether the output is defensible to a reader with clinical
 training; it is not a reference standard for the labels.
 
-Reproducibility records include the dataset version, split manifest, file
-hashes, source commit, environment lock file, library and CUDA versions,
-hardware, seeds, checkpoint hashes, preprocessing parameters, threshold,
-Grad-CAM target, LIME configuration, serializer and schema versions, prompt
-hash, model identifier and API access date.
+Reproducibility records cover the dataset version and split manifest, source
+commit and environment lock file, hardware, seeds and checkpoint hashes,
+preprocessing parameters and threshold, Grad-CAM target and LIME
+configuration, and the serializer, schema, prompt and model identifiers.
 
 \section{Results}
 \label{sec:results}
-Results cover all five configurations of Table~\ref{tab:baselines} under the
-protocol fixed in Section~\ref{sec:setup}. Every configuration was trained
+Results cover five configurations under the protocol fixed in
+Section~\ref{sec:setup}: DenseNet121, Swin-T and ResNet50 as single-branch
+baselines, the DenseNet121--Swin-T fusion without CBAM as the ablation, and
+the complete classifier. Every configuration was trained
 once, at seed 42, and evaluated on the held-out 624-image test partition.
 Single-run results cannot separate an architectural effect from seed
 variation, and the margins reported below are small enough that this
@@ -306,18 +290,13 @@ set remain outstanding, so no entry below carries a confidence interval
 derived from them.
 
 \subsection{Implementation Details}
-Training was performed on a single NVIDIA T4. Inference and explanation figures in
-this section were measured on an Apple M-series CPU under Python 3.14.0,
-PyTorch 2.14.1, \texttt{torchvision} 0.29.1, and \texttt{timm} 1.0.30, with
-the environment lock file recorded in Section~\ref{sec:setup}. The complete
-classifier contains 35{,}425{,}632 trainable parameters, against 6{,}955{,}906
-for DenseNet121 and 27{,}520{,}892 for Swin-T in isolation; removing CBAM
-leaves 35{,}392{,}764, so the attention module accounts for 32{,}868
-parameters, under $0.1\%$ of the total. The ResNet50 baseline contains 23{,}512{,}130 parameters. A single
-run took 36 to 49 minutes depending on the configuration, roughly six minutes
-of which is the one-off feature extraction that phase 1 caches; the five runs
-reported here total about 3.5 GPU-hours. A full sweep over the prespecified
-seed set would cost five times that.
+Training used a single NVIDIA T4; inference and explanation figures were
+measured on an Apple M-series CPU under PyTorch 2.14.1. The complete
+classifier has $35.43$M trainable parameters against $6.96$M for
+DenseNet121, $27.52$M for Swin-T and $23.51$M for ResNet50; removing CBAM
+leaves $35.39$M, so the attention module accounts for $32{,}868$ parameters,
+under $0.1\%$ of the total. Runs took 36--49 minutes each, about 3.5
+GPU-hours for the five reported here.
 
 \subsection{Classification Performance and Ablation}
 Table~\ref{tab:main} carries the primary comparison and the ablation in one
@@ -497,36 +476,27 @@ Mean latency (s)             & 7.9 & 0.02 \\
 \end{tabular}
 \end{table}
 
-Three implementation findings bear on how these maps should be read, each
-settled against an occlusion-sensitivity reference in which every
+Two implementation details decide whether these maps mean anything, and both
+were settled against an occlusion-sensitivity reference in which every
 $32\times32$ patch is blanked in turn and the drop in predicted probability
-recorded.
+recorded. The target tensor is not a neutral choice: attributing to a
+convolution inside the terminal block rather than to the block output cost
+DenseNet121 $0.04$ of deletion AUC and ResNet50 $0.08$ of agreement, and for
+the complete classifier, hooking the spatial-attention convolution inside
+CBAM captures a single-channel attention mask instead of the refined tensor,
+dropping sample peaks inside the lung fields from six of six to two. Layout
+matters more still. The Swin branch emits channels-last activations while
+the attribution library assumes channels-first; read wrongly, the maps
+correlated $r=-0.12$ with the reference, highlighting regions the model
+demonstrably did not use, and a layout adapter moved the same configuration
+to $r=+0.31$. A negative correlation is the only reliable signal of such a
+bug, because the maps stay visually plausible throughout.
 
-The target tensor is not a neutral choice. For DenseNet121, attaching
-Grad-CAM to the final $1024$-channel block output instead of to the last
-convolution inside the terminal dense layer, which emits only $32$
-growth-rate channels, lowered the deletion AUC from $0.723$ to $0.683$. For
-ResNet50, targeting the whole terminal block instead of its last convolution
-raised agreement from $r=0.23$ to $r=0.31$, since that convolution's output
-has yet to pass through the residual addition. For the complete classifier,
-hooking the spatial-attention convolution inside CBAM captures a
-single-channel attention mask, not the refined tensor: only two of six
-sample peaks then fell inside the lung fields, against six of six once the
-module output was targeted.
-
-A layout mismatch can invert an attribution outright. The Swin branch emits
-channels-last activations and the attribution library assumes
-channels-first; read in the wrong layout the maps correlated $r=-0.12$ with
-the reference, highlighting regions the model demonstrably did not use. A
-layout adapter moved the same configuration to $r=+0.31$. A negative
-correlation is the only reliable signal of such a bug, since the maps stay
-visually plausible throughout.
-
-With all corrected, agreement is positive everywhere but weaker for the
-fused models: $r=0.27$ to $0.31$ for the baselines against $r=0.10$ for the
-complete classifier and $r=0.04$ for its ablation. Attribution through a
-fused representation is harder, since the gradient at the fusion point mixes
-two backbones with different inductive biases. The fused models classify
+With both corrected, agreement is positive everywhere but weaker for the
+fused models: $r=0.27$--$0.31$ for the baselines against $r=0.10$ and
+$r=0.04$ for the two fused configurations. Attribution through a fused
+representation is harder, since the gradient at the fusion point mixes two
+backbones with different inductive biases, so the fused models classify
 better and explain less faithfully.
 
 Before masking, between $21\%$ and $48\%$ of saliency mass fell outside the

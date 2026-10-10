@@ -25,7 +25,7 @@ C = {"grey":("#50555e","#e9eaed"), "green":("#1f6b38","#e3f1e8"),
 
 FS_TITLE, FS_MAIN, FS_SUB, FS_NOTE = 15, 13.5, 11.5, 12
 
-fig, ax = plt.subplots(figsize=(17.0, 7.6))
+fig, ax = plt.subplots(figsize=(19.0, 7.0))
 ax.set_xlim(-4, 110); ax.set_ylim(0, 100); ax.axis("off")
 fig.patch.set_facecolor("white")
 
