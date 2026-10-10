@@ -62,11 +62,12 @@ def fig3(model="hybrid"):
             if key in want and want[key] is None:
                 want[key] = (f, t, rgb, cls, probs["PNEUMONIA"])
             if all(v is not None for v in want.values()): break
-    rows = [k for k in [("PNEUMONIA",True),("NORMAL",True),
-                        ("NORMAL",False),("PNEUMONIA",False)] if want[k]]
+    # Two rows only: one correct and one incorrect case. The false positive is
+    # the informative one and the figure is a third of the height.
+    rows = [k for k in [("PNEUMONIA",True),("NORMAL",False)] if want[k]]
     titles = {("PNEUMONIA",True):"True positive", ("NORMAL",True):"True negative",
               ("NORMAL",False):"False positive", ("PNEUMONIA",False):"False negative"}
-    fig, axes = plt.subplots(len(rows), 2, figsize=(3.3, 1.65*len(rows)))
+    fig, axes = plt.subplots(len(rows), 2, figsize=(3.5, 1.72*len(rows)))
     if len(rows) == 1: axes = axes[None]
     for r, key in enumerate(rows):
         f, t, rgb, cls, p = want[key]

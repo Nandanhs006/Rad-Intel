@@ -94,40 +94,21 @@ The output is split into three layers that stay separate: classification, visual
 
 The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with explicit feature alignment and post-fusion CBAM; (2) a reproducible explanation pipeline using Grad-CAM and LIME; (3) deterministic conversion of model outputs into a constrained evidence schema; and (4) an end-to-end interface that exposes the probability, explanations, summary source, and limitations without presenting the output as a diagnosis.
 
-Section~\ref{sec:related} positions the system against prior pneumonia classifiers and radiology-language models, Section~\ref{sec:method} specifies the architecture and the evidence pipeline, Section~\ref{sec:setup} defines the training and evaluation protocol, Section~\ref{sec:results} reports measured behavior, and Sections~\ref{sec:discussion}--\ref{sec:limits} discuss the findings and their constraints.
+
 
 \section{Related Work}
 \label{sec:related}
 CNN-based pneumonia classifiers commonly rely on transfer learning, residual connections, and attention. DenseNet supports feature reuse across layers \cite{huang2017densenet}, while ResNet \cite{he2016resnet} and EfficientNet \cite{tan2019efficientnet} provide strong comparison architectures. Recent pneumonia systems incorporate CBAM, squeeze-and-excitation (SE) blocks, ensembles, or transformer components \cite{rashid2025cbam,potharaju2025cbamse,ifty2024explainable,mustapha2025hybrid}. Singh \emph{et al.} separately evaluated vision-transformer models on chest X-rays \cite{singh2024vit}.
 
-Hybrid feature learning has also been applied outside medical imaging. Swathi and Shivakumar combined gray-level co-occurrence matrix (GLCM) descriptors with AlexNet features for crowd-behavior analysis \cite{swathi2021hybrid}; their later audio--visual model fused heterogeneous visual and acoustic features through explicit concatenation \cite{swathi2023audiovisual}. Both studies illustrate how complementary representations can be combined at feature level, although their surveillance setting, inputs, and classifiers differ from the chest-radiography system considered here.
+Feature-level fusion of complementary representations is not specific to medical imaging. Swathi and Shivakumar combined gray-level co-occurrence matrix descriptors with AlexNet features for crowd-behavior analysis \cite{swathi2021hybrid}, and later fused visual and acoustic features by explicit concatenation \cite{swathi2023audiovisual}; the setting and inputs differ from chest radiography, but the fusion pattern is the one adopted here.
 
 Grad-CAM attributes a selected score to a convolutional feature tensor, whereas LIME approximates local behavior around a perturbed image. Their assumptions differ, making them complementary, not interchangeable. Khadidos \emph{et al.} similarly used both methods for pediatric pneumonia classification \cite{khadidos2026explainable}.
 
 Systems such as MAIRA-1 and RaDialog generate or discuss radiology reports directly from multimodal inputs \cite{hyland2023maira,pellegrini2023radialog}. The present system serves a narrower purpose: it summarizes serialized classifier evidence instead of generating a diagnostic report from the image. Consequently, the text component is assessed for schema compliance and agreement with the evidence object. GREEN is relevant only when the output and reference text satisfy its radiology-report evaluation assumptions \cite{ostmeier2024green}.
 
-Table~\ref{tab:related} summarizes the distinction between classification-and-explanation systems, radiology-language models, and the evidence-constrained workflow used in this study.
+Across that literature the two capabilities stay separate: the pneumonia classifiers report a label and a saliency map with no text component, and the radiology-language models generate prose from the image itself. The workflow here occupies neither position, pairing a classifier and its explanations with a summary constrained to serialized evidence.
 
-\begin{table*}[t]
-\centering
-\caption{Representative comparison of pneumonia-classification and radiology-language systems.}
-\label{tab:related}
-\scriptsize
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{L{2.5cm}L{3.2cm}L{2.5cm}L{3.0cm}L{4.0cm}}
-\toprule
-Study & Architecture & Attention or fusion & Explanation & Text component \\
-\midrule
-Rashid \emph{et al.} \cite{rashid2025cbam} & CNN ensemble & CBAM & Grad-CAM & None \\
-Potharaju \emph{et al.} \cite{potharaju2025cbamse} & Ensemble CNN & CBAM and SE & Grad-CAM & None \\
-Benzorgat \emph{et al.} \cite{mustapha2025hybrid} & CNN--ViT hybrid & Feature fusion & Model visualization & None \\
-Ifty \emph{et al.} \cite{ifty2024explainable} & Deep ensemble & Ensemble fusion & Explainability module & None \\
-Khadidos \emph{et al.} \cite{khadidos2026explainable} & Pediatric CXR classifiers & Model dependent & Grad-CAM and LIME & None \\
-MAIRA-1 / RaDialog \cite{hyland2023maira,pellegrini2023radialog} & Vision--language systems & Cross-modal & Text-grounded behavior & Report generation or dialogue \\
-This work & DenseNet121 + Swin-T & Projection, concatenation, CBAM & Grad-CAM and LIME & Evidence-constrained summary \\
-\bottomrule
-\end{tabular}
-\end{table*}
+
 
 \section{Methodology}
 \label{sec:method}
@@ -273,7 +254,7 @@ Complete classifier & DenseNet121--Swin-T fusion with CBAM \\
 \end{table}
 
 \subsection{Comparison Protocol}
-Every configuration in Table~\ref{tab:baselines} uses the same data partitions, deterministic preprocessing, augmentation policy, class-weighted loss, checkpoint rule, threshold procedure, seed set, and search budget. The ablation set also removes each feature branch separately. Explainability and language generation are applied after classification and do not alter the class probability.
+Every configuration in Table~\ref{tab:baselines} shares the same partitions, preprocessing, augmentation policy, loss, checkpoint rule, threshold procedure and budget, so each row differs from the others only in architecture. Explainability and language generation run after classification and do not alter the class probability.
 
 \subsection{Metrics and Reproducibility}
 Classification is scored with AUROC, area under the precision--recall curve,
@@ -283,7 +264,7 @@ matrix. Calibration is reported separately, through the Brier score
 \cite{guo2017calibration} and reliability diagrams, since a classifier can
 rank well and still be badly calibrated. Paired McNemar tests
 \cite{mcnemar1947note} compare thresholded errors between configurations on
-the same images, a paired bootstrap compares AUROC, and a Holm correction
+the same images, a paired bootstrap compares AUROC in place of the analytic DeLong estimator \cite{delong1988comparing}, and a Holm correction
 \cite{holm1979simple} covers the prespecified family. Both procedures
 compare two classifiers on identical inputs, so they are informative from
 single runs.
@@ -553,14 +534,15 @@ Before masking, between $21\%$ and $48\%$ of saliency mass fell outside the
 segmented lung fields, and on normal radiographs the maximum often lay over
 the clavicles or the image border. Explanations are therefore confined to
 lung fields, with the off-lung fraction carried alongside.
-Fig.~\ref{fig:qualitative} shows correct and incorrect cases under identical
-settings; the misclassified rows matter more, because explanation maps stay
-confident when the prediction is wrong.
+Fig.~\ref{fig:qualitative} contrasts a correct case with a false positive
+under identical settings. The second matters more: explanation maps stay
+confident when the prediction is wrong, which is the behaviour the interface
+is built to expose.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.70\columnwidth]{fig_qualitative.png}
-\caption{Qualitative output of the complete classifier on four held-out cases, including one false positive and one false negative. $P$ is the predicted probability of pneumonia. Highlighted regions indicate model sensitivity confined to the segmented lung fields; they are not radiological findings.}
+\includegraphics[width=0.86\columnwidth]{fig_qualitative.png}
+\caption{Qualitative output of the complete classifier on two held-out cases, one correct and one false positive. $P$ is the predicted probability of pneumonia. Highlighted regions indicate model sensitivity confined to the segmented lung fields; they are not radiological findings.}
 \label{fig:qualitative}
 \end{figure}
 
