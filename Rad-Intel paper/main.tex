@@ -140,12 +140,12 @@ Each image is converted to three channels, contrast-enhanced with contrast-limit
 
 Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and hybrid classification to visual explanation and evidence-constrained summarization.
 
-\begin{figure}[!t]
+\begin{figure*}[!t]
 \centering
-\includegraphics[width=\columnwidth]{architecture.png}
+\includegraphics[width=0.92\textwidth]{architecture.png}
 \caption{End-to-end classification, explanation, and evidence-constrained summarization workflow.}
 \label{fig:architecture}
-\end{figure}
+\end{figure*}
 
 \subsection{Feature Extraction and Fusion}
 DenseNet121 \cite{huang2017densenet} and Swin-T \cite{liu2021swin} are initialized with ImageNet weights and operate in parallel on the same preprocessed image. For a $224\times224$ input, the DenseNet121 trunk produces $\mathbf{F}_D\in\mathbb{R}^{1024\times7\times7}$. The final Swin-T stage produces a representation corresponding to $768$ channels on a $7\times7$ grid. An explicit adapter $\mathcal{A}$ converts the Swin output to channels-first (NCHW) layout before fusion.
