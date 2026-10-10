@@ -230,20 +230,18 @@ quadrants, reporting the dominant quadrant and a left/right balance ratio;
 image left is the patient's right in the standard frontal convention. This
 mapping is deterministic arithmetic over the map alone, with no segmentation
 of anatomy and no detection of a lesion. Quadrant statistics cover the
-segmented lung fields, not the full frame, so padding, chest wall and
-sub-diaphragmatic structures do not dilute them. The segmentation comes from
-a pretrained anatomical network distributed with TorchXRayVision
-\cite{cohen2022torchxrayvision}, which labels left and right lung separately
-from heart, mediastinum and diaphragm; only the two lung classes are kept.
-Two simpler alternatives were discarded. An Otsu body mask retains shoulders,
-clavicles and neck, and the contrast-limited equalization applied during
-preprocessing removes the global intensity structure such a threshold needs.
-A rule treating darker regions as lung fails in the opposite direction,
-because consolidation is radiopaque: it excludes precisely the pathology an
-explanation should show. The resulting zone label is the only spatial
-language the summary may use, and the constraint enforced is not that spatial
-terms are forbidden but that no field the serializer did not compute may
-appear.
+segmented lung fields, so padding, chest wall and sub-diaphragmatic
+structures do not dilute them. The segmentation comes from a pretrained
+anatomical network \cite{cohen2022torchxrayvision} that labels left and
+right lung separately from heart, mediastinum and diaphragm; only the lung
+classes are kept. Two simpler alternatives failed: an Otsu body mask retains
+shoulders and clavicles, and the equalization applied during preprocessing
+destroys the global intensity structure such a threshold needs, while a rule
+treating darker regions as lung excludes consolidation, which is radiopaque
+and is precisely what an explanation should show. The resulting zone label
+is the only spatial language the summary may use, and the constraint
+enforced is not that spatial terms are forbidden but that no field the
+serializer did not compute may appear.
 
 \subsection{Evidence-Constrained Summarization and Interface}
 Gemini 3.5 Flash-Lite receives only the serialized evidence object and returns three JSON strings: \texttt{classification\_summary}, \texttt{model\_evidence}, and \texttt{limitations}. The request uses temperature $0$, a fixed prompt, and a fixed response schema. The application adds a non-generated research-use notice. Gemini models have been studied in medical tasks, but that evidence does not establish the correctness of this summarization pipeline \cite{saab2024gemini}.
@@ -283,35 +281,32 @@ sensitivity, specificity, precision, F1, balanced accuracy and the confusion
 matrix. Calibration is reported separately, through the Brier score
 \cite{brier1950verification}, expected calibration error
 \cite{guo2017calibration} and reliability diagrams, since a classifier can
-rank cases well and still be badly calibrated. Paired McNemar tests
+rank well and still be badly calibrated. Paired McNemar tests
 \cite{mcnemar1947note} compare thresholded errors between configurations on
-the same images; a paired bootstrap compares AUROC; a Holm correction
+the same images, a paired bootstrap compares AUROC, and a Holm correction
 \cite{holm1979simple} covers the prespecified family. Both procedures
 compare two classifiers on identical inputs, so they are informative from
 single runs.
 
 Explanation analysis covers deletion and insertion curves
-\cite{petsiuk2018rise}, stability under small label-preserving
-perturbations, map concentration and Grad-CAM/LIME agreement. No
-localization score appears anywhere: the Kaggle release ships class labels,
-not lesion masks, and scoring localization without them would report an
-assumption as a measurement. Text analysis records schema-valid rate,
-evidence agreement, forbidden-claim rate, fallback frequency,
-reproducibility under identical inputs and latency, with the deterministic
+\cite{petsiuk2018rise}, stability under label-preserving perturbations, map
+concentration and Grad-CAM/LIME agreement. No localization score appears
+anywhere: the release ships class labels, not lesion masks. Text analysis
+records schema-valid rate, evidence agreement, forbidden-claim rate,
+fallback frequency, reproducibility and latency, with the deterministic
 template as the reference.
 
-The displayed output is also reviewed by a practising clinician, credited in
-the acknowledgment. Cases are drawn as a stratified sample before any result
-is inspected, covering correct and incorrect predictions in both classes.
-The reviewer sees the radiograph, the overlay and the generated summary, and
-is blinded to which configuration produced them. Four items are scored on a
-five-point scale: whether the highlighted region is plausible, whether the
-summary is consistent with the displayed evidence, whether it avoids
-unsupported clinical claims, and whether it is acceptable as a research-use
-description. Each case is also marked for any statement that could be read
-as a diagnosis. What this review establishes is narrow. It tests whether the
-output is defensible to a reader with clinical training; it is not a
-reference standard for the labels and does not replace the metrics above.
+The output is also reviewed by a practising clinician, credited in the
+acknowledgment. Cases are drawn as a stratified sample before any result is
+inspected, covering correct and incorrect predictions in both classes. The
+reviewer sees the radiograph, the overlay and the summary, blinded to which
+configuration produced them, and scores four items on a five-point scale:
+whether the highlighted region is plausible, whether the summary is
+consistent with the displayed evidence, whether it avoids unsupported
+claims, and whether it is acceptable as a research-use description. Each
+case is also marked for any statement that could be read as a diagnosis.
+The review tests whether the output is defensible to a reader with clinical
+training; it is not a reference standard for the labels.
 
 Reproducibility records include the dataset version, split manifest, file
 hashes, source commit, environment lock file, library and CUDA versions,
@@ -471,30 +466,25 @@ vs.\ Fusion without CBAM & $-0.003$ [$-0.006$, $+0.001$] & 0.122 & 0.244 \\
 \end{table}
 
 \subsection{Explanation Behavior}
-Table~\ref{tab:xai} summarizes explanation behavior for the complete
+Table~\ref{tab:xai}(a) summarizes explanation behavior for the complete
 classifier. Deletion and insertion scores \cite{petsiuk2018rise} ask whether
 removing or restoring the highest-ranked regions moves the class probability
-the way the explanation implies it should. Stability is the mean rank
-correlation between an image's explanation and that of a three-pixel
-translation, realigned before comparison. Agreement is the
-intersection-over-union of the top-quintile regions of the two maps. None of
-these is a localization score: the dataset carries no lesion annotations, so
-every entry describes model sensitivity and nothing about anatomical
-correctness.
+as the explanation implies. Stability is the rank correlation between an
+image's explanation and that of a three-pixel translation, realigned before
+comparison. Agreement is the intersection-over-union of the top-quintile
+regions of the two maps. None is a localization score: the dataset carries
+no lesion annotations, so every entry describes model sensitivity and
+nothing about anatomical correctness.
 
-LIME is the more faithful of the two, with a lower deletion AUC ($0.581$
-against $0.616$), a higher insertion AUC ($0.789$ against $0.724$) and more
-concentrated maps. It costs some 45 times as much, $8.17$ s per image
-against $0.18$ s, so Grad-CAM is the default view and LIME is computed on
-request. Grad-CAM is stable under small translations ($\rho=0.81$).
-
-The two agree only weakly, at an IoU of $0.203$: two attribution methods
-applied to the same model and image select largely different regions, so
-neither can be treated as the account of what the model used. That is partly
-expected from their assumptions, since Grad-CAM weights a $7\times7$ tensor
-by gradients and is coarse, while LIME occludes SLIC superpixels and returns
-a sparse selection. Convergence is evidence and divergence is a warning,
-and both are displayed for that reason.
+LIME is the more faithful, with a lower deletion AUC ($0.581$ against
+$0.616$), a higher insertion AUC ($0.789$ against $0.724$) and more
+concentrated maps, at some 45 times the cost. Grad-CAM is stable under small
+translations ($\rho=0.81$) and is the default view, with LIME computed on
+request. The two agree only weakly, at an IoU of $0.203$: two attribution
+methods applied to the same model and image select largely different
+regions, so neither is the account of what the model used. Convergence is
+evidence and divergence is a warning, and both are displayed for that
+reason.
 
 \begin{table}[t]
 \centering
@@ -528,44 +518,44 @@ Mean latency (s)             & 7.9 & 0.02 \\
 \end{table}
 
 Three implementation findings bear on how these maps should be read, each
-settled by measurement rather than by eye against an occlusion-sensitivity
-reference: each $32\times32$ patch of the input is blanked in turn and the
-drop in predicted probability recorded.
+settled against an occlusion-sensitivity reference in which every
+$32\times32$ patch is blanked in turn and the drop in predicted probability
+recorded.
 
 The target tensor is not a neutral choice. For DenseNet121, attaching
 Grad-CAM to the final $1024$-channel block output instead of to the last
-convolution inside the terminal dense layer, which emits only the $32$ new
+convolution inside the terminal dense layer, which emits only $32$
 growth-rate channels, lowered the deletion AUC from $0.723$ to $0.683$. For
 ResNet50, targeting the whole terminal block instead of its last convolution
-raised agreement from $r=0.23$ to $r=0.31$, because the convolution's output
-has yet to pass through the residual addition the pooled feature depends on.
-For the complete classifier, hooking the spatial-attention convolution
-inside CBAM captures a single-channel attention mask, not the refined
-feature tensor; only two of six sample peaks then fell inside the lung
-fields, against six of six once the module output was targeted.
+raised agreement from $r=0.23$ to $r=0.31$, since that convolution's output
+has yet to pass through the residual addition. For the complete classifier,
+hooking the spatial-attention convolution inside CBAM captures a
+single-channel attention mask, not the refined tensor: only two of six
+sample peaks then fell inside the lung fields, against six of six once the
+module output was targeted.
 
 A layout mismatch can invert an attribution outright. The Swin branch emits
 channels-last activations and the attribution library assumes
 channels-first; read in the wrong layout the maps correlated $r=-0.12$ with
-the occlusion reference, highlighting regions the model demonstrably did not
-use. An explicit layout adapter moved the same configuration to $r=+0.31$. A
-negative correlation is the only reliable signal that such a bug exists,
-since the maps stay visually plausible throughout.
+the reference, highlighting regions the model demonstrably did not use. A
+layout adapter moved the same configuration to $r=+0.31$. A negative
+correlation is the only reliable signal of such a bug, since the maps stay
+visually plausible throughout.
 
-With all corrected, agreement is positive everywhere but markedly weaker for
-the fused models: $r=0.27$ to $0.31$ for the single-branch baselines against
-$r=0.10$ for the complete classifier and $r=0.04$ for its ablation.
-Attribution through a fused representation is harder, since the gradient at
-the fusion point mixes two backbones with different inductive biases and one
-map must summarise both. The fused models classify better and explain less
-faithfully, a trade-off worth stating in a system whose purpose is to show
-its reasoning.
+With all corrected, agreement is positive everywhere but weaker for the
+fused models: $r=0.27$ to $0.31$ for the baselines against $r=0.10$ for the
+complete classifier and $r=0.04$ for its ablation. Attribution through a
+fused representation is harder, since the gradient at the fusion point mixes
+two backbones with different inductive biases. The fused models classify
+better and explain less faithfully.
 
 Before masking, between $21\%$ and $48\%$ of saliency mass fell outside the
-segmented lung fields, and on normal radiographs the global maximum often
-lay over the clavicles or the image border. Explanations are therefore
-confined to lung fields for display and for the zone statistics, with the
-off-lung fraction carried alongside.
+segmented lung fields, and on normal radiographs the maximum often lay over
+the clavicles or the image border. Explanations are therefore confined to
+lung fields, with the off-lung fraction carried alongside.
+Fig.~\ref{fig:qualitative} shows correct and incorrect cases under identical
+settings; the misclassified rows matter more, because explanation maps stay
+confident when the prediction is wrong.
 
 \begin{figure}[t]
 \centering
@@ -573,11 +563,6 @@ off-lung fraction carried alongside.
 \caption{Qualitative output of the complete classifier on four held-out cases, including one false positive and one false negative. $P$ is the predicted probability of pneumonia. Highlighted regions indicate model sensitivity confined to the segmented lung fields; they are not radiological findings.}
 \label{fig:qualitative}
 \end{figure}
-
-Fig.~\ref{fig:qualitative} shows correct and incorrect cases under identical
-display settings. The misclassified rows matter more: explanation maps stay
-confident when the prediction is wrong, and making that visible is why the
-probability, the threshold and the evidence object accompany every overlay.
 
 \subsection{Evidence-Constrained Summarization}
 Table~\ref{tab:xai}(b) sets the constrained Gemini summaries against the
@@ -657,82 +642,64 @@ the constraint a teaching deployment imposes.
 
 \section{Discussion}
 \label{sec:discussion}
-The ablation does not support one of this paper's own design choices. Against
-the otherwise identical configuration without it, the complete classifier
-wins 9 radiographs and loses 18, at a Holm-adjusted $p=0.244$, with an AUROC
-difference whose interval spans zero. The same direction appeared under an
-earlier frozen-backbone protocol, so it is not an artefact of one training
-regime. Only one reading is supported: CBAM is not shown to degrade
-performance, because the gap is not significant, and it is not shown to help
-either. For $32{,}868$ parameters the module earns no place here.
+The ablation does not support one of this paper's own design choices.
+Against the otherwise identical configuration without it, the complete
+classifier wins 9 radiographs and loses 18, at a Holm-adjusted $p=0.244$,
+with an AUROC difference whose interval spans zero. The same direction
+appeared under an earlier frozen-backbone protocol, so it is not an artefact
+of one training regime. Only one reading is supported: CBAM is not shown to
+degrade performance, and it is not shown to help. For $32{,}868$ parameters
+the module earns no place here.
 
-Fusion itself fares better. Both fused configurations exceed every
-single-branch baseline on accuracy, specificity, F1 and balanced accuracy,
-and the complete classifier attains significantly higher AUROC than
-DenseNet121 and ResNet50. The gain concentrates in specificity, the weak
-direction for every architecture tested. Combining a convolutional and a
-transformer branch is justified by this evidence; refining the fused tensor
-with attention is not.
+Fusion fares better. Both fused configurations exceed every single-branch
+baseline on accuracy, specificity, F1 and balanced accuracy, and the
+complete classifier attains significantly higher AUROC than DenseNet121 and
+ResNet50. The gain concentrates in specificity, the weak direction for every
+architecture tested. Combining a convolutional and a transformer branch is
+justified by this evidence; refining the fused tensor with attention is not.
 
-Beyond that, the accuracy column is not a ranking. No comparison in
-Table~\ref{tab:stats} survives correction, and a one- to two-point gap on
-624 images is not resolvable from a single run. What does separate the
+Beyond that, the accuracy column is not a ranking: no comparison in
+Table~\ref{tab:stats} survives correction. What separates the
 configurations is the operating point. Swin-T achieves the best AUROC,
-$0.975$, and the worst specificity, $0.778$: it ranks radiographs well and
-then commits to pneumonia too readily, returning 52 false positives against
-the complete classifier's 30. Ranking quality and decision quality come
-apart, so the contribution of fusion is a balanced decision boundary, not
-superior discrimination.
-
-One asymmetry runs through every row. All five configurations detect
-pneumonia more reliably than they recognise a normal radiograph, at
-sensitivity $0.933$--$0.974$ against specificity $0.778$--$0.914$.
-Inverse-frequency weights were applied throughout and did not remove it: the
-$2.9{:}1$ class ratio of the development set survives into the decision
-behaviour of every architecture. Any deployment reading should begin there,
-because the error the system makes most often is calling a healthy chest
-abnormal.
+$0.975$, and the worst specificity, $0.778$, returning 52 false positives
+against the complete classifier's 30. Ranking quality and decision quality
+come apart, so the contribution of fusion is a balanced decision boundary,
+not superior discrimination. One asymmetry runs through every row: all five
+configurations detect pneumonia more reliably than they recognise a normal
+radiograph, at sensitivity $0.933$--$0.974$ against specificity
+$0.778$--$0.914$. Inverse-frequency weights did not remove it, and the error
+the system makes most often is calling a healthy chest abnormal.
 
 The explanation results are weaker than the classification results and
-should be read as such. Grad-CAM and LIME agree at an IoU of $0.203$, which
-is low for two methods applied to the same model and image; agreement with
-an occlusion reference is modest for the baselines and weak for the fused
-models. Convergence between the two is therefore evidence and divergence is
-a warning, and neither is a finding about consolidation. No localization
-score appears anywhere in this paper for a related reason: computing one
-would need lesion annotations the dataset does not contain, and a number
-produced without them would report an assumption as a measurement.
+should be read as such. Grad-CAM and LIME agree at an IoU of $0.203$, and
+agreement with an occlusion reference is modest for the baselines and weak
+for the fused models. No localization score appears anywhere for a related
+reason: computing one would need lesion annotations the dataset does not
+contain, and a number produced without them would report an assumption as a
+measurement.
 
 Separating the classifier from the language model is what makes
-Table~\ref{tab:xai} interpretable. The model never sees the radiograph and
-never receives an anatomical label, so a factual error in a summary must
-originate either in the serialized evidence or in a schema violation, and
-both are machine-checkable. The deterministic template is correct by
-construction on those rows, which bounds what constrained generation can add
-to readability alone. That the generated text is not reproducible across
-repeats is the reason the system stores each summary instead of
-regenerating it.
+Table~\ref{tab:xai}(b) interpretable. The model never sees the radiograph
+and never receives an anatomical label, so a factual error must originate
+either in the serialized evidence or in a schema violation, and both are
+machine-checkable. That the generated text is not reproducible across
+repeats is why the system stores each summary instead of regenerating it.
 
 One deployment failure is worth recording because it is invisible to the
 usual checks. The evaluation script read the calibrated threshold from the
 checkpoint while the serving path applied \texttt{argmax}, so the deployed
-decision boundary silently reverted to $0.5$ while the reported sensitivity
-and specificity continued to describe $t^{*}$. The test suite passed
-throughout, because it verified output shapes and response codes, never
-agreement between the two paths. A threshold selected and reported but not
-applied is indistinguishable, from the outside, from one that was never
-selected; regression tests now assert that the served threshold equals the
-stored one.
+boundary silently reverted to $0.5$ while the reported sensitivity and
+specificity continued to describe $t^{*}$. The test suite passed throughout,
+because it verified output shapes and response codes, never agreement
+between the two paths. A threshold selected and reported but not applied is
+indistinguishable, from the outside, from one never selected; regression
+tests now assert the two match.
 
-Several results depend on choices that could have gone the other way. CBAM
-is applied once after fusion, which keeps the Grad-CAM target unambiguous
-but leaves branch-specific features unrefined. Fusion is concatenation with
-a learned projection, not cross-attention: cheaper and easier to assert
-shape invariants over, and unable to let either branch condition on the
-other. Youden's index weights sensitivity and specificity equally, which is
-not the operating point a screening deployment would choose. Each is
-recorded so the numbers are read against the configuration that produced
-them.
+Finally, several results depend on choices that could have gone the other
+way: CBAM applied once after fusion, concatenation with a learned projection
+instead of cross-attention, and Youden's index weighting sensitivity and
+specificity equally, which is not the operating point a screening deployment
+would choose.
 
 \section{Limitations, Ethics, and Privacy}
 \label{sec:limits}
