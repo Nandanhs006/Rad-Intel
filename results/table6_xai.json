@@ -1,0 +1,19 @@
+{
+  "model": "hybrid",
+  "n_gradcam": 25,
+  "n_lime": 8,
+  "gradcam": {
+    "deletion_auc": 0.6158,
+    "insertion_auc": 0.7237,
+    "concentration": 0.2883,
+    "stability": 0.8102,
+    "runtime_s": 0.175
+  },
+  "lime": {
+    "deletion_auc": 0.5807,
+    "insertion_auc": 0.7888,
+    "concentration": 0.3871,
+    "runtime_s": 8.17
+  },
+  "gradcam_lime_iou": 0.2026
+}

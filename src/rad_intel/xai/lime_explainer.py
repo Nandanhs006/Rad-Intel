@@ -90,6 +90,25 @@ class LIMECXRExplainer:
         overlay_rgb = (marked * 255).astype(np.uint8)
         base64_overlay = image_to_base64(overlay_rgb)
 
+        # Per-superpixel weights, and a dense map built by painting each
+        # segment with its weight. Without these the explanation is only a
+        # picture: the serializer needs region identifiers and signed weights
+        # to record what LIME actually selected, and a dense map is required
+        # to compare LIME against Grad-CAM or score it by deletion/insertion.
+        segments = explanation.segments
+        weights = dict(explanation.local_exp.get(target_category, []))
+        heatmap = np.zeros(segments.shape, dtype=np.float32)
+        for seg_id, w in weights.items():
+            heatmap[segments == seg_id] = float(w)
+        # Keep only evidence FOR the explained class; negative weights argue
+        # against it and would invert a saliency reading.
+        heatmap = np.clip(heatmap, 0.0, None)
+
+        regions = sorted(
+            ({"region_id": int(k), "weight": round(float(v), 6)} for k, v in weights.items()),
+            key=lambda r: -abs(r["weight"]),
+        )[:num_features]
+
         return {
             "method": "lime",
             "target_category": target_category,
@@ -97,4 +116,8 @@ class LIMECXRExplainer:
             "overlay_rgb": overlay_rgb,
             "overlay_base64": base64_overlay,
             "top_features_count": num_features,
+            "heatmap": heatmap,
+            "segments": segments,
+            "top_regions": regions,
+            "num_segments": int(segments.max()) + 1,
         }

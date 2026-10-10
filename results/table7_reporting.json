@@ -1,0 +1,9 @@
+{
+  "engine": "gemini-3.5-flash-lite",
+  "schema_valid_pct": 100.0,
+  "evidence_agreement_pct": 85.0,
+  "forbidden_claim_pct": 0.0,
+  "fallback_pct": 0.0,
+  "repeatable": false,
+  "mean_latency_s": 7.86
+}
