@@ -299,7 +299,7 @@ under $0.1\%$ of the total. Runs took 36--49 minutes each, about 3.5
 GPU-hours for the five reported here.
 
 \subsection{Classification Performance and Ablation}
-Table~\ref{tab:main} carries the primary comparison and the ablation in one
+Table~\ref{tab:main}(a) carries the primary comparison and the ablation in one
 block, since the single-branch rows serve both purposes and splitting them
 would repeat the same six runs across two tables. Rows one and two isolate
 each representation. Row three gives the residual CNN reference.
@@ -334,12 +334,13 @@ $197/37/26/364$ for ResNet50.
 
 \begin{table*}[t]
 \centering
-\caption{Test-set classification results at the validation-selected threshold $t^*$, on the held-out 624-image partition. All entries are single runs at seed 42 and carry no confidence interval; see Section~\ref{sec:discussion} on the size of the margins. Best value per column in bold. ECE is computed with 15 equal-width bins.}
+\caption{Test-set results on the held-out 624-image partition, each model at its own validation-selected threshold $t^*$. All entries are single runs at seed 42. Best value per column in bold; ECE uses 15 equal-width bins. Panel (b) compares the complete classifier against each other configuration on the same images: McNemar on thresholded errors, $\Delta$AUROC by paired bootstrap with 2{,}000 resamples, $p$-values Holm-adjusted across the four comparisons.}
 \label{tab:main}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{L{2.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.9cm}C{1.6cm}C{1.3cm}}
+\begin{tabular}{L{3.0cm}C{1.7cm}C{1.7cm}C{1.7cm}C{1.7cm}C{1.5cm}C{1.5cm}C{1.3cm}}
 \toprule
+\multicolumn{8}{l}{\textit{(a) Classification}} \\
 Configuration & AUROC & AUPRC & Sensitivity & Specificity & F1 & Bal.\ acc. & ECE \\
 \midrule
 DenseNet121         & 0.962 & 0.969 & 0.956 & 0.846 & 0.934 & 0.901 & \textbf{0.052} \\
@@ -347,6 +348,14 @@ Swin-T              & 0.975 & \textbf{0.983} & 0.974 & 0.778 & 0.925 & 0.876 & 0
 ResNet50            & 0.954 & 0.966 & 0.933 & 0.838 & 0.919 & 0.885 & 0.075 \\
 Fusion without CBAM & \textbf{0.977} & 0.981 & 0.946 & \textbf{0.914} & \textbf{0.947} & \textbf{0.930} & 0.078 \\
 Complete classifier & 0.974 & 0.972 & \textbf{0.959} & 0.855 & 0.937 & 0.907 & 0.062 \\
+\midrule
+\multicolumn{8}{l}{\textit{(b) Complete classifier versus each configuration}} \\
+Comparison & \multicolumn{3}{l}{$\Delta$AUROC [95\% CI]} & \multicolumn{2}{l}{McNemar $p$} & \multicolumn{2}{l}{Holm $p$} \\
+\midrule
+vs.\ DenseNet121         & \multicolumn{3}{l}{$+0.012$ [$+0.005$, $+0.020$]} & \multicolumn{2}{l}{0.728} & \multicolumn{2}{l}{0.728} \\
+vs.\ Swin-T              & \multicolumn{3}{l}{$-0.001$ [$-0.006$, $+0.003$]} & \multicolumn{2}{l}{0.036} & \multicolumn{2}{l}{0.143} \\
+vs.\ ResNet50            & \multicolumn{3}{l}{$+0.019$ [$+0.009$, $+0.031$]} & \multicolumn{2}{l}{0.065} & \multicolumn{2}{l}{0.195} \\
+vs.\ Fusion without CBAM & \multicolumn{3}{l}{$-0.003$ [$-0.006$, $+0.001$]} & \multicolumn{2}{l}{0.122} & \multicolumn{2}{l}{0.244} \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -365,7 +374,7 @@ own operating point instead of a shared default.
 
 Calibration is better than the spread of thresholded accuracies suggests.
 Brier scores ranged from $0.062$ to $0.085$, with expected calibration
-errors of $0.052$ to $0.078$ as listed in Table~\ref{tab:main}. Emitted
+errors of $0.052$ to $0.078$ as listed in Table~\ref{tab:main}(a). Emitted
 probabilities therefore track observed frequencies closely even where the
 thresholded decisions diverge, supporting the reading that these
 configurations differ more in where they cut than in how they rank.
@@ -379,50 +388,25 @@ Fig.~\ref{fig:roc} gives the reliability curves over 15 equal-width bins.
 \end{figure}
 
 \subsection{Statistical Comparison}
-Table~\ref{tab:stats} reports the paired comparisons, with $p$-values
-Holm-adjusted across the four.
-
-The ablation does not support the attention module. Against fusion without
-CBAM, the complete classifier is correct on 9 radiographs its ablated
-counterpart misses and incorrect on 18 that the ablated model gets right,
-giving $p=0.244$; the AUROC difference is $-0.003$ with an interval spanning
-zero. Post-fusion CBAM therefore produces no measurable improvement here.
-The point estimates favour the ablated configuration, but not
-significantly, so the defensible claim is an absence of effect, not a
-reversal.
-
-No comparison against the single-branch baselines reaches significance after
-correction either. The closest is Swin-T, discordant 20 against 8 with an
-unadjusted $p=0.036$ that becomes $0.143$ once the family is accounted for;
-against DenseNet121 the complete classifier is effectively tied, 18 against
-15. Accuracy differences of one to two points on 624 images are not
-resolvable from a single run, and that column should not be read as a
-ranking.
+No comparison reaches significance on thresholded accuracy. Against fusion
+without CBAM the complete classifier is correct on 9 radiographs its ablated
+counterpart misses and wrong on 18 the ablated model gets right, giving
+$p=0.244$; the closest case is Swin-T, discordant 20 against 8 at an
+unadjusted $p=0.036$ that becomes $0.143$ once the family of four is
+accounted for; against DenseNet121 the two are effectively tied, 18 against
+15. Differences of one to two accuracy points on 624 images are not
+resolvable from a single run.
 
 Discrimination behaves differently. The complete classifier attains a
 significantly higher AUROC than DenseNet121 ($+0.012$) and ResNet50
-($+0.019$), with bootstrap intervals excluding zero in both cases, while
-being indistinguishable from Swin-T and from its own ablation. Fusion
-improves ranking over the convolutional baselines even where the thresholded
-decisions are statistically tied.
+($+0.019$), intervals excluding zero in both cases, while being
+indistinguishable from Swin-T and from its own ablation. Fusion improves
+ranking over the convolutional baselines even where the thresholded
+decisions are statistically tied, and the $-0.003$ against its own ablation
+is the ablation result quantified: post-fusion CBAM produces no measurable
+change in either direction.
 
-\begin{table}[t]
-\centering
-\caption{The complete classifier against each other configuration, on the same 624 test images. McNemar compares thresholded errors; $\Delta$AUROC uses a paired bootstrap with 2{,}000 resamples. $p$-values are Holm-adjusted across the four comparisons.}
-\label{tab:stats}
-\scriptsize
-\setlength{\tabcolsep}{3.5pt}
-\begin{tabular}{L{2.4cm}C{2.2cm}C{1.0cm}C{1.0cm}}
-\toprule
-Comparison & $\Delta$AUROC [95\% CI] & McN.\ $p$ & Holm $p$ \\
-\midrule
-vs.\ DenseNet121         & $+0.012$ [$+0.005$, $+0.020$] & 0.728 & 0.728 \\
-vs.\ Swin-T              & $-0.001$ [$-0.006$, $+0.003$] & 0.036 & 0.143 \\
-vs.\ ResNet50            & $+0.019$ [$+0.009$, $+0.031$] & 0.065 & 0.195 \\
-vs.\ Fusion without CBAM & $-0.003$ [$-0.006$, $+0.001$] & 0.122 & 0.244 \\
-\bottomrule
-\end{tabular}
-\end{table}
+
 
 \subsection{Explanation Behavior}
 Table~\ref{tab:xai}(a) summarizes explanation behavior for the complete
@@ -592,15 +576,11 @@ request. The pipeline is interactive on commodity hardware without a GPU,
 the constraint a teaching deployment imposes.
 
 \section{Discussion}
-\label{sec:discussion}
-The ablation does not support one of this paper's own design choices.
-Against the otherwise identical configuration without it, the complete
-classifier wins 9 radiographs and loses 18, at a Holm-adjusted $p=0.244$,
-with an AUROC difference whose interval spans zero. The same direction
-appeared under an earlier frozen-backbone protocol, so it is not an artefact
-of one training regime. Only one reading is supported: CBAM is not shown to
-degrade performance, and it is not shown to help. For $32{,}868$ parameters
-the module earns no place here.
+The ablation does not support one of this paper's own design choices. The
+same direction appeared under an earlier frozen-backbone protocol, so the
+null result is not an artefact of one training regime. Only one reading is
+supported: CBAM is not shown to degrade performance, and it is not shown to
+help. For $32{,}868$ parameters the module earns no place here.
 
 Fusion fares better. Both fused configurations exceed every single-branch
 baseline on accuracy, specificity, F1 and balanced accuracy, and the
@@ -610,7 +590,7 @@ architecture tested. Combining a convolutional and a transformer branch is
 justified by this evidence; refining the fused tensor with attention is not.
 
 Beyond that, the accuracy column is not a ranking: no comparison in
-Table~\ref{tab:stats} survives correction. What separates the
+Table~\ref{tab:main}(b) survives correction. What separates the
 configurations is the operating point. Swin-T achieves the best AUROC,
 $0.975$, and the worst specificity, $0.778$, returning 52 false positives
 against the complete classifier's 30. Ranking quality and decision quality
