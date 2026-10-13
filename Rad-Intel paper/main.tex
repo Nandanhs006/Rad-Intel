@@ -615,14 +615,12 @@ and never receives an anatomical label, so a factual error must originate
 either in the serialized evidence or in a schema violation, and both are
 machine-checkable. The clinical review shows where that guarantee stops.
 Validation reported no forbidden claims and the reviewer still read half the
-cases as diagnostic: constraining which fields a summary may use does not
-constrain the register in which it states them, and a report that gives
-findings and an impression in the conventional radiological voice reads as a
-diagnosis whatever its provenance. One reader is not a measurement, and the overlays reviewed were
+cases as diagnostic, because a report that gives findings and an impression
+in the conventional radiological voice reads as a diagnosis whatever its
+provenance. One reader is not a measurement, and the overlays reviewed were
 DenseNet121's, whose occlusion agreement is the highest measured here: the
 lukewarm plausibility scores fall on the strongest explanations in the
-paper, not the weakest. The findings therefore support the classifier
-more strongly than the explanation and summarization layers.
+paper, not the weakest.
 
 \section{Limitations, Ethics, and Privacy}
 The Kaggle dataset holds pediatric images from one institution and is
@@ -665,7 +663,23 @@ technical research and education and does not provide diagnosis, treatment,
 triage or autonomous decision support.
 
 \section{Conclusion}
-The pipeline joins DenseNet121 and Swin-T through concatenation and a learned projection, refines the result with CBAM, and emits a pneumonia probability at a calibrated threshold. In this single-seed evaluation fusion is supported and the attention module is not: both fused configurations beat every single-branch baseline, while removing CBAM changes nothing measurable. Grad-CAM and LIME expose complementary aspects of model behavior but agree only weakly with each other, and a clinician reading the output scored it close to neutral throughout. Deterministic serialization keeps the language model away from the image and leaves every displayed sentence traceable to a recorded field, yet half the generated summaries still read as diagnostic to that reader. The classifier is the part of this system the evidence supports; the explanation and reporting layers are the parts that need work.
+Five configurations were trained once each at seed 42 under one protocol and
+evaluated on a held-out 624-image partition. Feature fusion earns its place:
+both fused configurations exceed every single-branch baseline on accuracy,
+specificity, F1 and balanced accuracy, reaching $0.934$ accuracy at $0.977$
+AUROC, with the gain concentrated in specificity, which rises from a
+$0.778$--$0.846$ band across the baselines to $0.914$. Post-fusion CBAM does
+not: removing it changes nothing measurable, and reporting that is worth
+more than defending the design. Grad-CAM was checked against an occlusion
+reference rather than taken on trust, which is what exposed a layout fault
+that had left the maps plausible and uninformative, and explanations are
+confined to segmented lung fields with the off-lung fraction shown rather
+than suppressed. The reporting layer carries the finding most likely to
+outlast this system: deterministic serialization keeps the language model
+away from the image and makes every displayed sentence traceable to a
+recorded field, and a clinician still read half the summaries as diagnostic.
+Constraining which fields a summary may use does not constrain the register
+in which it states them.
 
 \section*{Acknowledgment}
 The authors thank Dr.\ Vybhav N (MBBS, MD; five years of reporting experience) for the blinded review of the
