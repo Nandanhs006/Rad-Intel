@@ -92,10 +92,19 @@ class CXRPreprocessor:
         if self.apply_clahe:
             img_rgb = self.enhance_clahe(img_rgb)
 
-        # Resize to standardized dimensions
-        resized_rgb = cv2.resize(
-            img_rgb, (self.image_size, self.image_size), interpolation=cv2.INTER_AREA
+        # Resize exactly as training does.
+        #
+        # The models were trained through torchvision's Resize, which is PIL
+        # bilinear. Serving used cv2.INTER_AREA, which is a different kernel:
+        # the same radiograph came out as a different tensor, moving the
+        # pneumonia probability by 0.024 on average and flipping 16 of the 624
+        # test decisions. Reported metrics and deployed behaviour then
+        # described slightly different classifiers. test_serving_contract.py
+        # pins the two paths together so this cannot drift again.
+        pil = Image.fromarray(img_rgb).resize(
+            (self.image_size, self.image_size), resample=Image.BILINEAR
         )
+        resized_rgb = np.asarray(pil, dtype=np.uint8)
 
         # Normalize to [0, 1] float
         norm_img = resized_rgb.astype(np.float32) / 255.0

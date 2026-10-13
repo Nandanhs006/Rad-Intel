@@ -113,7 +113,7 @@ Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and h
 
 \begin{figure}[!t]
 \centering
-\includegraphics[width=0.74\columnwidth]{architecture.png}
+\includegraphics[width=0.68\columnwidth]{architecture.png}
 \caption{End-to-end classification, explanation, and evidence-constrained summarization workflow.}
 \label{fig:architecture}
 \end{figure}
@@ -242,18 +242,21 @@ the same images, a paired bootstrap compares AUROC in place of the analytic DeLo
 compare two classifiers on identical inputs, so they are informative from
 single runs.
 
-Classification metrics are computed through the training-time
-preprocessing pipeline, while the explanation measurements and the clinical
-review run through the deployed service path. The two apply the same CLAHE
-settings and the same $224\times224$ target but different resize
-interpolation, which moves the pneumonia probability by $0.024$ on average
-and changes 16 of 624 thresholded decisions; the discrepancy was found
-during this audit and is recorded rather than retrofitted, since the review
-was already collected.
+One preprocessing path serves training, evaluation, explanation and the
+service, and a regression test asserts that the two construct identical
+tensors. They did not at first: the service resized with a different
+interpolation kernel than training, which moved the pneumonia probability by
+$0.024$ on average and changed 16 of the 624 thresholded decisions, so the
+reported metrics and the deployed classifier were not quite the same model.
+The clinical review of Section~\ref{sec:review} was collected before the two
+were reconciled and is reported as such.
 
-The split manifest, checkpoint hashes, saved test probabilities, selected
-thresholds, environment lock file, prompt and schema, and the scripts that
-produce every table are released with the source.
+The split manifest, checkpoint hashes, saved test probabilities and
+thresholds, the prompt and schema, and the scripts that produce every table
+and figure are released at \url{https://github.com/Nandanhs006/Rad-Intel}
+under the tag \texttt{paper-v1}. The reported runs use PyTorch 2.14.1,
+torchvision 0.29.1, timm 1.0.30 and TorchXRayVision 1.5.5, training on a
+single NVIDIA T4 and measuring inference on macOS on Apple silicon.
 
 Explanation analysis covers deletion and insertion curves
 \cite{petsiuk2018rise}, stability under label-preserving perturbations, map
@@ -420,23 +423,21 @@ lung-field masking changes what is displayed rather than what the model
 used. Every entry describes model sensitivity, not
 anatomical correctness.
 
-Both methods are scored on the same 25 radiographs, since a curve measured
-over one sample cannot be set against a curve measured over a different one. LIME
-produces the more concentrated maps ($0.375$ against $0.288$) and the better
-central values on both faithfulness measures, at a lower deletion AUC
-($0.567$ against $0.616$) and a higher insertion AUC ($0.794$ against
-$0.724$). Neither gap survives a paired test over the 25 image pairs: the
-deletion difference is $-0.049$ with a bootstrap interval of $[-0.113,
-+0.021]$ and a signed-rank $p=0.19$, and the insertion difference is
-$+0.070$ with an interval of $[+0.013, +0.131]$ and $p=0.08$. The direction
-favors LIME on both measures; the sample does not establish it. That is the
-most 25 images support. Grad-CAM is stable under small translations
-($\rho=0.81$), costs roughly $47$ times less, and is therefore the default
+Both methods are scored on the same 25 radiographs, since curves measured
+over different samples cannot be compared. LIME
+produces the more concentrated maps ($0.371$ against $0.300$) and the better
+value on both faithfulness measures, at a lower deletion AUC ($0.533$
+against $0.626$) and a higher insertion AUC ($0.788$ against $0.730$). Only
+the deletion gap survives a paired test over the 25 image pairs, at $-0.093$
+with a bootstrap interval of $[-0.157, -0.027]$ and a signed-rank $p=0.022$;
+the insertion difference of $+0.058$ gives $[+0.003, +0.117]$ and $p=0.15$.
+Removing what LIME ranks highest costs the classifier more than removing
+what Grad-CAM ranks highest; that is the firmer of the two statements. Grad-CAM is stable under small translations
+($\rho=0.79$), costs roughly $46$ times less, and is therefore the default
 view, with LIME computed on request. The two agree only weakly, at an IoU of
-$0.188$: two attribution methods applied to the same model and image select
-largely different regions, so neither is the account of what the model used.
-Convergence is evidence and divergence is a warning, and both are displayed
-for that reason.
+$0.174$: two attribution methods applied to the same model and image select
+largely different regions, so neither is the account of what the model used;
+convergence is evidence and divergence a warning, and both are displayed.
 
 \begin{table}[t]
 \centering
@@ -449,12 +450,12 @@ for that reason.
 \multicolumn{3}{l}{\textit{(a) Explanation}} \\
 Measure & Grad-CAM & LIME \\
 \midrule
-Deletion AUC (lower better)   & 0.616 & \textbf{0.567} \\
-Insertion AUC (higher better) & 0.724 & \textbf{0.794} \\
-Map concentration             & 0.288 & 0.375 \\
-Stability under perturbation  & 0.810 & --- \\
-Mean runtime per image (s)    & \textbf{0.17} & 7.98 \\
-Grad-CAM / LIME agreement (IoU) & \multicolumn{2}{c}{0.188} \\
+Deletion AUC (lower better)   & 0.626 & \textbf{0.533} \\
+Insertion AUC (higher better) & 0.730 & \textbf{0.788} \\
+Map concentration             & 0.300 & 0.371 \\
+Stability under perturbation  & 0.789 & --- \\
+Mean runtime per image (s)    & \textbf{0.17} & 7.92 \\
+Grad-CAM / LIME agreement (IoU) & \multicolumn{2}{c}{0.174} \\
 \midrule
 \multicolumn{3}{l}{\textit{(b) Summarization}} \\
 Measure & Gemini & Template \\
@@ -498,7 +499,7 @@ is built to expose.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.72\columnwidth]{fig_qualitative.png}
+\includegraphics[width=0.66\columnwidth]{fig_qualitative.png}
 \caption{Qualitative output of the complete classifier on two held-out cases, one correct and one false positive. $P$ is the predicted probability of pneumonia, and the two radiographs happen to draw the same value: the model is as confident on the normal chest it misreads as on the pneumonia it identifies. Highlighted regions indicate model sensitivity confined to the segmented lung fields; they are not radiological findings.}
 \label{fig:qualitative}
 \end{figure}
@@ -537,8 +538,9 @@ A practicing clinician (MBBS, MD) with five years of reporting experience,
 named in the acknowledgment, reviewed 30 stratified test cases under the
 blinded protocol of Section~\ref{sec:setup}: 21 classified correctly and 9
 not. The cases come from DenseNet121, the configuration the service ran when the
-packet was assembled, through the service preprocessing path; one of the
-thirty crosses the threshold the other way under the training-time pipeline.
+packet was assembled, and predate the preprocessing reconciliation of
+Section~\ref{sec:setup}; one of the thirty crosses the threshold the other
+way under the unified path.
 The review therefore speaks to that baseline's overlays and to the
 summarization layer shared by every configuration, not to the complete
 classifier.
@@ -576,8 +578,8 @@ a wide margin the largest local cost, the price of replacing the intensity
 heuristics of Section~\ref{sec:method}; it runs once per image, independent
 of the classifier. End-to-end latency is near $1.1$ s with the deterministic
 template, and the live service adds the $7.9$ s call of
-Table~\ref{tab:xai}(b), which then dominates. LIME is excluded at $8.0$ s per
-image, some $47$ times Grad-CAM, so it is computed on request. The pipeline
+Table~\ref{tab:xai}(b), which then dominates. LIME is excluded at $7.9$ s per
+image, some $46$ times Grad-CAM, so it is computed on request. The pipeline
 is interactive on commodity hardware without a GPU, the constraint a
 teaching deployment imposes.
 
