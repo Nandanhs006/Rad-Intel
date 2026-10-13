@@ -319,7 +319,7 @@ $197/37/26/364$ for ResNet50.
 
 \begin{table*}[t]
 \centering
-\caption{Test-set results on the held-out 624-image partition, each model at its own validation-selected threshold $t^*$. All entries are single runs at seed 42. Best value per column in bold; ECE uses 15 equal-width bins. Panel (b) compares the complete classifier against each other configuration on the same images: McNemar on thresholded errors, $\Delta$AUROC by paired bootstrap with 2{,}000 resamples, $p$-values Holm-adjusted across the four comparisons.}
+\caption{Test-set results on the held-out 624-image partition, each model at its own validation-selected threshold $t^*$. All entries are single runs at seed 42. Best value per column in bold; ECE uses 15 equal-width bins. Panel (b) compares the complete classifier against each other configuration on the same images: McNemar on thresholded errors, $\Delta$AUROC by paired bootstrap with 2{,}000 resamples, $p$-values Holm-adjusted across the four comparisons. Panel (c) gives the blinded clinical review.}
 \label{tab:main}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
@@ -341,6 +341,15 @@ vs.\ DenseNet121         & \multicolumn{3}{l}{$+0.012$ [$+0.005$, $+0.020$]} & \
 vs.\ Swin-T              & \multicolumn{3}{l}{$-0.001$ [$-0.006$, $+0.003$]} & \multicolumn{2}{l}{0.036} & \multicolumn{2}{l}{0.143} \\
 vs.\ ResNet50            & \multicolumn{3}{l}{$+0.019$ [$+0.009$, $+0.031$]} & \multicolumn{2}{l}{0.065} & \multicolumn{2}{l}{0.195} \\
 vs.\ Fusion without CBAM & \multicolumn{3}{l}{$-0.003$ [$-0.006$, $+0.001$]} & \multicolumn{2}{l}{0.122} & \multicolumn{2}{l}{0.244} \\
+\midrule
+\multicolumn{8}{l}{\textit{(c) Blinded clinical review, 30 cases, five-point scale, 3 = neutral}} \\
+Rubric item & \multicolumn{5}{l}{} & \multicolumn{1}{c}{Correct} & \multicolumn{1}{c}{Incorrect} \\
+\midrule
+Plausibility of highlighted region  & \multicolumn{5}{l}{} & \multicolumn{1}{c}{3.00} & \multicolumn{1}{c}{2.78} \\
+Consistency with displayed evidence & \multicolumn{5}{l}{} & \multicolumn{1}{c}{3.05} & \multicolumn{1}{c}{3.22} \\
+Absence of unsupported claims       & \multicolumn{5}{l}{} & \multicolumn{1}{c}{3.10} & \multicolumn{1}{c}{3.00} \\
+Overall acceptability, research use & \multicolumn{5}{l}{} & \multicolumn{1}{c}{3.00} & \multicolumn{1}{c}{2.89} \\
+Cases read as diagnosis (\%)        & \multicolumn{5}{l}{} & \multicolumn{1}{c}{57.1} & \multicolumn{1}{c}{33.3} \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -445,26 +454,21 @@ Mean latency (s)             & 7.9 & 0.02 \\
 \end{tabular}
 \end{table}
 
-Two implementation details decide whether these maps mean anything, and both
-were settled against an occlusion-sensitivity reference in which every
-$32\times32$ patch is blanked in turn and the drop in predicted probability
-recorded. The target tensor is not a neutral choice: attributing to a
-convolution inside the terminal block rather than to the block output cost
-DenseNet121 $0.04$ of deletion AUC and ResNet50 $0.08$ of agreement, and for
-the complete classifier, hooking the spatial-attention convolution inside
-CBAM captures a single-channel attention mask instead of the refined tensor,
-dropping sample peaks inside the lung fields from six of six to two. Layout
-matters more still. The Swin branch emits channels-last activations while
-the attribution library assumes channels-first; read wrongly, the maps
-correlated $r=-0.12$ with the reference, highlighting regions the model
-demonstrably did not use, and a layout adapter moved the same configuration
-to $r=+0.31$. A negative correlation is the only reliable signal of such a
-bug, because the maps stay visually plausible throughout.
-
-With both corrected, agreement is positive everywhere but weaker for the
-fused models: $r=0.27$--$0.31$ for the baselines against $r=0.10$ and
-$r=0.04$ for the two fused configurations. Attribution through a fused
-representation is harder, since the gradient at the fusion point mixes two
+Two implementation details decide whether these maps mean anything, both
+settled against an occlusion-sensitivity reference that blanks every
+$32\times32$ patch in turn. The target tensor matters: attributing to a
+convolution inside a terminal block instead of to the block output cost
+DenseNet121 $0.04$ of deletion AUC, and for the complete classifier the
+spatial-attention convolution inside CBAM yields a single-channel attention
+mask, not the refined tensor. Layout matters more. The Swin branch emits
+channels-last activations while the attribution library assumes
+channels-first; read wrongly, the maps correlated $r=-0.12$ with the
+reference, highlighting regions the model demonstrably did not use, and a
+layout adapter moved it to $r=+0.31$. A negative correlation is the only
+reliable signal of such a bug, because the maps stay visually plausible
+throughout. With both corrected, agreement is positive everywhere but weaker
+for the fused models, $r=0.27$--$0.31$ for the baselines against $r=0.10$
+and $r=0.04$ for the fused pair: the gradient at the fusion point mixes two
 backbones with different inductive biases, so the fused models classify
 better and explain less faithfully.
 
@@ -520,7 +524,7 @@ to observed consolidation, and the treatment directive has been removed.
 A practising clinician (MBBS, MD) with five years of reporting experience,
 named in the acknowledgment, reviewed 30 stratified test cases under the
 blinded protocol of Section~\ref{sec:setup}: 21 the model classified
-correctly and 9 it did not. Table~\ref{tab:expert} reports the rubric.
+correctly and 9 it did not. Table~\ref{tab:main}(c) reports the rubric.
 
 The review is not an endorsement. Every rubric item averaged close to the
 neutral point of the scale, from $2.93$ for plausibility of the highlighted
@@ -547,26 +551,7 @@ language. This is the clearest evidence in the paper that constraining the
 fields a summary may use is not the same as constraining how it reads, and
 it is a limitation of the design rather than of the implementation.
 
-\begin{table}[t]
-\centering
-\caption{Blinded clinical review of 30 stratified test cases, 21 correctly and 9 incorrectly classified. Scores are means on a five-point scale where 3 is neutral. The reviewer is credited in the acknowledgment.}
-\label{tab:expert}
-\scriptsize
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{L{4.4cm}C{1.3cm}C{1.3cm}}
-\toprule
-Rubric item & Correct & Incorrect \\
- & cases & cases \\
-\midrule
-Plausibility of highlighted region & 3.00 & 2.78 \\
-Consistency with displayed evidence & 3.05 & 3.22 \\
-Absence of unsupported claims & 3.10 & 3.00 \\
-Overall acceptability, research use & 3.00 & 2.89 \\
-\midrule
-Cases flagged as diagnosis-like (\%) & 57.1 & 33.3 \\
-\bottomrule
-\end{tabular}
-\end{table}
+
 
 \subsection{Latency}
 Latency was measured on an Apple M-series CPU with no GPU acceleration.
@@ -635,21 +620,9 @@ only weakly with each other and with an occlusion reference. The honest
 summary is that the classifier is the strongest part of this system and the
 explanation and reporting layers are the parts that need work.
 
-One deployment failure is worth recording because it is invisible to the
-usual checks. The evaluation script read the calibrated threshold from the
-checkpoint while the serving path applied \texttt{argmax}, so the deployed
-boundary silently reverted to $0.5$ while the reported sensitivity and
-specificity continued to describe $t^{*}$. The test suite passed throughout,
-because it verified output shapes and response codes, never agreement
-between the two paths. A threshold selected and reported but not applied is
-indistinguishable, from the outside, from one never selected; regression
-tests now assert the two match.
 
-Finally, several results depend on choices that could have gone the other
-way: CBAM applied once after fusion, concatenation with a learned projection
-instead of cross-attention, and Youden's index weighting sensitivity and
-specificity equally, which is not the operating point a screening deployment
-would choose.
+
+
 
 \section{Limitations, Ethics, and Privacy}
 The Kaggle dataset holds pediatric images from one institution and is
