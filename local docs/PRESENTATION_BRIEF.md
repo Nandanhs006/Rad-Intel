@@ -193,6 +193,7 @@ input, then caught their own exception in a bare `except` and re-raised it as
 - SQLite audit trail
 - 26 automated tests passing
 - Blinded review by a practising clinician (MBBS, MD), 30 stratified cases
+  (run on the DenseNet121 baseline, the model the service ran at the time)
 - Paper: all result tables populated from measured data, methodology
   matched to the code
 
