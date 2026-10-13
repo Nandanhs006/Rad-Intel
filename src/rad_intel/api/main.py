@@ -1,5 +1,5 @@
 """
-FastAPI application entry point for Rad-Intel Clinical Decision Support Framework.
+FastAPI application entry point for the Rad-Intel research and education framework.
 """
 
 from contextlib import asynccontextmanager
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Data-Driven Clinical Decision Support Framework for Automated Pneumonia Detection from Chest Radiographs",
+    description="Research and education framework for automated pneumonia classification, explanation and evidence-constrained reporting from chest radiographs. Not for clinical use.",
     lifespan=lifespan,
 )
 
@@ -98,5 +98,5 @@ async def api_info():
         "version": settings.VERSION,
         "docs_url": "/docs",
         "health_check": "/api/v1/health",
-        "description": "Rad-Intel Clinical Decision Support API.",
+        "description": "Rad-Intel research and education API. Not for clinical use.",
     }

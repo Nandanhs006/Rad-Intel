@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rad-intel"
 version = "0.1.0"
-description = "Clinical Decision Support Framework for Automated Pneumonia Detection from Chest Radiographs"
+description = "Research and education framework for automated pneumonia detection from chest radiographs. Not for clinical use."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
