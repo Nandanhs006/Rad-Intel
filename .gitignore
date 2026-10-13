@@ -58,3 +58,9 @@ chest_xray/
 
 results/*.html
 results/*.csv
+
+# tectonic build intermediates
+Rad-Intel paper/*.aux
+Rad-Intel paper/*.bbl
+Rad-Intel paper/*.blg
+Rad-Intel paper/*.out

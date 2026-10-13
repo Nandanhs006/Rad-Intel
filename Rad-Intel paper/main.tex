@@ -217,7 +217,7 @@ serializer did not compute may appear.
 \subsection{Evidence-Constrained Summarization and Interface}
 Gemini 3.5 Flash-Lite receives only the serialized evidence object and returns three JSON strings: \texttt{classification\_summary}, \texttt{model\_evidence}, and \texttt{limitations}. The request uses temperature $0$, a fixed prompt, and a fixed response schema. The application adds a non-generated research-use notice. Gemini models have been studied in medical tasks, but that evidence does not establish the correctness of this summarization pipeline \cite{saab2024gemini}.
 
-The validator rejects missing or additional keys, non-string values, unsupported anatomy, diagnostic or treatment instructions, probability disagreements, and numbers absent from the evidence object. One bounded correction request reuses the same evidence and asks only for schema repair. If validation fails again or the service is unavailable, a deterministic template renders the same fields. The browser-based interface displays the input image, class probability and threshold, Grad-CAM overlay, LIME regions, serialized evidence, summary source, checkpoint version, and limitations.
+The validator rejects missing or additional keys, non-string values, unsupported anatomy, diagnostic or treatment instructions, and numbers absent from the evidence object. One bounded correction request reuses the same evidence and asks only for schema repair; if validation fails again or the service is unavailable, a deterministic template renders the same fields. The browser-based interface displays the input image, the probability and threshold, the Grad-CAM overlay and LIME regions, the serialized evidence, and the summary's source and limitations.
 
 \section{Implementation and Evaluation Setup}
 \label{sec:setup}
@@ -471,15 +471,17 @@ DenseNet121 $0.04$ of deletion AUC, and for the complete classifier the
 spatial-attention convolution inside CBAM yields a single-channel attention
 mask, not the refined tensor. Layout matters more. The Swin branch emits
 channels-last activations while the attribution library assumes
-channels-first; read wrongly, the maps correlated $r=-0.12$ with the
-reference, highlighting regions the model demonstrably did not use, and a
-layout adapter moved it to $r=+0.31$. A negative correlation is the only
-reliable signal of such a bug, because the maps stay visually plausible
-throughout. With both corrected, agreement is positive everywhere but weaker
-for the fused models, $r=0.27$--$0.31$ for the baselines against $r=0.10$
-and $r=0.04$ for the fused pair: the gradient at the fusion point mixes two
-backbones with different inductive biases, so the fused models classify
-better and explain less faithfully.
+channels-first, and read that way its maps carry no relation to the
+reference at all, $r=-0.003$ over eight radiographs; the layout adapter
+raises this to $r=+0.119$. The maps look equally plausible either way, so
+the correlation is the only thing separating them. Measured the same way
+across configurations, agreement is positive everywhere and modest at best:
+$0.41$ for DenseNet121 and $0.30$ for ResNet50 against $0.07$ to $0.16$ for
+Swin-T and the two fused models. Only the purely convolutional baselines
+track the reference with any strength, as a method derived for
+convolutional feature maps might be expected to; with eight images and
+standard deviations of $0.10$ to $0.27$, a wide band sits around every one
+of these values.
 
 Before masking, between $21\%$ and $48\%$ of saliency mass fell outside the
 segmented lung fields, and on normal radiographs the maximum often lay over
@@ -622,9 +624,9 @@ protocols without external validation.
 Measured saliency on the trained models falls substantially outside the
 thorax, between $21\%$ and $48\%$ of total mass, and on normal radiographs
 the global maximum often lay outside the lung fields. Because an occlusion
-reference agrees with these maps, the behavior is attributable to the
-classifier, not to the attribution method, and it is consistent with the
-shortcut learning this dataset is known to permit: systematic differences in
+reference agrees with the convolutional models' maps, the behavior is
+attributable to the classifier rather than to the attribution method, and it
+is consistent with the shortcut learning this dataset is known to permit: systematic differences in
 framing, cropping and acquisition between the two class folders are
 predictive without reference to lung parenchyma. Masking the explanation to
 segmented lung fields improves what is displayed but does not alter what the

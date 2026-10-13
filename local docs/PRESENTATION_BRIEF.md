@@ -137,9 +137,11 @@ line, with tolerance for both forms.
 **4. Swin-T's explanations were pointing the wrong way.** The Swin backbone
 emits channels-last activations; the attribution library assumes
 channels-first, so it read the 768 channels as image width. Correlation with
-an occlusion reference was **−0.12** — the maps highlighted regions the model
-demonstrably did not use, while looking entirely plausible. *Fixed* with a
-layout adapter: correlation moved to **+0.31**.
+an occlusion reference was **−0.003** — the maps bore no relation to what the
+model actually used, while looking entirely plausible. *Fixed* with a layout
+adapter: correlation moved to **+0.119**. (`scripts/measure_occlusion.py`
+reproduces this; the convolutional baselines reach 0.30–0.41, the Swin and
+fused models only 0.07–0.16.)
 
 **5. Grad-CAM target layers were suboptimal.** DenseNet121 was attributing to
 a 32-channel convolution inside the final dense layer rather than the
