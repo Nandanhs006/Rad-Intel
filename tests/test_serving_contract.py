@@ -109,3 +109,38 @@ async def test_untrained_model_is_refused(client, dummy_cxr_bytes):
     )
     assert r.status_code == 503, f"expected 503, got {r.status_code}"
     assert "no trained checkpoint" in r.json()["detail"]
+
+
+def test_serving_preprocessing_matches_training():
+    """
+    The service must build the same tensor the models were trained on.
+
+    These two paths drifted apart once: training resized through torchvision
+    (PIL bilinear) while the service used cv2.INTER_AREA. The same radiograph
+    produced a different tensor, shifting P(pneumonia) by 0.024 on average and
+    flipping 16 of the 624 test decisions, so the reported metrics and the
+    deployed classifier were not quite the same model.
+    """
+    import glob
+    import numpy as np
+    import torch
+    from PIL import Image
+    from rad_intel.preprocessing.transforms import default_preprocessor
+    from rad_intel.training.dataset import get_transforms
+
+    files = sorted(glob.glob(str(settings.BASE_DIR / "Rad-Intel paper" / "chest_xray"
+                                 / "test" / "*" / "*.jpeg")))[:8]
+    if not files:
+        pytest.skip("test radiographs not available")
+
+    eval_tf = get_transforms(is_train=False)
+    for f in files:
+        served, rgb = default_preprocessor.preprocess(f)
+        trained = eval_tf(Image.open(f).convert("RGB"))[None]
+        assert torch.allclose(served, trained, atol=1e-6), (
+            f"serving and training preprocessing disagree on {f}: "
+            f"max |diff| = {float((served - trained).abs().max()):.3e}"
+        )
+        # The overlay base must stay a plain uint8 RGB image of the same size.
+        assert rgb.dtype == np.uint8 and rgb.shape == (settings.IMAGE_SIZE,
+                                                       settings.IMAGE_SIZE, 3)
