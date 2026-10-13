@@ -25,9 +25,10 @@ contrast-enhanced with CLAHE, resized to 224×224 and normalised with
 ImageNet statistics. CLAHE matters because chest radiographs vary a lot in
 exposure; it equalises contrast locally so faint opacities stay visible.
 
-**Stage 2 — Classification.** Five architectures are supported. Three are
-trained: DenseNet121, Swin-T and ResNet50. Two are defined but untrained:
-the proposed DenseNet+Swin+CBAM hybrid and its no-CBAM ablation.
+**Stage 2 — Classification.** Five architectures are supported and all five
+are trained under one protocol: DenseNet121, Swin-T and ResNet50 as
+single-branch baselines, the proposed DenseNet+Swin+CBAM hybrid, and its
+no-CBAM ablation.
 
 **Stage 3 — Explainability.** Grad-CAM produces a saliency map from the
 final feature tensor. The map is restricted to the lung fields, which are
@@ -74,28 +75,40 @@ frozen, then up to 12 epochs end-to-end at discriminative learning rates
 (backbones 1e-5, head 1e-4). Focal loss, inverse-frequency class weights,
 early stopping on validation AUROC.
 
-| Model | Accuracy | AUROC | AUPRC | Sensitivity | Specificity | F1 | ECE |
-|---|---|---|---|---|---|---|---|
-| DenseNet121 | **91.5%** | 0.962 | 0.969 | 95.6% | **84.6%** | **0.934** | **0.052** |
-| Swin-T | 90.1% | **0.975** | **0.983** | **97.4%** | 77.8% | 0.925 | 0.054 |
-| ResNet50 | 89.7% | 0.954 | 0.966 | 93.3% | 83.8% | 0.919 | 0.075 |
+| Model | Accuracy | AUROC | AUPRC | Sensitivity | Specificity | F1 | ECE | t* |
+|---|---|---|---|---|---|---|---|---|
+| DenseNet121 | 91.5% | 0.962 | 0.969 | 95.6% | 84.6% | 0.934 | **0.052** | 0.463 |
+| Swin-T | 90.1% | 0.975 | **0.983** | **97.4%** | 77.8% | 0.925 | 0.054 | 0.422 |
+| ResNet50 | 89.7% | 0.954 | 0.966 | 93.3% | 83.8% | 0.919 | 0.075 | 0.557 |
+| Fusion without CBAM | **93.4%** | **0.977** | 0.981 | 94.6% | **91.4%** | **0.947** | 0.078 | 0.717 |
+| Hybrid (DenseNet+Swin+CBAM) | 92.0% | 0.974 | 0.972 | 95.9% | 85.5% | 0.937 | 0.062 | 0.557 |
 
-Each model uses its own threshold, selected on validation data: 0.463,
-0.422 and 0.557 respectively.
+Each model uses its own threshold, selected on validation data by Youden's
+index; the spread from 0.422 to 0.717 is why a shared 0.5 default is not
+used.
 
-### The finding that matters most
+### The findings that matter most
 
-Paired tests on the same 624 images:
+Paired tests comparing the hybrid against each other configuration on the
+same 624 images:
 
-- **No pair differs significantly in accuracy.** McNemar, Holm-adjusted:
-  all p > 0.53. The 1.8-point spread is sampling noise.
-- **Swin-T ranks significantly better.** ΔAUROC +0.013 over DenseNet121 and
-  +0.021 over ResNet50, bootstrap intervals excluding zero.
+- **No comparison is significant on accuracy.** McNemar, Holm-adjusted over
+  the family of four: p = 0.73 (DenseNet121), 0.14 (Swin-T), 0.19
+  (ResNet50), 0.24 (no-CBAM ablation). The accuracy column is not a ranking.
+- **Fusion does separate from the baselines.** Both fused configurations beat
+  every single-branch model on accuracy, specificity, F1 and balanced
+  accuracy, and the hybrid's AUROC is significantly higher than DenseNet121
+  (+0.012 [+0.005, +0.020]) and ResNet50 (+0.019 [+0.009, +0.031]).
+- **CBAM earns nothing.** Against its own ablation the hybrid is ΔAUROC
+  −0.003 [−0.006, +0.001], Holm p = 0.24 — an interval spanning zero. The
+  module costs 32,868 parameters for no measurable return, and we report
+  that rather than hiding it.
 
-So the model that discriminates best has the worst specificity. Ranking
-quality and decision quality are different things, and the accuracy column
-is not a leaderboard. This is the single most defensible claim in the
-project, because it is the one backed by a significance test.
+The gain from fusion is concentrated in specificity, which is the weak
+direction for every architecture tested: a 77.8–84.6% band across the
+baselines rises to 91.4% without CBAM. Ranking quality and decision quality
+also come apart — Swin-T has the second-best AUROC and the worst
+specificity, returning 52 false positives against the hybrid's 34.
 
 ---
 
@@ -157,7 +170,9 @@ hybrid scored *below* its own baselines and CBAM appeared to *hurt*, because
 the metric was tracking head capacity: DenseNet's head has ~2K parameters
 and cannot overfit, the hybrid's has ~950K and reached 100% training
 accuracy. *Fixed* by implementing the two-phase protocol the paper already
-specified. The hybrid went from 82.2% to 92.0%, specificity 54.7% → 87.2%.
+specified. The hybrid went from 82.2% to 92.0% accuracy and from 54.7% to
+85.5% specificity. Worth noting that the corrected protocol did not rescue
+CBAM — it still shows no benefit, but now for a defensible reason.
 
 **9. API errors were misreported.** Routes raised a correct HTTP 400 for bad
 input, then caught their own exception in a bare `except` and re-raised it as
@@ -167,7 +182,7 @@ input, then caught their own exception in a bare `except` and re-raised it as
 
 ## 6. What is done
 
-- Three models trained and fully integrated, reproducible end to end
+- All five configurations trained and integrated, reproducible end to end
 - Calibrated thresholds applied in serving and verified by test
 - Grad-CAM corrected and validated against occlusion sensitivity
 - Lung-field segmentation for all models
@@ -175,28 +190,29 @@ input, then caught their own exception in a bare `except` and re-raised it as
 - All nine API endpoints working, error contract correct
 - SQLite audit trail
 - 26 automated tests passing
-- Paper: Tables IV and V populated, methodology matched to the code
+- Blinded review by a practising clinician (MBBS, MD), 30 stratified cases
+- Paper: all result tables populated from measured data, methodology
+  matched to the code
 
 ## 7. What remains
 
 | Item | Blocker |
 |---|---|
-| Hybrid + no-CBAM training | GPU time; runs interrupted twice |
-| Figures 2–4 | Need a hybrid checkpoint; ROC/reliability CSVs already generated |
-| Clinical review | Needs a clinician's time |
-| Multi-seed runs | ~5× current GPU budget |
-| LIME quantitative metrics | Slow; qualitative output works |
+| Multi-seed runs (52, 62, 72, 82) | ~4× current GPU budget |
+| Lung-field cropping during training | Attacks shortcut learning at source; not yet implemented |
+| Register-constrained summary template | Half the summaries still read as diagnostic |
+| External validation on a second cohort | No access to an independent dataset |
 
-The honest framing: the three baselines are complete and statistically
-analysed. The proposed architecture has a measured result (92.0% accuracy,
-AUROC 0.970) but its checkpoint was lost to a session timeout, so it is not
-yet in the integrated system.
+The honest framing: all five configurations are trained, evaluated and
+statistically compared, and the classifier is the part of the system the
+evidence supports. The explanation and reporting layers are measurably the
+weaker parts, and the paper says so rather than working around it.
 
 ---
 
 ## 8. Likely panel questions
 
-**"Why is your accuracy only 91%? Published work reports 98%."**
+**"Why is your accuracy only 93%? Published work reports 98%."**
 Those numbers usually come from a random split of the training folder, where
 images from the same patient appear in both halves. We evaluate on the
 official held-out test folder, which is a different distribution — our own
@@ -204,10 +220,13 @@ validation accuracy is 95–98%, and it drops to ~90% on the test set. That
 gap is the honest measure. A 98% figure on a leaked split is not comparable.
 
 **"Which model is best?"**
-They are statistically indistinguishable on accuracy — McNemar gives p > 0.53
-for every pair. Swin-T ranks significantly better by AUROC but has the worst
-specificity, so it over-calls pneumonia. DenseNet121 is the best-balanced and
-is the default.
+On accuracy, none of them significantly — every Holm-adjusted McNemar
+comparison comes back above 0.14. What the evidence does support is that
+fusion beats the single-branch baselines on the threshold metrics, with the
+gain in specificity, and that the no-CBAM ablation is the strongest single
+configuration measured (93.4% accuracy, 0.977 AUROC, 91.4% specificity).
+The hybrid is the deployed default because it is the proposed architecture;
+the ablation says the attention module inside it is not earning its place.
 
 **"Why does the heatmap sometimes sit outside the lungs?"**
 It did, and we measured it: 21–48% of saliency mass fell outside the lung

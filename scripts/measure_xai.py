@@ -40,9 +40,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="hybrid")
     ap.add_argument("--n", type=int, default=25)
-    ap.add_argument("--n-lime", type=int, default=8, help="LIME is slow; smaller sample")
+    ap.add_argument("--n-lime", type=int, default=0,
+                    help="Images for LIME; 0 means the same set Grad-CAM uses. "
+                         "A smaller value makes the two columns non-comparable.")
     ap.add_argument("--data-dir", default="Rad-Intel paper/chest_xray")
     args = ap.parse_args()
+    # Deletion/insertion AUCs for the two methods are only comparable when
+    # measured on the same images, so LIME defaults to the full Grad-CAM set
+    # despite costing ~45x more per image.
+    if not args.n_lime:
+        args.n_lime = args.n
 
     rng = random.Random(42)
     files = sorted(glob.glob(f"{args.data_dir}/test/*/*.jpeg"))
@@ -70,6 +77,8 @@ def main():
         h2 = np.roll(h2, shift=(-3, -3), axis=(0, 1))
         from scipy.stats import spearmanr
         stab.append(spearmanr(h.ravel(), h2.ravel()).statistic)
+    out["gradcam_per_image"] = {"deletion": [round(v, 4) for v in dele],
+                                "insertion": [round(v, 4) for v in ins]}
     out["gradcam"] = {"deletion_auc": round(float(np.mean(dele)), 4),
                       "insertion_auc": round(float(np.mean(ins)), 4),
                       "concentration": round(float(np.mean(conc)), 4),
@@ -80,7 +89,8 @@ def main():
     # ---- LIME ----
     lime = LIMECXRExplainer(model=model, device=M.device)
     ld, li, lc, lt, iou = [], [], [], [], []
-    for f in sample[: args.n_lime]:
+    lime_idx: list[int] = []   # which Grad-CAM images LIME actually scored
+    for i, f in enumerate(sample[: args.n_lime]):
         t, rgb = P.preprocess(f)
         cls, _, _, _ = M.predict(t, args.model)
         cat = 1 if cls == "PNEUMONIA" else 0
@@ -90,6 +100,7 @@ def main():
         lh = res.get("heatmap")
         if lh is None:
             continue
+        lime_idx.append(i)
         lh = normalize_heatmap(np.asarray(lh, dtype=np.float32))
         order = np.argsort(lh.ravel())[::-1]
         ld.append(curve_auc(model, t, cat, order))
@@ -102,7 +113,33 @@ def main():
                    "insertion_auc": round(float(np.mean(li)), 4) if li else None,
                    "concentration": round(float(np.mean(lc)), 4) if lc else None,
                    "runtime_s": round(float(np.mean(lt)), 2) if lt else None}
+    out["lime_per_image"] = {"deletion": [round(v, 4) for v in ld],
+                             "insertion": [round(v, 4) for v in li]}
     out["gradcam_lime_iou"] = round(float(np.mean(iou)), 4) if iou else None
+    out["n_paired"] = len(ld)
+
+    # Paired comparison on the common image set. A difference in means says
+    # nothing on its own when both columns come from 25 radiographs; the
+    # Wilcoxon signed-rank test over per-image pairs does.
+    if len(ld) >= 5:
+        from scipy.stats import wilcoxon
+        paired = {}
+        for name, g, l, better in (("deletion", dele, ld, "lime_lower"),
+                                   ("insertion", ins, li, "lime_higher")):
+            g = np.asarray([g[i] for i in lime_idx], dtype=float)
+            l = np.asarray(l, dtype=float)
+            d = l - g
+            boot = [float(np.mean(rng2.choices(list(d), k=len(d))))
+                    for rng2 in (random.Random(s_) for s_ in range(2000))]
+            paired[name] = {
+                "mean_diff_lime_minus_gradcam": round(float(d.mean()), 4),
+                "ci95": [round(float(np.percentile(boot, 2.5)), 4),
+                         round(float(np.percentile(boot, 97.5)), 4)],
+                "wilcoxon_p": round(float(wilcoxon(l, g).pvalue), 4),
+                "favours": better,
+            }
+        out["paired"] = paired
+        print("paired:", json.dumps(paired, indent=1))
     print("lime:", out["lime"], "| IoU:", out["gradcam_lime_iou"])
     open("results/table6_xai.json", "w").write(json.dumps(out, indent=2))
     print("wrote results/table6_xai.json")

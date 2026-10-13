@@ -120,26 +120,29 @@ selected on validation data.
 
 | Model | Accuracy | AUROC | Sensitivity | Specificity | F1 |
 |---|---|---|---|---|---|
-| DenseNet121 | **91.5%** | 0.962 | 95.6% | **84.6%** | **0.934** |
-| Swin-T | 90.1% | **0.975** | **97.4%** | 77.8% | 0.925 |
+| DenseNet121 | 91.5% | 0.962 | 95.6% | 84.6% | 0.934 |
+| Swin-T | 90.1% | 0.975 | **97.4%** | 77.8% | 0.925 |
 | ResNet50 | 89.7% | 0.954 | 93.3% | 83.8% | 0.919 |
-| Hybrid (DenseNet+Swin+CBAM) | 92.0% | 0.970 | 94.9% | 87.2% | 0.937 |
+| Fusion without CBAM | **93.4%** | **0.977** | 94.6% | **91.4%** | **0.947** |
+| Hybrid (DenseNet+Swin+CBAM) | 92.0% | 0.974 | 95.9% | 85.5% | 0.937 |
 
 Calibration is good across all models (expected calibration error
-0.052–0.075).
+0.052–0.078).
 
-**Statistical finding.** Paired tests on identical images show that no pair
-of configurations differs significantly in accuracy (McNemar, Holm-adjusted,
-all p > 0.53) — the accuracy column is not a ranking. However Swin-T ranks
-significantly better by AUROC (+0.013 vs DenseNet121, +0.021 vs ResNet50,
-bootstrap intervals excluding zero) while having the worst specificity.
+**Statistical finding.** Paired tests on identical images show that no
+comparison is significant on accuracy (McNemar, Holm-adjusted over the
+family of four, all p > 0.14) — the accuracy column is not a ranking. What
+the evidence does support is fusion: both fused configurations beat every
+single-branch baseline on accuracy, specificity, F1 and balanced accuracy,
+and the hybrid's AUROC is significantly higher than DenseNet121
+(+0.012 [+0.005, +0.020]) and ResNet50 (+0.019 [+0.009, +0.031]).
 
-Discrimination and decision quality are therefore distinct: the best-ranking
-model is the one that over-calls pneumonia.
+**The negative result.** Against its own ablation the hybrid is ΔAUROC
+−0.003 [−0.006, +0.001], Holm p = 0.24. Post-fusion CBAM costs 32,868
+parameters and returns nothing measurable. We report it rather than hide it.
 
-> The fused classifier row is marked TBD pending completion of training; the
-> 92% figure is an expected value from a preliminary run, not a measured
-> result, and is labelled as such. The integrated demo runs DenseNet121.
+> All five configurations are now trained and every figure above is measured
+> on the held-out test partition. The integrated demo runs the hybrid.
 
 ---
 
@@ -172,8 +175,9 @@ segmentation network.
 **5. Training protocol inverted the ablation.** With both backbones frozen,
 only the classifier head trains — so the metric tracked head capacity, not
 architecture. CBAM appeared to *hurt* performance. Implementing the
-specified two-phase protocol raised the hybrid from 82.2% to 92.0% and
-specificity from 54.7% to 87.2%.
+specified two-phase protocol raised the hybrid from 82.2% to 92.0% accuracy
+and specificity from 54.7% to 85.5%. The corrected protocol did not rescue
+CBAM, though — it still shows no benefit, now for a defensible reason.
 
 **6. Reports asserting unsupported findings.** The template claimed
 consolidation was "prominently identified" and recommended antibiotics, in
@@ -186,14 +190,17 @@ tiered by confidence, treatment directives removed.
 
 **Conclusion:**
 
-- Three baseline configurations were trained and evaluated under an
-  identical protocol on a held-out 624-image test partition, reaching
-  89.7%–91.5% accuracy with AUROC 0.954–0.975. The fused DenseNet–Swin–CBAM
-  classifier is still in training; its results are pending.
-- Paired testing shows the trained configurations are statistically
-  indistinguishable in accuracy (McNemar, Holm-adjusted, p > 0.53), while
-  Swin-T ranks significantly better by AUROC despite the worst specificity.
-  Ranking quality and decision quality are separate properties.
+- Five configurations were trained and evaluated under an identical
+  protocol on a held-out 624-image test partition, reaching 89.7%–93.4%
+  accuracy with AUROC 0.954–0.977.
+- Fusion is supported: both fused configurations beat every single-branch
+  baseline on the threshold metrics, with the gain concentrated in
+  specificity. Post-fusion CBAM is not: removing it changes nothing
+  measurable, so the attention module is reported as an ablation the
+  evidence does not support.
+- Paired testing shows no configuration is significantly better on accuracy
+  (McNemar, Holm-adjusted, all p > 0.14). Ranking quality and decision
+  quality are separate properties.
 - Grad-CAM was validated against occlusion sensitivity rather than accepted
   at face value, which caught an attribution producing plausible but
   inverted maps.
@@ -203,11 +210,16 @@ tiered by confidence, treatment directives removed.
   hidden.
 - The language model receives only serialized evidence, never the image, and
   cannot alter the classifier probability.
+- A practising clinician reviewed 30 stratified cases blinded to
+  configuration. Rubric scores averaged near the neutral point throughout,
+  and half the generated summaries read as diagnostic despite schema
+  validation reporting no forbidden claims. Constraining which fields a
+  summary may use does not constrain the register in which it states them.
 - The workflow is for technical research and education. External validation
   on an independent cohort is required before clinical interpretation.
 
-> Changes: states only measured results; the fused classifier is reported as
-> pending to match the Results slide.
+> Changes: states only measured results; all five configurations are
+> trained, and the clinical-review outcome is included.
 
 ---
 

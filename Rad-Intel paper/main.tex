@@ -66,7 +66,7 @@ poornagowda425@gmail.com
 \maketitle
 
 \begin{abstract}
-Chest radiographs are routinely used to assess pneumonia, but a classification probability alone does not show how a model reached its decision. This paper presents an image-analysis pipeline that combines DenseNet121 and Swin Transformer-Tiny (Swin-T) for binary classification of pediatric chest X-rays as normal or pneumonia. DenseNet121 captures local radiographic patterns, while Swin-T models wider spatial relationships. Their feature maps are aligned, projected, concatenated, and refined with a post-fusion Convolutional Block Attention Module (CBAM) before classification. Grad-CAM provides a gradient-based heatmap from the fused representation, and LIME supplies a complementary perturbation-based explanation. A deterministic serializer converts the probability and explanation outputs into neutral evidence fields. Gemini 3.5 Flash-Lite receives only this structured evidence and returns a short JSON summary under a fixed schema. Validation rules, a bounded correction attempt, and a deterministic template fallback block summaries that violate the permitted schema or recorded evidence. The system is implemented in PyTorch behind a service interface that exposes classification, explanation, and summarization as separate endpoints, and uses the public Kaggle Chest X-Ray Images (Pneumonia) dataset. Classification, explanation, and language generation remain separate, allowing displayed statements to be checked against recorded model outputs. The system is intended for technical research and education, not clinical diagnosis.
+Chest radiographs are routinely used to assess pneumonia, but a classification probability alone does not show how a model reached its decision. This paper presents an image-analysis pipeline that combines DenseNet121 and Swin Transformer-Tiny (Swin-T) for binary classification of pediatric chest X-rays as normal or pneumonia. DenseNet121 captures local radiographic patterns, while Swin-T models wider spatial relationships. Their feature maps are aligned, projected, concatenated, and refined with a post-fusion Convolutional Block Attention Module (CBAM) before classification. Grad-CAM provides a gradient-based heatmap from the fused representation, and LIME supplies a complementary perturbation-based explanation. A deterministic serializer converts the probability and explanation outputs into neutral evidence fields. Gemini 3.5 Flash-Lite receives only this structured evidence and returns a short JSON summary under a fixed schema. Validation rules, a bounded correction attempt, and a deterministic template fallback block summaries that violate the permitted schema or recorded evidence. The system is implemented in PyTorch behind a service interface that exposes classification, explanation, and summarization as separate endpoints, and uses the public Kaggle Chest X-Ray Images (Pneumonia) dataset. On the held-out 624-image partition the fused classifier reaches 0.974 AUROC at 0.920 accuracy, a significantly higher AUROC than DenseNet121 or ResNet50 under a paired bootstrap, while removing post-fusion CBAM changes nothing measurable ($\Delta$AUROC $-0.003$, interval spanning zero), so the attention module is reported as an ablation the evidence does not support. The two explanation methods agree only weakly with each other, and a blinded clinician scored the output near the neutral point of every rubric item and read half the generated summaries as diagnostic despite schema validation reporting no forbidden claims. Classification, explanation, and language generation remain separate, allowing displayed statements to be checked against recorded model outputs. The system is intended for technical research and education, not clinical diagnosis.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -80,7 +80,7 @@ Convolutional neural networks (CNNs), particularly DenseNet \cite{huang2017dense
 
 The output is split into three layers that stay separate: classification, visual explanation, and evidence-constrained summarization. Grad-CAM \cite{selvaraju2017gradcam} and LIME \cite{ribeiro2016lime} expose different aspects of model sensitivity, and neither is treated here as proof of a radiological finding. The language model never sees the radiograph. It receives a machine-generated evidence object and nothing else.
 
-The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with explicit feature alignment and post-fusion CBAM; (2) a reproducible explanation pipeline using Grad-CAM and LIME; (3) deterministic conversion of model outputs into a constrained evidence schema; and (4) an end-to-end interface that exposes the probability, explanations, summary source, and limitations without presenting the output as a diagnosis.
+The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with explicit feature alignment and post-fusion CBAM, measured against its own no-CBAM ablation; (2) a reproducible explanation pipeline using Grad-CAM and LIME; (3) deterministic conversion of model outputs into a constrained evidence schema; and (4) an end-to-end interface that exposes the probability, explanations, summary source, and limitations without presenting the output as a diagnosis.
 
 
 
@@ -100,11 +100,11 @@ Across that literature the two capabilities stay separate: the pneumonia classif
 \section{Methodology}
 \label{sec:method}
 \subsection{Dataset and Preprocessing}
-The implementation uses the Kaggle \emph{Chest X-Ray Images (Pneumonia)} dataset, a public distribution of the pediatric radiographs described by Kermany \emph{et al.} \cite{kermany2018identifying}. It contains 5,856 anterior--posterior JPEG radiographs from children aged one to five years: 4,273 pneumonia images and 1,583 normal images. 
+The implementation uses the Kaggle \emph{Chest X-Ray Images (Pneumonia)} dataset (\texttt{paultimothymooney/chest-xray-pneumonia}), a public distribution of the pediatric radiographs described by Kermany \emph{et al.} \cite{kermany2018identifying}. It contains 5,856 anterior--posterior JPEG radiographs from children aged one to five years: 4,273 pneumonia images and 1,583 normal images. 
 
 The Kaggle release contains 5,216 training images, 16 validation images, and 624 test images. Because the supplied validation folder is too small for stable model selection, the training and validation folders are combined and then divided into stratified development and validation sets using a fixed 85:15 split and random seed 42. The original 624-image test folder remains untouched. The public release carries no reliable patient identifier, so the partition is image-level and cannot guarantee patient-level independence.
 
-Each image is converted to three channels, contrast-enhanced with contrast-limited adaptive histogram equalization (CLAHE, clip limit $2.0$, $8\times8$ tiles), resized to $224\times224$, and normalized with ImageNet mean and standard deviation. CLAHE equalizes contrast tile by tile instead of across the whole image, leaving faint opacities in an under- or over-exposed region remain visible; chest radiographs in this dataset vary considerably in exposure. The resize does not preserve aspect ratio, which introduces a mild anisotropic distortion that is applied identically at training and inference. Training augmentation consists of rotation within $\pm10^{\circ}$, horizontal flipping with probability $0.5$, and mild brightness and contrast jitter. Validation and test images receive deterministic preprocessing only. Vertical flips are excluded as anatomically implausible.
+Each image is converted to three channels, contrast-enhanced with contrast-limited adaptive histogram equalization (CLAHE \cite{zuiderveld1994clahe}, clip limit $2.0$, $8\times8$ tiles), resized to $224\times224$, and normalized with ImageNet mean and standard deviation. CLAHE equalizes contrast tile by tile instead of across the whole image, leaving faint opacities in an under- or over-exposed region remain visible; chest radiographs in this dataset vary considerably in exposure. The resize does not preserve aspect ratio, which introduces a mild anisotropic distortion that is applied identically at training and inference. Training augmentation consists of rotation within $\pm10^{\circ}$, horizontal flipping with probability $0.5$, and mild brightness and contrast jitter. Validation and test images receive deterministic preprocessing only. Vertical flips are excluded as anatomically implausible.
 
 Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and hybrid classification to visual explanation and evidence-constrained summarization.
 
@@ -137,16 +137,15 @@ CBAM is applied once, after feature fusion, following the sequential channel- an
 \mathbf{F}'' &= \mathbf{M}_s\odot\mathbf{F}'.
 \label{eq:cbam}
 \end{align}
-In Eq.~\ref{eq:cbam}, $\sigma$ is the sigmoid function, $\odot$ is element-wise multiplication, and $[\cdot;\cdot]$ is channel concatenation. Pooling without a subscript runs over the spatial dimensions, so $\mathbf{M}_c\in\mathbb{R}^{C\times1\times1}$; the subscript $c$ marks pooling across channels, so $\mathbf{M}_s\in\mathbb{R}^{1\times H\times W}$. Both products in Eq.~\ref{eq:cbam} broadcast the attention map over the axes of size one. No residual path bypasses CBAM. Global average pooling, dropout with probability $0.3$, and a linear layer over the 512-channel embedding produce two logits, whose softmax gives $p$, the probability of pneumonia. The single-logit form below is equivalent for a two-class problem and states the class weighting more compactly:
+In Eq.~\ref{eq:cbam}, $\sigma$ is the sigmoid function, $\odot$ is element-wise multiplication, and $[\cdot;\cdot]$ is channel concatenation. Pooling without a subscript runs over the spatial dimensions, so $\mathbf{M}_c\in\mathbb{R}^{C\times1\times1}$; the subscript $c$ marks pooling across channels, so $\mathbf{M}_s\in\mathbb{R}^{1\times H\times W}$. Both products in Eq.~\ref{eq:cbam} broadcast the attention map over the axes of size one. No residual path bypasses CBAM. Global average pooling, dropout with probability $0.3$, and a linear layer over the 512-channel embedding produce two logits $\boldsymbol{\ell}$, whose softmax gives the class posterior. Training minimizes the $\alpha$-weighted focal loss of Lin \emph{et al.} \cite{lin2017focal} over that posterior:
 \begin{align}
-\mathbf{h}&=\mathrm{GAP}(\mathbf{F}''), \nonumber\\
-\ell&=\mathbf{w}^{\top}\mathrm{Dropout}(\mathbf{h})+b,
-\qquad p=\sigma(\ell), \nonumber\\
-\mathcal{L}_{\mathrm{WBCE}}&=-\Big[\beta y\log p \nonumber\\
-&\hspace{20mm}+(1-y)\log(1-p)\Big].
+\mathbf{h}&=\mathrm{GAP}(\mathbf{F}''),\qquad
+\boldsymbol{\ell}=\mathbf{W}\mathrm{Dropout}(\mathbf{h})+\mathbf{b}, \nonumber\\
+p_c&=\exp(\ell_c)\big/\textstyle\sum_{c'}\exp(\ell_{c'}), \nonumber\\
+\mathcal{L}_{\mathrm{FL}}&=-\alpha_y\,(1-p_y)^{\gamma}\log p_y .
 \label{eq:classifier}
 \end{align}
-The deployed configuration optimises the two-class focal form of Eq.~\ref{eq:classifier} with $\gamma=2$ and inverse-frequency class weights; the weighted binary cross-entropy below is the equivalent single-logit expression, retained because it states the class weighting compactly. In Eq.~\ref{eq:classifier}, $y=1$ denotes pneumonia and $y=0$ normal, and $\beta=N_0/N_1$ weights the positive term, with $N_0$ and $N_1$ the normal and pneumonia counts in the development set. Pneumonia is the majority class in this dataset, so $\beta\approx0.37$ rather than a value above one; the weight down-weights the abundant class, which is the same correction a value above one would apply had the minority class been positive. Training evaluates the equivalent logit-space expression through \texttt{BCEWithLogitsLoss}, which is numerically stable for large $|\ell|$. The operating threshold is selected from validation predictions using Youden's index \cite{youden1950index}:
+In Eq.~\ref{eq:classifier}, $y\in\{0,1\}$ is the label with $y=1$ denoting pneumonia, $p_y$ the posterior the network assigns to it, and $\gamma=2$ the focusing exponent. The class weights are inverse frequencies on the development set, $\alpha_c=N/(2N_c)$, which evaluate to $1.939$ for normal and $0.674$ for pneumonia; pneumonia is the majority class in this dataset, so the weight below one falls on the abundant class. Setting $\gamma=0$ recovers weighted cross-entropy, and the factor $(1-p_y)^{\gamma}$ is what distinguishes the deployed objective from it, suppressing the contribution of examples already classified confidently. The operating threshold is selected from validation predictions using Youden's index \cite{youden1950index}:
 \begin{align}
 J(t)&=\operatorname{Sens}(t)+\operatorname{Spec}(t)-1,
 \nonumber\\
@@ -199,10 +198,12 @@ image left is the patient's right in the standard frontal convention. This
 mapping is deterministic arithmetic over the map alone, with no segmentation
 of anatomy and no detection of a lesion. Quadrant statistics cover the
 segmented lung fields, so padding, chest wall and sub-diaphragmatic
-structures do not dilute them. The segmentation comes from a pretrained
-anatomical network \cite{cohen2022torchxrayvision} that labels left and
-right lung separately from heart, mediastinum and diaphragm; only the lung
-classes are kept. Two simpler alternatives failed: an Otsu body mask retains
+structures do not dilute them. The segmentation comes from the
+pretrained ChestX-Det PSPNet distributed with TorchXRayVision
+\cite{cohen2022torchxrayvision}, which labels left and right lung
+separately from heart, mediastinum and diaphragm; only the two lung classes
+are kept, at a sigmoid probability above $0.5$ and with a $7\times7$
+dilation so that subpleural opacity at the edge of the field is retained. Two simpler alternatives failed: an Otsu body mask retains
 shoulders and clavicles, and the equalization applied during preprocessing
 destroys the global intensity structure such a threshold needs, while a rule
 treating darker regions as lung excludes consolidation, which is radiopaque
@@ -315,7 +316,7 @@ training, and the residual asymmetry is what those weights did not remove.
 Confusion matrices at $t^*$ over the 624 test images are $214/20/21/369$
 (TN/FP/FN/TP) for fusion without CBAM, $200/34/16/374$ for the complete
 classifier, $198/36/17/373$ for DenseNet121, $182/52/10/380$ for Swin-T, and
-$197/37/26/364$ for ResNet50.
+$196/38/26/364$ for ResNet50.
 
 \begin{table*}[t]
 \centering
@@ -355,16 +356,16 @@ Cases read as diagnosis (\%)        & \multicolumn{5}{l}{} & \multicolumn{1}{c}{
 \end{table*}
 
 \subsection{Threshold Selection and Calibration}
-For the DenseNet121 baseline the Youden threshold selected on validation was
-$t^*=0.70$, well above the $0.5$ reference. That displacement is itself
-informative: it is the magnitude by which the class imbalance pushes the
-decision boundary, and applying the default $0.5$ instead costs specificity
-on every borderline radiograph. The selected threshold is stored in the
-checkpoint and applied unchanged at inference, so the deployed operating
-point and the reported metrics describe the same classifier. Selected thresholds differ
-substantially across configurations, from $0.422$ for Swin-T to $0.717$ for
-fusion without CBAM, which is itself a reason to report each model at its
-own operating point instead of a shared default.
+Selected thresholds differ substantially across configurations, from
+$0.422$ for Swin-T through $0.463$ for DenseNet121 to $0.717$ for fusion
+without CBAM. That spread is itself informative: it is the distance each
+representation puts between its own balanced operating point and the $0.5$
+reference, and it is wide enough that a shared default would cost
+specificity on every borderline radiograph for the models calibrated above
+it and sensitivity for those below. Each model is therefore reported at its
+own threshold, which is stored in the checkpoint and applied unchanged at
+inference, so the deployed operating point and the reported metrics describe
+the same classifier.
 
 Calibration is better than the spread of thresholded accuracies suggests.
 Brier scores ranged from $0.062$ to $0.085$, with expected calibration
@@ -384,8 +385,8 @@ Fig.~\ref{fig:roc} gives the reliability curves over 15 equal-width bins.
 \subsection{Statistical Comparison}
 No comparison reaches significance on thresholded accuracy. Against fusion
 without CBAM the complete classifier is correct on 9 radiographs its ablated
-counterpart misses and wrong on 18 the ablated model gets right, giving
-$p=0.244$; the closest case is Swin-T, discordant 20 against 8 at an
+counterpart misses and wrong on 18 the ablated model gets right, an unadjusted
+$p=0.122$ that becomes $0.244$ after correction; the closest case is Swin-T, discordant 20 against 8 at an
 unadjusted $p=0.036$ that becomes $0.143$ once the family of four is
 accounted for; against DenseNet121 the two are effectively tied, 18 against
 15. Differences of one to two accuracy points on 624 images are not
@@ -409,23 +410,36 @@ removing or restoring the highest-ranked regions moves the class probability
 as the explanation implies. Stability is the rank correlation between an
 image's explanation and that of a three-pixel translation, realigned before
 comparison. Agreement is the intersection-over-union of the top-quintile
-regions of the two maps. None is a localization score: the dataset carries
+regions of the two maps, and concentration is the share of total saliency
+carried by the top decile of pixels, so a focal map scores higher than a
+diffuse one. LIME superpixel weights are rasterized to a pixel map before
+any of these are computed, and all are computed on the unmasked map, since
+lung-field masking changes what is displayed rather than what the model
+used. None is a localization score: the dataset carries
 no lesion annotations, so every entry describes model sensitivity and
 nothing about anatomical correctness.
 
-LIME is the more faithful, with a lower deletion AUC ($0.581$ against
-$0.616$), a higher insertion AUC ($0.789$ against $0.724$) and more
-concentrated maps, at some 45 times the cost. Grad-CAM is stable under small
-translations ($\rho=0.81$) and is the default view, with LIME computed on
-request. The two agree only weakly, at an IoU of $0.203$: two attribution
-methods applied to the same model and image select largely different
-regions, so neither is the account of what the model used. Convergence is
-evidence and divergence is a warning, and both are displayed for that
-reason.
+Both methods are scored on the same 25 radiographs, since a deletion curve
+from one sample cannot be set against an insertion curve from another. LIME
+produces the more concentrated maps ($0.375$ against $0.288$) and the better
+central values on both faithfulness measures, at a lower deletion AUC
+($0.567$ against $0.616$) and a higher insertion AUC ($0.794$ against
+$0.724$). Neither gap survives a paired test over the 25 image pairs: the
+deletion difference is $-0.049$ with a bootstrap interval of $[-0.113,
++0.021]$ and a signed-rank $p=0.19$, and the insertion difference is
+$+0.070$ with an interval of $[+0.013, +0.131]$ and $p=0.08$. The direction
+favours LIME on both and the sample does not establish it, which is the most
+that 25 images support. Grad-CAM is stable under small translations
+($\rho=0.81$), costs roughly $47$ times less, and is therefore the default
+view, with LIME computed on request. The two agree only weakly, at an IoU of
+$0.188$: two attribution methods applied to the same model and image select
+largely different regions, so neither is the account of what the model used.
+Convergence is evidence and divergence is a warning, and both are displayed
+for that reason.
 
 \begin{table}[t]
 \centering
-\caption{Explanation and summarization behavior for the complete classifier. Grad-CAM over 25 test radiographs, LIME over 8 at 150 perturbations, summaries over 20. Agreement is the IoU of the top-quintile regions of the two maps. The deterministic template is correct by construction on the schema, evidence and repeat rows and is the reference, not a competing method.}
+\caption{Explanation and summarization behavior for the complete classifier. Both explanation columns are measured over the same 25 test radiographs, LIME at 150 perturbations per image, and the summarization columns over 20 evidence objects. Agreement is the IoU of the top-quintile regions of the two maps. The deterministic template is correct by construction on the schema, evidence and repeat rows and is the reference, not a competing method.}
 \label{tab:xai}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
@@ -434,12 +448,12 @@ reason.
 \multicolumn{3}{l}{\textit{(a) Explanation}} \\
 Measure & Grad-CAM & LIME \\
 \midrule
-Deletion AUC (lower better)   & 0.616 & \textbf{0.581} \\
-Insertion AUC (higher better) & 0.724 & \textbf{0.789} \\
-Map concentration             & 0.288 & 0.387 \\
+Deletion AUC (lower better)   & 0.616 & \textbf{0.567} \\
+Insertion AUC (higher better) & 0.724 & \textbf{0.794} \\
+Map concentration             & 0.288 & 0.375 \\
 Stability under perturbation  & 0.810 & --- \\
-Mean runtime per image (s)    & \textbf{0.18} & 8.17 \\
-Grad-CAM / LIME agreement (IoU) & \multicolumn{2}{c}{0.203} \\
+Mean runtime per image (s)    & \textbf{0.17} & 7.98 \\
+Grad-CAM / LIME agreement (IoU) & \multicolumn{2}{c}{0.188} \\
 \midrule
 \multicolumn{3}{l}{\textit{(b) Summarization}} \\
 Measure & Gemini & Template \\
@@ -528,11 +542,12 @@ correctly and 9 it did not. Table~\ref{tab:main}(c) reports the rubric.
 
 The review is not an endorsement. Every rubric item averaged close to the
 neutral point of the scale, from $2.93$ for plausibility of the highlighted
-region to $3.10$ for absence of unsupported claims, and $89$ of $120$
-individual scores fell in the middle three bands. Read plainly, a reader
-with clinical training found the output neither convincing nor objectionable.
-Plausibility was the weakest item and the only one to average below neutral,
-which is consistent with the measured weakness of the attribution maps in
+region to $3.10$ for consistency with the displayed evidence, and $116$ of
+the $120$ individual scores fell in the middle three bands, $60$ of them
+exactly at neutral. Read plainly, a reader with clinical training found the
+output neither convincing nor objectionable. Plausibility was the weakest
+item and one of two to average below neutral, with overall acceptability at
+$2.97$, which is consistent with the measured weakness of the attribution maps in
 Section~V-E: the explanations are not persuasive to someone who reads
 radiographs, and the quantitative agreement figures already indicated they
 should not be.
@@ -561,8 +576,9 @@ Lung-field segmentation adds roughly $950$ ms and is by a wide margin the
 largest local cost, the price of replacing the intensity heuristics of
 Section~\ref{sec:method}; it runs once per image, independent of the
 classifier. End-to-end latency is near $1.1$ s with the deterministic
-template and $5$--$6$ s with the live service, which then dominates. LIME is
-excluded at $8.2$ s per image, some 45 times Grad-CAM, so it is computed on
+template; the live service adds the $7.9$ s call of
+Table~\ref{tab:xai}(b) and then dominates the total. LIME is
+excluded at $8.0$ s per image, some $47$ times Grad-CAM, so it is computed on
 request. The pipeline is interactive on commodity hardware without a GPU,
 the constraint a teaching deployment imposes.
 
@@ -578,13 +594,14 @@ baseline on accuracy, specificity, F1 and balanced accuracy, and the
 complete classifier attains significantly higher AUROC than DenseNet121 and
 ResNet50. The gain concentrates in specificity, the weak direction for every
 architecture tested. Combining a convolutional and a transformer branch is
-justified by this evidence; refining the fused tensor with attention is not.
+justified by the evidence available at one seed; refining the fused tensor
+with attention is not.
 
 Beyond that, the accuracy column is not a ranking: no comparison in
 Table~\ref{tab:main}(b) survives correction. What separates the
-configurations is the operating point. Swin-T achieves the best AUROC,
-$0.975$, and the worst specificity, $0.778$, returning 52 false positives
-against the complete classifier's 30. Ranking quality and decision quality
+configurations is the operating point. Swin-T pairs the best single-branch
+AUROC, $0.975$, with the worst specificity of any configuration, $0.778$,
+returning 52 false positives against the complete classifier's 34. Ranking quality and decision quality
 come apart, so the contribution of fusion is a balanced decision boundary,
 not superior discrimination. One asymmetry runs through every row: all five
 configurations detect pneumonia more reliably than they recognise a normal
@@ -593,7 +610,7 @@ $0.778$--$0.914$. Inverse-frequency weights did not remove it, and the error
 the system makes most often is calling a healthy chest abnormal.
 
 The explanation results are weaker than the classification results and
-should be read as such. Grad-CAM and LIME agree at an IoU of $0.203$, and
+should be read as such. Grad-CAM and LIME agree at an IoU of $0.188$, and
 agreement with an occlusion reference is modest for the baselines and weak
 for the fused models. No localization score appears anywhere for a related
 reason: computing one would need lesion annotations the dataset does not
@@ -669,7 +686,7 @@ technical research and education and does not provide diagnosis, treatment,
 triage or autonomous decision support.
 
 \section{Conclusion}
-The pipeline joins DenseNet121 and Swin-T through concatenation and a learned projection, refines the result with CBAM, and emits a pneumonia probability at a calibrated threshold. Fusion is supported by the evidence and the attention module is not: both fused configurations beat every single-branch baseline, while removing CBAM changes nothing measurable. Grad-CAM and LIME expose complementary aspects of model behavior but agree only weakly with each other, and a clinician reading the output scored it close to neutral throughout. Deterministic serialization keeps the language model away from the image and leaves every displayed sentence traceable to a recorded field, yet half the generated summaries still read as diagnostic to that reader. The classifier is the part of this system the evidence supports; the explanation and reporting layers are the parts that need work.
+The pipeline joins DenseNet121 and Swin-T through concatenation and a learned projection, refines the result with CBAM, and emits a pneumonia probability at a calibrated threshold. In this single-seed evaluation fusion is supported and the attention module is not: both fused configurations beat every single-branch baseline, while removing CBAM changes nothing measurable. Grad-CAM and LIME expose complementary aspects of model behavior but agree only weakly with each other, and a clinician reading the output scored it close to neutral throughout. Deterministic serialization keeps the language model away from the image and leaves every displayed sentence traceable to a recorded field, yet half the generated summaries still read as diagnostic to that reader. The classifier is the part of this system the evidence supports; the explanation and reporting layers are the parts that need work.
 
 \section*{Acknowledgment}
 The authors thank Dr.\ Vybhav N (MBBS, MD; five years of reporting experience) for the blinded review of the
