@@ -5,7 +5,9 @@ FastAPI application entry point for the Rad-Intel research and education framewo
 from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from rad_intel.config import settings
 from rad_intel.storage.database import db_manager
@@ -53,6 +55,26 @@ app = FastAPI(
 from pathlib import Path
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request, exc: RequestValidationError):
+    """
+    Return 422 for a malformed request, without echoing the body.
+
+    FastAPI's default handler puts the offending input in the response, and
+    its JSON encoder decodes bytes as UTF-8. Posting a radiograph to a route
+    that expects JSON therefore raised UnicodeDecodeError inside the error
+    path itself and surfaced as a 500, reporting a server fault for what is
+    a client mistake.
+    """
+    safe = []
+    for err in exc.errors():
+        trimmed = {k: v for k, v in err.items() if k != "input"}
+        if "ctx" in trimmed:
+            trimmed["ctx"] = {k: str(v) for k, v in trimmed["ctx"].items()}
+        safe.append(trimmed)
+    return JSONResponse(status_code=422, content={"detail": safe})
+
 
 # CORS Configuration for frontend / client applications
 app.add_middleware(

@@ -144,3 +144,19 @@ def test_serving_preprocessing_matches_training():
         # The overlay base must stay a plain uint8 RGB image of the same size.
         assert rgb.dtype == np.uint8 and rgb.shape == (settings.IMAGE_SIZE,
                                                        settings.IMAGE_SIZE, 3)
+
+
+async def test_binary_body_to_json_route_is_client_error(client, dummy_cxr_bytes):
+    """
+    A malformed request must not be reported as a server fault.
+
+    /report takes JSON. Posting a radiograph to it made FastAPI's default
+    validation handler echo the body, whose JSON encoder decodes bytes as
+    UTF-8, so the error path itself raised UnicodeDecodeError and the client
+    saw 500 for its own mistake.
+    """
+    r = await client.post(
+        "/api/v1/report", files={"file": ("cxr.jpeg", dummy_cxr_bytes, "image/jpeg")}
+    )
+    assert r.status_code == 422, f"expected 422, got {r.status_code}"
+    assert isinstance(r.json()["detail"], list)
