@@ -64,3 +64,6 @@ Rad-Intel paper/*.aux
 Rad-Intel paper/*.bbl
 Rad-Intel paper/*.blg
 Rad-Intel paper/*.out
+
+# Clinician feedback store (reviewed images and export manifests)
+feedback_store/

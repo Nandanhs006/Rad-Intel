@@ -115,3 +115,88 @@ class AnalysisHistoryItem(BaseModel):
 class AnalysisHistoryResponse(BaseModel):
     total_records: int
     records: list[AnalysisHistoryItem]
+
+
+# --- Educational assistant -------------------------------------------------
+
+class AssistantRequest(BaseModel):
+    question: str = Field(..., description="General question about lungs, pneumonia, radiography or this project")
+    displayed_result: str | None = Field(
+        None,
+        description=(
+            "Optional short text description of the result currently on screen, sent only "
+            "when the user explicitly asks about it. Never an image, never identifying data."
+        ),
+    )
+
+
+class AssistantSource(BaseModel):
+    title: str
+    name: str
+    url: str
+
+
+class AssistantResponse(BaseModel):
+    answer: str
+    sources: list[AssistantSource] = Field(default_factory=list)
+    mode: str = Field(..., description="gemini | knowledge_base | emergency | refusal")
+    is_emergency: bool = False
+    disclaimer: str
+
+
+class AssistantStatus(BaseModel):
+    available: bool
+    language_model_live: bool
+    mode: str
+    disclaimer: str
+
+
+# --- Clinician feedback ----------------------------------------------------
+
+class FeedbackSubmitResponse(BaseModel):
+    id: str
+    predicted_label: str
+    predicted_probability: float
+    threshold: float
+    model_version: str
+    preprocessing_version: str
+    image_sha256: str
+    status: str
+
+
+class FeedbackItem(BaseModel):
+    id: str
+    created_at: str
+    updated_at: str
+    reviewer: str
+    model_version: str
+    preprocessing_version: str
+    image_sha256: str
+    image_path: str | None = None
+    predicted_label: str
+    predicted_probability: float
+    threshold: float
+    verdict: str
+    corrected_label: str | None = None
+    note: str | None = None
+    status: str
+    exported_in: str | None = None
+
+
+class FeedbackListResponse(BaseModel):
+    counts: dict[str, int]
+    items: list[FeedbackItem]
+
+
+class FeedbackUpdateRequest(BaseModel):
+    verdict: str | None = None
+    corrected_label: str | None = None
+    note: str | None = None
+    status: str | None = None
+
+
+class FeedbackExportResponse(BaseModel):
+    export_tag: str
+    path: str
+    record_count: int
+    note: str

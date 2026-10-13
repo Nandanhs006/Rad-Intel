@@ -30,8 +30,20 @@
     </div>
   </header>
 
+
+  <!-- Section Navigation -->
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <div class="tabs-inner">
+      <button class="tab is-active" role="tab" aria-selected="true" data-tab="analyse">Analyse X-ray</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="learn">Ask &amp; Learn</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="feedback">Clinician Feedback</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="about">About &amp; Limitations</button>
+    </div>
+  </nav>
+
   <!-- Main Container -->
   <main class="main-container">
+    <section id="tab-analyse" class="tab-panel is-active" role="tabpanel">
     <div class="app-grid">
 
       <!-- Left Column: Upload & Parameters -->
@@ -227,11 +239,195 @@
       </section>
 
     </div>
+    </section>
+
+    <!-- ============ ASK & LEARN ============ -->
+    <section id="tab-learn" class="tab-panel" role="tabpanel">
+      <div class="learn-grid">
+        <section class="card chat-card" aria-label="Educational assistant">
+          <h1 class="card-title">Ask about lungs and pneumonia</h1>
+          <p class="card-subtitle">
+            General educational questions only. This is separate from the classifier and
+            never sees your radiograph.
+          </p>
+
+          <div class="notice notice-amber" id="assistant-disclaimer">
+            Educational information only; not medical diagnosis. Seek qualified medical care
+            for urgent or personal concerns.
+          </div>
+
+          <div id="assistant-status" class="assistant-status" hidden></div>
+
+          <div id="chat-log" class="chat-log" aria-live="polite">
+            <div class="chat-empty">
+              <p><strong>Try asking:</strong></p>
+              <div class="chip-row">
+                <button class="chip" data-ask="What is pneumonia?">What is pneumonia?</button>
+                <button class="chip" data-ask="What does the heatmap actually show?">What does the heatmap show?</button>
+                <button class="chip" data-ask="What does specificity mean?">What does specificity mean?</button>
+                <button class="chip" data-ask="What are the limitations of this project?">What are its limitations?</button>
+              </div>
+            </div>
+          </div>
+
+          <label class="chat-context">
+            <input type="checkbox" id="chat-include-result">
+            <span>Let me ask about the result currently on screen (sends the predicted label and
+            probability only, never the image)</span>
+          </label>
+
+          <form class="chat-form" id="chat-form">
+            <input type="text" id="chat-input" class="chat-input" autocomplete="off"
+                   placeholder="Ask a general question about lungs, pneumonia or this project…"
+                   maxlength="1000" aria-label="Your question">
+            <button type="submit" class="btn-primary" id="chat-send">Ask</button>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ CLINICIAN FEEDBACK ============ -->
+    <section id="tab-feedback" class="tab-panel" role="tabpanel">
+      <div class="app-grid">
+        <section class="card" aria-label="Submit review">
+          <h1 class="card-title">Clinician Feedback</h1>
+          <p class="card-subtitle">
+            Run a case, then record whether the prediction was right. Reviews are queued for
+            later analysis; nothing here retrains the model.
+          </p>
+
+          <div class="notice notice-red" id="fb-warning">
+            Do not upload identifiable patient data without appropriate authorisation.
+          </div>
+
+          <div class="form-row">
+            <label class="field-label" for="fb-reviewer">Reviewer</label>
+            <input type="text" id="fb-reviewer" class="input" placeholder="Name or identifier" maxlength="120">
+          </div>
+
+          <div class="form-row">
+            <label class="field-label" for="fb-model">Model version</label>
+            <select id="fb-model" class="input">
+              <option value="hybrid">Hybrid (DenseNet + Swin + CBAM)</option>
+              <option value="hybrid_no_cbam">Fusion without CBAM</option>
+              <option value="densenet121">DenseNet121</option>
+              <option value="swin_t">Swin-T</option>
+              <option value="resnet50">ResNet50</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label class="field-label" for="fb-file">Radiograph (JPEG or PNG, max 20 MB)</label>
+            <input type="file" id="fb-file" class="input" accept="image/jpeg,image/png">
+          </div>
+
+          <button class="btn-primary" id="fb-run" type="button">Run prediction</button>
+
+          <div id="fb-result" class="fb-result" hidden></div>
+
+          <div id="fb-review" class="fb-review" hidden>
+            <div class="form-row">
+              <span class="field-label">Was the prediction correct?</span>
+              <div class="chip-row">
+                <button class="chip" data-verdict="correct" type="button">Correct</button>
+                <button class="chip" data-verdict="incorrect" type="button">Incorrect</button>
+              </div>
+            </div>
+            <div class="form-row" id="fb-correction-row" hidden>
+              <label class="field-label" for="fb-corrected">Corrected label</label>
+              <select id="fb-corrected" class="input">
+                <option value="">Select…</option>
+                <option value="NORMAL">NORMAL</option>
+                <option value="PNEUMONIA">PNEUMONIA</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="fb-note">Review note (optional)</label>
+              <textarea id="fb-note" class="input" rows="2" maxlength="2000"
+                        placeholder="e.g. heatmap sat over the clavicle, not the lung"></textarea>
+            </div>
+            <button class="btn-primary" id="fb-submit" type="button">Submit review</button>
+          </div>
+        </section>
+
+        <section class="card" aria-label="Review queue">
+          <h2 class="card-title">Review queue</h2>
+          <p class="card-subtitle">Queued reviews can be edited until they are exported.</p>
+          <div id="fb-counts" class="fb-counts"></div>
+          <div id="fb-queue" class="fb-queue"><p class="muted">No reviews yet.</p></div>
+          <div class="fb-actions">
+            <button class="btn-secondary" id="fb-refresh" type="button">Refresh</button>
+            <button class="btn-primary" id="fb-export" type="button">Create reviewed training export</button>
+          </div>
+          <p class="muted small">
+            Export writes a versioned JSONL manifest and freezes those records. It does not
+            start training and does not modify any checkpoint.
+          </p>
+          <div id="fb-exports" class="fb-exports"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ ABOUT & LIMITATIONS ============ -->
+    <section id="tab-about" class="tab-panel" role="tabpanel">
+      <div class="about-grid">
+        <section class="card">
+          <h1 class="card-title">What this system is</h1>
+          <p>
+            Rad-Intel classifies paediatric chest radiographs as normal or pneumonia, shows
+            which regions drove the score, and writes a structured summary from those recorded
+            outputs. Classification, explanation and language generation are kept separate so
+            that every displayed sentence traces back to a number the model produced.
+          </p>
+          <div class="notice notice-red">
+            Restricted to technical research and education. It does not provide diagnosis,
+            treatment, triage or autonomous decision support, and it is not a medical device.
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Measured results</h2>
+          <p class="card-subtitle">Held-out 624-image test partition, single run at seed 42.</p>
+          <div class="about-table-wrap">
+          <table class="about-table">
+            <thead><tr><th>Configuration</th><th>Acc.</th><th>AUROC</th><th>Sens.</th><th>Spec.</th></tr></thead>
+            <tbody>
+              <tr><td>DenseNet121</td><td>91.5%</td><td>0.962</td><td>95.6%</td><td>84.6%</td></tr>
+              <tr><td>Swin-T</td><td>90.1%</td><td>0.975</td><td>97.4%</td><td>77.8%</td></tr>
+              <tr><td>ResNet50</td><td>89.7%</td><td>0.954</td><td>93.3%</td><td>83.8%</td></tr>
+              <tr><td>Fusion without CBAM</td><td>93.4%</td><td>0.977</td><td>94.6%</td><td>91.4%</td></tr>
+              <tr><td>Complete classifier</td><td>92.0%</td><td>0.974</td><td>95.9%</td><td>85.5%</td></tr>
+            </tbody>
+          </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Known limitations</h2>
+          <ul class="about-list">
+            <li>Paediatric images from a single institution; nothing extends to other ages,
+                institutions or acquisition protocols without external validation.</li>
+            <li>Labels collapse bacterial and viral pneumonia into one class.</li>
+            <li>No dependable patient identifier, so the split cannot guarantee patient-level
+                independence.</li>
+            <li>Each configuration was trained once, so no result separates an architectural
+                effect from seed variation.</li>
+            <li>Between 21% and 48% of model response falls outside the segmented lung fields,
+                consistent with shortcut learning on this dataset.</li>
+            <li>Grad-CAM and LIME agree only weakly with each other; a heatmap shows model
+                sensitivity, not pathology.</li>
+            <li>Generated summaries read as diagnostic to a reviewing clinician in half of
+                sampled cases despite passing schema validation.</li>
+          </ul>
+        </section>
+      </div>
+    </section>
   </main>
 
   <!-- Toast Notification -->
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/extras.js"></script>
 </body>
 </html>
