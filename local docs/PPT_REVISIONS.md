@@ -163,8 +163,8 @@ by a regression test.
 **3. Explanations pointing the wrong way.** The Swin backbone emits
 channels-last activations while the attribution library assumes
 channels-first. Correlation with an occlusion-sensitivity reference was
-**−0.12** — the maps highlighted regions the model demonstrably did not use,
-while appearing entirely plausible. A layout adapter moved this to **+0.31**.
+**−0.003** — the maps bore no relation to what the model actually used, while
+appearing entirely plausible. A layout adapter moved this to **+0.119**.
 
 **4. Saliency falling outside the lungs.** Between 21% and 48% of saliency
 mass fell outside lung tissue. An Otsu body mask kept shoulders and

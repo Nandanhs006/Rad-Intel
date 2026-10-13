@@ -1,0 +1,32 @@
+{
+  "n_images": 8,
+  "patch": 32,
+  "stride": 16,
+  "models": {
+    "densenet121": {
+      "mean_r": 0.406,
+      "sd": 0.185,
+      "n": 8
+    },
+    "swin_t": {
+      "mean_r": 0.119,
+      "sd": 0.096,
+      "n": 8
+    },
+    "resnet50": {
+      "mean_r": 0.3,
+      "sd": 0.146,
+      "n": 8
+    },
+    "hybrid_no_cbam": {
+      "mean_r": 0.074,
+      "sd": 0.265,
+      "n": 8
+    },
+    "hybrid": {
+      "mean_r": 0.163,
+      "sd": 0.135,
+      "n": 8
+    }
+  }
+}
