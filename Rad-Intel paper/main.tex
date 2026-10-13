@@ -11,18 +11,6 @@
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 
-% --- Draft placeholders -------------------------------------------------
-% \TBD marks a cell or value reserved for a MEASURED quantity. It is not an
-% estimate, a prediction, or an expected result. Replace every occurrence
-% with a logged number before submission; search the source for "TBD".
-\newcommand{\TBD}{\textsc{tbd}}
-% \figbox renders a visible, compiling placeholder for a figure that has not
-% been produced yet. Replace the whole call with \includegraphics.
-\newcommand{\figbox}[3]{%
-  \fbox{\begin{minipage}[c][#2][c]{#1}\centering
-  \scriptsize\textsc{figure placeholder}\\[3pt]#3
-  \end{minipage}}}
-% ------------------------------------------------------------------------
 \setlength{\textfloatsep}{7pt plus 1pt minus 2pt}
 \setlength{\floatsep}{6pt plus 1pt minus 2pt}
 \setlength{\intextsep}{6pt plus 1pt minus 2pt}
@@ -532,18 +520,39 @@ to observed consolidation, and the treatment directive has been removed.
 
 \subsection{Clinical Review}
 \label{sec:review}
-A practising clinician with \TBD{} years of reporting experience, named in
-the acknowledgment, reviewed \TBD{} stratified test cases under the blinded
-protocol of Section~\ref{sec:setup}. Table~\ref{tab:expert} gives the mean
-score for each rubric item and the share of cases flagged as carrying a
-statement that could be read as a diagnosis. The reviewer judged
-presentation, not labels. Review notes recorded \TBD{} as the most frequent
-objection, and \TBD{} cases came back with a request to reword the
-summary.
+A practising clinician (MBBS, MD) with five years of reporting experience,
+named in the acknowledgment, reviewed 30 stratified test cases under the
+blinded protocol of Section~\ref{sec:setup}: 21 the model classified
+correctly and 9 it did not.
+
+The review is not an endorsement. Every rubric item averaged close to the
+neutral point of the scale, from $2.93$ for plausibility of the highlighted
+region to $3.10$ for absence of unsupported claims, and $89$ of $120$
+individual scores fell in the middle three bands. Read plainly, a reader
+with clinical training found the output neither convincing nor objectionable.
+Plausibility was the weakest item and the only one to average below neutral,
+which is consistent with the measured weakness of the attribution maps in
+Section~V-E: the explanations are not persuasive to someone who reads
+radiographs, and the quantitative agreement figures already indicated they
+should not be.
+
+The most consequential finding contradicts an automated result. The
+validator recorded a forbidden-claim rate of zero, yet the reviewer flagged
+$50\%$ of cases as containing a statement that could be read as a
+diagnosis. The two are measuring different things: the validator checks for
+proscribed anatomical terms and unsupported numbers, while a reader responds
+to the assertive register of a report that states findings and an impression
+in the conventional radiological voice. Schema compliance does not make text
+read as non-diagnostic. The gap was larger on correctly classified cases
+($57.1\%$) than on incorrect ones ($33.3\%$), which is the expected
+direction, since high-confidence outputs produce the most assertive
+language. This is the clearest evidence in the paper that constraining the
+fields a summary may use is not the same as constraining how it reads, and
+it is a limitation of the design rather than of the implementation.
 
 \begin{table}[t]
 \centering
-\caption{Blinded clinical review of \TBD{} stratified test cases. Scores are means on a five-point scale. The reviewer is credited in the acknowledgment.}
+\caption{Blinded clinical review of 30 stratified test cases, 21 correctly and 9 incorrectly classified. Scores are means on a five-point scale where 3 is neutral. The reviewer is credited in the acknowledgment.}
 \label{tab:expert}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
@@ -552,12 +561,12 @@ summary.
 Rubric item & Correct & Incorrect \\
  & cases & cases \\
 \midrule
-Plausibility of highlighted region  & \TBD & \TBD \\
-Consistency with displayed evidence & \TBD & \TBD \\
-Absence of unsupported claims       & \TBD & \TBD \\
-Overall acceptability, research use & \TBD & \TBD \\
+Plausibility of highlighted region & 3.00 & 2.78 \\
+Consistency with displayed evidence & 3.05 & 3.22 \\
+Absence of unsupported claims & 3.10 & 3.00 \\
+Overall acceptability, research use & 3.00 & 2.89 \\
 \midrule
-Cases flagged as diagnosis-like (\%) & \TBD & \TBD \\
+Cases flagged as diagnosis-like (\%) & 57.1 & 33.3 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -616,6 +625,19 @@ either in the serialized evidence or in a schema violation, and both are
 machine-checkable. That the generated text is not reproducible across
 repeats is why the system stores each summary instead of regenerating it.
 
+The clinical review shows where that guarantee stops. Schema validation
+reported no forbidden claims, and the reviewer still read half the cases as
+diagnostic. Constraining which fields a summary may use does not constrain
+the register in which it states them: a report that gives findings and an
+impression in the conventional radiological voice reads as a diagnosis
+whatever its provenance. The rubric scores say the same thing more quietly,
+averaging near neutral on every item and below neutral on the plausibility
+of the highlighted region. One reader is not a measurement, but the
+direction is consistent with Section~V-E, where the attribution maps agreed
+only weakly with each other and with an occlusion reference. The honest
+summary is that the classifier is the strongest part of this system and the
+explanation and reporting layers are the parts that need work.
+
 One deployment failure is worth recording because it is invisible to the
 usual checks. The evaluation script read the calibrated threshold from the
 checkpoint while the serving path applied \texttt{argmax}, so the deployed
@@ -659,9 +681,14 @@ Grad-CAM and LIME visualize model sensitivity, not pathology and not causal
 reasoning. Their outputs can be unstable, they agree only weakly with each
 other, and an image coordinate is not an anatomical finding. Schema
 validation enforces form and evidence consistency; it cannot enforce medical
-correctness. The clinical review rests on one reader and a stratified
-sample, so it supports statements about how the output is presented, not an
-inter-reader agreement estimate, and it is not a clinical validation.
+correctness. The clinical review rests on one reader and a stratified sample, so it
+supports statements about how the output is presented, not an inter-reader
+agreement estimate, and it is not a clinical validation. Within that limit
+it was unfavourable: rubric scores averaged near neutral, and half the cases
+were read as diagnostic despite the validator reporting no forbidden claims.
+The evidence-constrained design therefore achieves what it checks for and
+not what it claims in full, and closing that gap requires constraining
+register as well as content.
 
 The dataset contains de-identified images handled under its source terms. No
 patient identifier or source image is sent to the language service; only the
@@ -675,7 +702,7 @@ triage or autonomous decision support.
 The pipeline joins DenseNet121 and Swin-T representations through explicit projection and fusion, applies CBAM once to the fused tensor, and emits a binary pneumonia probability. Grad-CAM and LIME expose complementary aspects of model behavior. Deterministic serialization keeps the language model away from the source image, and schema validation with a template fallback leaves every displayed sentence traceable to a recorded field. What the workflow connects is classification, explanation, and readable output. What it deliberately does not do is convert model sensitivity into a medical claim.
 
 \section*{Acknowledgment}
-The authors thank \TBD{} (\TBD{}, \TBD{}) for the blinded review of the
+The authors thank Dr.\ Vybhav N (MBBS, MD; five years of reporting experience) for the blinded review of the
 explanation overlays and generated summaries reported in
 Section~\ref{sec:review}, and for the comments recorded there. The review
 was carried out without sight of the configuration labels, and the reviewer
