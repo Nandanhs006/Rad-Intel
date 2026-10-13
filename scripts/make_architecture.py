@@ -39,11 +39,11 @@ STAGES = {
 
 COLS, ROWS = 2, 5
 BW, BH = 44.0, 15.0          # box size
-GX, GY = 10.0, 5.0           # gaps
+GX, GY = 10.0, 3.2           # gaps; rows sit close so the column box stays short
 W = COLS * BW + GX
 H = ROWS * BH + (ROWS - 1) * GY
 
-fig, ax = plt.subplots(figsize=(7.2, 8.4))
+fig, ax = plt.subplots(figsize=(7.2, 7.8))
 ax.set_xlim(-2, W + 2); ax.set_ylim(-2, H + 2); ax.axis("off")
 fig.patch.set_facecolor("white")
 
@@ -62,10 +62,10 @@ for (r, c), (title, colour, lines) in STAGES.items():
                                 boxstyle="round,pad=0.8,rounding_size=2.2",
                                 ec=edge, fc=face, lw=2.6, zorder=2))
     ax.text(x + BW / 2, y + BH - 4.4, title, ha="center", va="center",
-            fontsize=15.5, color=edge, fontweight="bold", zorder=3)
+            fontsize=16.2, color=edge, fontweight="bold", zorder=3)
     for j, t in enumerate(lines):
         ax.text(x + BW / 2, y + BH - 9.0 - j * 4.4, t, ha="center", va="center",
-                fontsize=12.5, color="#24252b", zorder=3)
+                fontsize=13.0, color="#24252b", zorder=3)
     pos[(r, c)] = (x, y)
 
 
@@ -86,9 +86,9 @@ def link(a, sa, b, sb, lw=2.2):
 link((0,0), "R", (0,1), "L")                    # input -> preprocessing
 link((0,1), "B", (1,1), "T")                    # -> Swin branch
 xp, yp = pos[(0,1)]; xd, yd = pos[(1,0)]
-ax.plot([xp + BW / 2, xd + BW / 2], [yp - 2.5, yp - 2.5], color="#141418", lw=2.2, zorder=3)
-ax.plot([xp + BW / 2, xp + BW / 2], [yp, yp - 2.5], color="#141418", lw=2.2, zorder=3)
-ax.add_patch(FancyArrowPatch((xd + BW / 2, yp - 2.5), (xd + BW / 2, yd + BH),
+ax.plot([xp + BW / 2, xd + BW / 2], [yp - GY * 0.5, yp - GY * 0.5], color="#141418", lw=2.2, zorder=3)
+ax.plot([xp + BW / 2, xp + BW / 2], [yp, yp - GY * 0.5], color="#141418", lw=2.2, zorder=3)
+ax.add_patch(FancyArrowPatch((xd + BW / 2, yp - GY * 0.5), (xd + BW / 2, yd + BH),
                              arrowstyle="-|>", mutation_scale=17, lw=2.2,
                              color="#141418", zorder=4))
 xd0, yd0 = pos[(1,0)]

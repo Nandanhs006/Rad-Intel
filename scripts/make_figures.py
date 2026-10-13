@@ -15,7 +15,7 @@ STYLE = {"densenet121":("#0072B2","-"), "swin_t":("#E69F00","--"),
          "hybrid":("#D55E00","-")}
 
 def fig2():
-    fig, ax = plt.subplots(1, 2, figsize=(7.1, 3.0))
+    fig, ax = plt.subplots(1, 2, figsize=(3.5, 1.52))
     for k, label in NAMES.items():
         f = f"results/roc_{k}.csv"
         if not os.path.exists(f): continue
@@ -23,8 +23,9 @@ def fig2():
         c, ls = STYLE[k]
         ax[0].plot(d[:,0], d[:,1], color=c, ls=ls, lw=1.4, label=label)
     ax[0].plot([0,1],[0,1], color="0.6", lw=.8, ls=":")
-    ax[0].set_xlabel("False positive rate"); ax[0].set_ylabel("True positive rate")
-    ax[0].set_title("ROC", fontsize=9); ax[0].legend(fontsize=6, loc="lower right")
+    ax[0].set_xlabel("False positive rate", fontsize=6.5)
+    ax[0].set_ylabel("True positive rate", fontsize=6.5)
+    ax[0].set_title("ROC", fontsize=7.5)
     ax[0].set_xlim(0,1); ax[0].set_ylim(0,1.005)
 
     ax[1].plot([0,1],[0,1], color="0.6", lw=.8, ls=":", label="perfect")
@@ -35,11 +36,16 @@ def fig2():
         if d.ndim == 1: d = d[None]
         c, ls = STYLE[k]
         ax[1].plot(d[:,1], d[:,2], color=c, ls=ls, lw=1.3, marker="o", ms=2.5, label=label)
-    ax[1].set_xlabel("Mean predicted probability"); ax[1].set_ylabel("Observed frequency")
-    ax[1].set_title("Reliability (15 bins)", fontsize=9)
+    ax[1].set_xlabel("Mean predicted probability", fontsize=6.5)
+    ax[1].set_ylabel("Observed frequency", fontsize=6.5)
+    ax[1].set_title("Reliability (15 bins)", fontsize=7.5)
     ax[1].set_xlim(0,1); ax[1].set_ylim(0,1)
-    for a in ax: a.tick_params(labelsize=7); a.grid(alpha=.25, lw=.4)
-    fig.tight_layout(pad=.4)
+    for a in ax: a.tick_params(labelsize=5.5, pad=1.5); a.grid(alpha=.25, lw=.35)
+    h, lb = ax[0].get_legend_handles_labels()
+    fig.legend(h, lb, fontsize=5.8, ncol=3, loc="lower center",
+               frameon=False, handlelength=2.4, columnspacing=1.2,
+               borderaxespad=0.0, bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(pad=.3, rect=(0, 0.13, 1, 1))
     fig.savefig(f"{OUT}/fig_roc_reliability.png", dpi=320)
     print("wrote fig_roc_reliability.png")
 
@@ -76,11 +82,11 @@ def fig3(model="hybrid"):
         ov = res["overlay_base64"].split(",",1)[1]
         img = cv2.imdecode(np.frombuffer(base64.b64decode(ov), np.uint8), cv2.IMREAD_COLOR)
         axes[r,0].imshow(rgb); axes[r,1].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        axes[r,0].set_ylabel(titles[key], fontsize=6)
-        axes[r,0].set_title("Radiograph" if r==0 else "", fontsize=7)
-        axes[r,1].set_title("Grad-CAM" if r==0 else "", fontsize=7)
+        axes[r,0].set_ylabel(titles[key], fontsize=7.5)
+        axes[r,0].set_title("Radiograph" if r==0 else "", fontsize=8.5)
+        axes[r,1].set_title("Grad-CAM" if r==0 else "", fontsize=8.5)
         axes[r,1].text(.98,.03, f"P={p:.2f}", transform=axes[r,1].transAxes,
-                       ha="right", va="bottom", fontsize=5.5, color="w",
+                       ha="right", va="bottom", fontsize=6.5, color="w",
                        bbox=dict(fc="k", alpha=.55, pad=1, lw=0))
         for a in axes[r]: a.set_xticks([]); a.set_yticks([])
     fig.tight_layout(pad=.3)
