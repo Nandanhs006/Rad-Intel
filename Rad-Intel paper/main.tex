@@ -83,20 +83,18 @@ Convolutional neural networks (CNNs), particularly DenseNet \cite{huang2017dense
 
 The output is split into three layers that stay separate: classification, visual explanation, and evidence-constrained summarization. Grad-CAM \cite{selvaraju2017gradcam} and LIME \cite{ribeiro2016lime} expose different aspects of model sensitivity, and neither is treated here as proof of a radiological finding. The language model never sees the radiograph. It receives a machine-generated evidence object and nothing else.
 
-The main contributions are: (1) a parallel DenseNet121--Swin-T architecture with explicit feature alignment and post-fusion CBAM, measured against its own no-CBAM ablation; (2) a reproducible explanation pipeline using Grad-CAM and LIME; (3) deterministic conversion of model outputs into a constrained evidence schema; and (4) an end-to-end interface that exposes the probability, explanations, summary source, and limitations without presenting the output as a diagnosis.
+The main contributions are a parallel DenseNet121--Swin-T architecture with post-fusion CBAM measured against its own no-CBAM ablation, a reproducible Grad-CAM and LIME explanation pipeline, deterministic conversion of model outputs into a constrained evidence schema, and an interface that exposes the probability, explanations, summary source and limitations without presenting the output as a diagnosis.
 
 
 
 \section{Related Work}
-CNN-based pneumonia classifiers commonly rely on transfer learning, residual connections, and attention. DenseNet supports feature reuse across layers \cite{huang2017densenet}, while ResNet \cite{he2016resnet} and EfficientNet \cite{tan2019efficientnet} provide strong comparison architectures. Recent pneumonia systems incorporate CBAM, squeeze-and-excitation (SE) blocks, ensembles, or transformer components \cite{rashid2025cbam,potharaju2025cbamse,ifty2024explainable,mustapha2025hybrid}. Singh \emph{et al.} separately evaluated vision-transformer models on chest X-rays \cite{singh2024vit}.
+CNN-based pneumonia classifiers commonly rely on transfer learning, residual connections, and attention. DenseNet supports feature reuse across layers \cite{huang2017densenet}, and ResNet \cite{he2016resnet} remains the standard convolutional reference. Recent pneumonia systems incorporate CBAM, squeeze-and-excitation (SE) blocks, ensembles, or transformer components \cite{rashid2025cbam,potharaju2025cbamse,ifty2024explainable,mustapha2025hybrid}. Singh \emph{et al.} separately evaluated vision-transformer models on chest X-rays \cite{singh2024vit}.
 
 Feature-level fusion of complementary representations is not specific to medical imaging. Swathi and Shivakumar combined gray-level co-occurrence matrix descriptors with AlexNet features for crowd-behavior analysis \cite{swathi2021hybrid}, and later fused visual and acoustic features by explicit concatenation \cite{swathi2023audiovisual}; the setting and inputs differ from chest radiography, but the fusion pattern is the one adopted here.
 
 Grad-CAM attributes a selected score to a convolutional feature tensor, whereas LIME approximates local behavior around a perturbed image. Their assumptions differ, making them complementary, not interchangeable. Khadidos \emph{et al.} similarly used both methods for pediatric pneumonia classification \cite{khadidos2026explainable}.
 
-Systems such as MAIRA-1 and RaDialog generate or discuss radiology reports directly from multimodal inputs \cite{hyland2023maira,pellegrini2026radialog}. The present system serves a narrower purpose: it summarizes serialized classifier evidence instead of generating a diagnostic report from the image. Consequently, the text component is assessed for schema compliance and agreement with the evidence object. GREEN is relevant only when the output and reference text satisfy its radiology-report evaluation assumptions \cite{ostmeier2024green}.
-
-Across that literature the two capabilities stay separate: the pneumonia classifiers report a label and a saliency map with no text component, and the radiology-language models generate prose from the image itself. The workflow here occupies neither position, pairing a classifier and its explanations with a summary constrained to serialized evidence.
+Systems such as MAIRA-1 and RaDialog generate or discuss radiology reports directly from multimodal inputs \cite{hyland2023maira,pellegrini2026radialog}. Across that literature the two capabilities stay separate: the pneumonia classifiers report a label and a saliency map with no text component, and the radiology-language models generate prose from the image itself. The workflow here occupies neither position, summarizing serialized classifier evidence rather than generating a report from the image, so its text component is assessed for schema compliance and agreement with the evidence object rather than against a reference report \cite{ostmeier2024green}.
 
 
 
@@ -107,7 +105,7 @@ The implementation uses the Kaggle \emph{Chest X-Ray Images (Pneumonia)} dataset
 
 The Kaggle release contains 5,216 training images, 16 validation images, and 624 test images. Because the supplied validation folder is too small for stable model selection, the training and validation folders are combined and then divided into stratified development and validation sets using a fixed 85:15 split and random seed 42. The original 624-image test folder remains untouched. The public release carries no reliable patient identifier, so the partition is image-level and cannot guarantee patient-level independence.
 
-Each image is converted to three channels, contrast-enhanced with contrast-limited adaptive histogram equalization (CLAHE \cite{zuiderveld1994clahe}, clip limit $2.0$, $8\times8$ tiles), resized to $224\times224$, and normalized with ImageNet mean and standard deviation. CLAHE equalizes contrast tile by tile instead of across the whole image, leaving faint opacities in an under- or over-exposed region remain visible; chest radiographs in this dataset vary considerably in exposure. The resize does not preserve aspect ratio, which introduces a mild anisotropic distortion that is applied identically at training and inference. Training augmentation consists of rotation within $\pm10^{\circ}$, horizontal flipping with probability $0.5$, and mild brightness and contrast jitter. Validation and test images receive deterministic preprocessing only. Vertical flips are excluded as anatomically implausible.
+Each image is converted to three channels, contrast-enhanced with contrast-limited adaptive histogram equalization (CLAHE \cite{zuiderveld1994clahe}, clip limit $2.0$, $8\times8$ tiles), resized to $224\times224$, and normalized with ImageNet mean and standard deviation. CLAHE equalizes contrast tile by tile rather than across the whole image, so faint opacities survive in an under- or over-exposed region; exposure varies considerably across this dataset. The resize does not preserve aspect ratio, which introduces a mild anisotropic distortion that is applied identically at training and inference. Training augmentation consists of rotation within $\pm10^{\circ}$, horizontal flipping with probability $0.5$, and mild brightness and contrast jitter. Validation and test images receive deterministic preprocessing only. Vertical flips are excluded as anatomically implausible.
 
 Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and hybrid classification to visual explanation and evidence-constrained summarization.
 
@@ -208,11 +206,10 @@ pretrained ChestX-Det PSPNet distributed with TorchXRayVision
 \cite{cohen2022torchxrayvision}, which labels left and right lung
 separately from heart, mediastinum and diaphragm; only the two lung classes
 are kept, at a sigmoid probability above $0.5$ and with a $7\times7$
-dilation so that subpleural opacity at the edge of the field is retained. Two simpler alternatives failed: an Otsu body mask retains
-shoulders and clavicles, and the equalization applied during preprocessing
-destroys the global intensity structure such a threshold needs, while a rule
-treating darker regions as lung excludes consolidation, which is radiopaque
-and is precisely what an explanation should show. The resulting zone label
+dilation so that subpleural opacity at the edge of the field is retained. Two simpler alternatives failed: an Otsu body mask retains shoulders and
+clavicles and is defeated by the equalization applied during preprocessing,
+while a rule treating darker regions as lung excludes consolidation, which
+is radiopaque and is precisely what an explanation should show. The resulting zone label
 is the only spatial language the summary may use, and the constraint
 enforced is not that spatial terms are forbidden but that no field the
 serializer did not compute may appear.
@@ -256,28 +253,18 @@ was already collected.
 
 Explanation analysis covers deletion and insertion curves
 \cite{petsiuk2018rise}, stability under label-preserving perturbations, map
-concentration and Grad-CAM/LIME agreement. No localization score appears
-anywhere: the release ships class labels, not lesion masks. Text analysis
-records schema-valid rate, evidence agreement, forbidden-claim rate,
-fallback frequency, reproducibility and latency, with the deterministic
-template as the reference.
+concentration and Grad-CAM/LIME agreement; no localization score appears
+anywhere, since the release ships class labels and not lesion masks. Text
+analysis takes the deterministic template as its reference.
 
 The output is also reviewed by a practicing clinician, credited in the
-acknowledgment. Cases are drawn as a stratified sample before any result is
-inspected, covering correct and incorrect predictions in both classes. The
-reviewer sees the radiograph, the overlay and the summary, blinded to which
-configuration produced them, and scores four items on a five-point scale:
-whether the highlighted region is plausible, whether the summary is
-consistent with the displayed evidence, whether it avoids unsupported
-claims, and whether it is acceptable as a research-use description. Each
-case is also marked for any statement that could be read as a diagnosis.
-The review tests whether the output is defensible to a reader with clinical
-training; it is not a reference standard for the labels.
-
-Reproducibility records cover the dataset version and split manifest, source
-commit and environment lock file, hardware, seeds and checkpoint hashes,
-preprocessing parameters and threshold, Grad-CAM target and LIME
-configuration, and the serializer, schema, prompt and model identifiers.
+acknowledgment. Cases are drawn as a stratified sample over both classes and
+both outcomes before any result is inspected; the reviewer sees the
+radiograph, the overlay and the summary with the model's verdict withheld,
+scores four items on a five-point scale, and marks each case for any
+statement that could be read as a diagnosis. The review tests whether the
+output is defensible to a reader with clinical training; it is not a
+reference standard for the labels.
 
 \section{Results}
 \label{sec:results}
@@ -302,14 +289,10 @@ under $0.1\%$ of the total. Runs took 36--49 minutes each, about 3.5
 GPU-hours for the five reported here.
 
 \subsection{Classification Performance and Ablation}
-Table~\ref{tab:main}(a) carries the primary comparison and the ablation in one
-block, since the single-branch rows serve both purposes and splitting them
-would repeat the same six runs across two tables. Rows one and two isolate
-each representation. Row three gives the residual CNN reference.
-Row four keeps the fusion path but drops post-fusion CBAM, and row five is
-the complete classifier. Two differences carry the architectural claims: rows
-four against five for the attention module, and rows one and two against row
-four for fusion itself.
+Table~\ref{tab:main}(a) carries the primary comparison and the ablation in
+one block, since the single-branch rows serve both. Two differences carry
+the architectural claims: row four against row five for the attention
+module, and rows one and two against row four for fusion itself.
 
 Fusion separates from the single-branch baselines. Both fused
 configurations exceed every baseline on accuracy, specificity, F1 and
@@ -372,14 +355,12 @@ Cases read as diagnosis (\%)        & \multicolumn{5}{l}{} & \multicolumn{1}{c}{
 \subsection{Threshold Selection and Calibration}
 Selected thresholds differ substantially across configurations, from
 $0.422$ for Swin-T through $0.463$ for DenseNet121 to $0.717$ for fusion
-without CBAM. That spread is itself informative: it is the distance each
-representation puts between its own balanced operating point and the $0.5$
-reference, and it is wide enough that a shared default would cost
-specificity on every borderline radiograph for the models calibrated above
-it and sensitivity for those below. Each model is therefore reported at its
-own threshold, which is stored in the checkpoint and applied unchanged at
-inference, so the deployed operating point and the reported metrics describe
-the same classifier.
+without CBAM. That spread is the distance each representation puts between
+its own balanced operating point and the $0.5$ reference, and it is wide
+enough that a shared default would cost specificity for the models
+calibrated above it and sensitivity for those below. Each model is therefore
+reported at its own threshold, stored in the checkpoint and applied
+unchanged at inference.
 
 Calibration is better than the spread of thresholded accuracies suggests.
 Brier scores ranged from $0.062$ to $0.085$, with expected calibration
@@ -524,10 +505,10 @@ quadrants, diagnostic language or treatment instruction. The final row
 records whether repeated requests with identical evidence, a fixed prompt and
 temperature $0$ return byte-identical text.
 
-Schema compliance was complete: all 20 summaries carried every required
-section, no repair request was needed and the fallback was never invoked. No
-summary contained lobar anatomy the serializer does not compute or any
-treatment instruction. Evidence agreement was $85\%$; three of twenty
+Schema compliance was complete, no repair request was needed, the fallback
+was never invoked, and no summary contained lobar anatomy the serializer
+does not compute or any treatment instruction. Evidence agreement was
+$85\%$; three of twenty
 described the classifier's confidence qualitatively without restating the
 figure, which the validator counts as a disagreement because it cannot
 verify an absent number.
@@ -568,92 +549,64 @@ should not be.
 
 The most consequential finding contradicts an automated result. The
 validator recorded a forbidden-claim rate of zero, yet the reviewer flagged
-$50\%$ of cases as containing a statement that could be read as a
-diagnosis. The two are measuring different things: the validator checks for
-proscribed anatomical terms and unsupported numbers, while a reader responds
-to the assertive register of a report that states findings and an impression
-in the conventional radiological voice. Schema compliance does not make text
-read as non-diagnostic. The gap was larger on correctly classified cases
-($57.1\%$) than on incorrect ones ($33.3\%$), which is the expected
-direction, since high-confidence outputs produce the most assertive
-language. This is the clearest evidence in the paper that constraining the
-fields a summary may use is not the same as constraining how it reads, and
-it is a limitation of the design rather than of the implementation.
+$50\%$ of cases as containing a statement that could be read as a diagnosis.
+The two measure different things: the validator checks for proscribed
+anatomical terms and unsupported numbers, while a reader responds to the
+assertive register of a report that states findings and an impression in the
+conventional radiological voice. The gap was larger on correctly classified
+cases ($57.1\%$) than on incorrect ones ($33.3\%$), the expected direction,
+since high-confidence outputs produce the most assertive language.
 
 
 
 \subsection{Latency}
 Latency was measured on an Apple M-series CPU with no GPU acceleration.
-Preprocessing costs $16$ ms, the forward pass $21$--$31$ ms, Grad-CAM under
-$100$ ms, and template rendering with PDF generation a further $16$ ms.
-Lung-field segmentation adds roughly $950$ ms and is by a wide margin the
-largest local cost, the price of replacing the intensity heuristics of
-Section~\ref{sec:method}; it runs once per image, independent of the
-classifier. End-to-end latency is near $1.1$ s with the deterministic
-template; the live service adds the $7.9$ s call of
-Table~\ref{tab:xai}(b) and then dominates the total. LIME is
-excluded at $8.0$ s per image, some $47$ times Grad-CAM, so it is computed on
-request. The pipeline is interactive on commodity hardware without a GPU,
-the constraint a teaching deployment imposes.
+Preprocessing, the forward pass, Grad-CAM and template rendering together
+cost under $170$ ms. Lung-field segmentation adds roughly $950$ ms and is by
+a wide margin the largest local cost, the price of replacing the intensity
+heuristics of Section~\ref{sec:method}; it runs once per image, independent
+of the classifier. End-to-end latency is near $1.1$ s with the deterministic
+template, and the live service adds the $7.9$ s call of
+Table~\ref{tab:xai}(b), which then dominates. LIME is excluded at $8.0$ s per
+image, some $47$ times Grad-CAM, so it is computed on request. The pipeline
+is interactive on commodity hardware without a GPU, the constraint a
+teaching deployment imposes.
 
 \section{Discussion}
 The ablation does not support one of this paper's own design choices. The
 same direction appeared under an earlier frozen-backbone protocol, so the
-null result is not an artifact of one training regime. Only one reading is
-supported: CBAM is not shown to degrade performance, and it is not shown to
-help. For $32{,}868$ parameters the module earns no place here.
+null result is not an artifact of one training regime, and the only
+supported reading is that CBAM neither helps nor hurts. For $32{,}868$
+parameters the module earns no place here. Fusion fares better: both fused
+configurations exceed every single-branch baseline on accuracy, specificity,
+F1 and balanced accuracy, and the gain concentrates in specificity, the weak
+direction for every architecture tested. Combining a convolutional and a
+transformer branch is justified by the evidence available at one seed;
+refining the fused tensor with attention is not.
 
-Fusion fares better. Both fused configurations exceed every single-branch
-baseline on accuracy, specificity, F1 and balanced accuracy, and the
-complete classifier attains significantly higher AUROC than DenseNet121 and
-ResNet50. The gain concentrates in specificity, the weak direction for every
-architecture tested. Combining a convolutional and a transformer branch is
-justified by the evidence available at one seed; refining the fused tensor
-with attention is not.
-
-Beyond that, the accuracy column is not a ranking: no comparison in
-Table~\ref{tab:main}(b) survives correction. What separates the
-configurations is the operating point. Swin-T pairs the best single-branch
-AUROC, $0.975$, with the worst specificity of any configuration, $0.778$,
-returning 52 false positives against the complete classifier's 34. Ranking quality and decision quality
-come apart, so the contribution of fusion is a balanced decision boundary,
+What separates the configurations is the operating point rather than the
+ranking, since no comparison in Table~\ref{tab:main}(b) survives correction.
+Swin-T pairs the best single-branch AUROC with the worst specificity of any
+configuration, so what fusion contributes is a balanced decision boundary,
 not superior discrimination. One asymmetry runs through every row: all five
 configurations detect pneumonia more reliably than they recognize a normal
-radiograph, at sensitivity $0.933$--$0.974$ against specificity
-$0.778$--$0.914$. Inverse-frequency weights did not remove it, and the error
-the system makes most often is calling a healthy chest abnormal.
-
-The explanation results are weaker than the classification results and
-should be read as such. Grad-CAM and LIME agree at an IoU of $0.188$, and
-agreement with an occlusion reference is modest for the baselines and weak
-for the fused models. No localization score appears anywhere for a related
-reason: computing one would need lesion annotations the dataset does not
-contain, and a number produced without them would report an assumption as a
-measurement.
+radiograph, inverse-frequency weights did not remove it, and the error the
+system makes most often is calling a healthy chest abnormal.
 
 Separating the classifier from the language model is what makes
 Table~\ref{tab:xai}(b) interpretable. The model never sees the radiograph
 and never receives an anatomical label, so a factual error must originate
 either in the serialized evidence or in a schema violation, and both are
-machine-checkable. That the generated text is not reproducible across
-repeats is why the system stores each summary instead of regenerating it.
-
-The clinical review shows where that guarantee stops. Schema validation
-reported no forbidden claims, and the reviewer still read half the cases as
-diagnostic. Constraining which fields a summary may use does not constrain
-the register in which it states them: a report that gives findings and an
-impression in the conventional radiological voice reads as a diagnosis
-whatever its provenance. The rubric scores say the same thing more quietly,
-averaging near neutral on every item and below neutral on the plausibility
-of the highlighted region. One reader is not a measurement, but the
-direction is consistent with Section~V-E, where the attribution maps agreed
-only weakly with each other and with an occlusion reference. The honest
-summary is that the classifier is the strongest part of this system and the
-explanation and reporting layers are the parts that need work.
-
-
-
-
+machine-checkable. The clinical review shows where that guarantee stops.
+Validation reported no forbidden claims and the reviewer still read half the
+cases as diagnostic: constraining which fields a summary may use does not
+constrain the register in which it states them, and a report that gives
+findings and an impression in the conventional radiological voice reads as a
+diagnosis whatever its provenance. One reader is not a measurement, but the
+direction agrees with Section~V-E, where the attribution maps agreed only
+weakly with each other and with an occlusion reference. The honest summary is
+that the classifier is the strongest part of this system and the explanation
+and reporting layers are the parts that need work.
 
 \section{Limitations, Ethics, and Privacy}
 The Kaggle dataset holds pediatric images from one institution and is
@@ -679,17 +632,13 @@ model uses. Lung-field cropping during preprocessing is the appropriate
 mitigation and is not yet applied.
 
 Grad-CAM and LIME visualize model sensitivity, not pathology and not causal
-reasoning. Their outputs can be unstable, they agree only weakly with each
-other, and an image coordinate is not an anatomical finding. Schema
-validation enforces form and evidence consistency; it cannot enforce medical
-correctness. The clinical review rests on one reader and a stratified sample, so it
-supports statements about how the output is presented, not an inter-reader
-agreement estimate, and it is not a clinical validation. Within that limit
-it was unfavorable: rubric scores averaged near neutral, and half the cases
-were read as diagnostic despite the validator reporting no forbidden claims.
-The evidence-constrained design therefore achieves what it checks for and
-not what it claims in full, and closing that gap requires constraining
-register as well as content.
+reasoning; an image coordinate is not an anatomical finding. Schema
+validation enforces form and evidence consistency, not medical correctness.
+The clinical review rests on one reader and a stratified sample, so it
+supports statements about how the output is presented rather than an
+inter-reader agreement estimate, and it is not a clinical validation. Within
+that limit it was unfavorable, and the evidence-constrained design therefore
+achieves what it checks for and not what it claims in full.
 
 The dataset contains de-identified images handled under its source terms. No
 patient identifier or source image is sent to the language service; only the
