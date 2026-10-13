@@ -108,12 +108,12 @@ Each image is converted to three channels, contrast-enhanced with contrast-limit
 
 Figure~\ref{fig:architecture} summarizes the flow from image preprocessing and hybrid classification to visual explanation and evidence-constrained summarization.
 
-\begin{figure*}[!t]
+\begin{figure}[!t]
 \centering
-\includegraphics[width=0.92\textwidth]{architecture.png}
+\includegraphics[width=0.90\columnwidth]{architecture.png}
 \caption{End-to-end classification, explanation, and evidence-constrained summarization workflow.}
 \label{fig:architecture}
-\end{figure*}
+\end{figure}
 
 \subsection{Feature Extraction and Fusion}
 DenseNet121 \cite{huang2017densenet} and Swin-T \cite{liu2021swin} are initialized with ImageNet weights and operate in parallel on the same preprocessed image. For a $224\times224$ input, the DenseNet121 trunk produces $\mathbf{F}_D\in\mathbb{R}^{1024\times7\times7}$. The final Swin-T stage produces a representation corresponding to $768$ channels on a $7\times7$ grid. An explicit adapter $\mathcal{A}$ converts the Swin output to channels-first (NCHW) layout before fusion.
@@ -298,16 +298,13 @@ four for fusion itself.
 
 Fusion separates from the single-branch baselines. Both fused
 configurations exceed every baseline on accuracy, specificity, F1 and
-balanced accuracy: $0.934$ and $0.920$ against $0.915$, $0.901$ and $0.897$.
-The gain is concentrated in specificity, which rises from a $0.778$--$0.846$
-band across the baselines to $0.914$ without CBAM and $0.855$ with it. Since
-specificity is the weaker direction for every architecture tested, this is
-where fusion contributes.
-
-Post-fusion CBAM does not add to that. The configuration without it leads on
-accuracy, AUROC, specificity, F1 and balanced accuracy, and the complete
-classifier leads only on sensitivity ($0.959$). Section~\ref{sec:results}-D
-tests whether that gap is real.
+balanced accuracy, at $0.934$ and $0.920$ accuracy against $0.915$, $0.901$
+and $0.897$, with the gain concentrated in specificity: a $0.778$--$0.846$
+band across the baselines rises to $0.914$ without CBAM and $0.855$ with it.
+Specificity is the weaker direction for every architecture tested, so this
+is where fusion contributes. Post-fusion CBAM does not add to it; the
+ablated configuration leads on every column except sensitivity, and
+Section~\ref{sec:results}-D tests whether that gap is real.
 
 Every configuration remains more reliable at detecting pneumonia than at
 recognising a normal radiograph, with sensitivity $0.933$--$0.959$ against
@@ -699,7 +696,7 @@ technical research and education and does not provide diagnosis, treatment,
 triage or autonomous decision support.
 
 \section{Conclusion}
-The pipeline joins DenseNet121 and Swin-T representations through explicit projection and fusion, applies CBAM once to the fused tensor, and emits a binary pneumonia probability. Grad-CAM and LIME expose complementary aspects of model behavior. Deterministic serialization keeps the language model away from the source image, and schema validation with a template fallback leaves every displayed sentence traceable to a recorded field. What the workflow connects is classification, explanation, and readable output. What it deliberately does not do is convert model sensitivity into a medical claim.
+The pipeline joins DenseNet121 and Swin-T through concatenation and a learned projection, refines the result with CBAM, and emits a pneumonia probability at a calibrated threshold. Fusion is supported by the evidence and the attention module is not: both fused configurations beat every single-branch baseline, while removing CBAM changes nothing measurable. Grad-CAM and LIME expose complementary aspects of model behavior but agree only weakly with each other, and a clinician reading the output scored it close to neutral throughout. Deterministic serialization keeps the language model away from the image and leaves every displayed sentence traceable to a recorded field, yet half the generated summaries still read as diagnostic to that reader. The classifier is the part of this system the evidence supports; the explanation and reporting layers are the parts that need work.
 
 \section*{Acknowledgment}
 The authors thank Dr.\ Vybhav N (MBBS, MD; five years of reporting experience) for the blinded review of the
