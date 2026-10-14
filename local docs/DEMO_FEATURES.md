@@ -46,12 +46,20 @@ Both sit outside the Kaggle dataset directory. Add `feedback_store/` to
 General questions about lung health, pneumonia, chest radiography, the terms
 in the interface, and how the project works.
 
-**Grounding.** Answers come from a curated knowledge base
-(`src/rad_intel/assistant/knowledge_base.py`), not from the model's own recall.
-Each entry carries a source (WHO, CDC, NIH NHLBI, or the project itself) and
-the interface cites it. The language model is asked to phrase an answer *from
-the retrieved extracts only*; with no key, or if the service fails, the
-extracts are returned directly.
+**How it answers.** The question is classified, then matched against a curated
+knowledge base (`src/rad_intel/assistant/knowledge_base.py`) whose entries each
+carry a source (WHO, CDC, NIH NHLBI, or the project itself). Those extracts go
+to the language model, which is told to prefer them where they apply because
+they are the project's verified notes, and otherwise to answer from established
+respiratory medicine. It must distinguish what is well established from what is
+uncertain, and must not invent statistics or citations. With no key, or if the
+service fails, the extracts are returned directly.
+
+The trade-off is deliberate. Restricting answers to fourteen hand-written notes
+gave narrow coverage, so the model's own knowledge is now allowed inside the
+respiratory domain. An answer can therefore go beyond what a cited source
+states, and can be wrong in the way any language model can be wrong. Every
+safety guard below still runs on every turn.
 
 **Safety**, in `src/rad_intel/assistant/safety.py`, applied in order:
 
@@ -80,13 +88,25 @@ containing the predicted label and probability, never image data.
 ## 2. Interface sections
 
 Four tabs: **Analyse X-ray**, **Ask & Learn**, **Clinician Feedback**,
-**About & Limitations**.
+**About & Limitations**, as an icon-and-label pill bar with a rounded active
+state.
 
 The analysis workflow is unchanged. Its markup was moved inside a tab panel
 and `app.js` was not edited at all; the new behaviour lives in a separate
-`static/extras.js`. Accent tokens moved from amber to a medical blue-teal by
-changing six CSS variable *values* — no component rule was touched, so the
-change reverts with `git checkout src/rad_intel/static/style.css`.
+`static/extras.js`. The accent is the project's original orange.
+
+A design-system layer at the end of `style.css` adds surface, shadow, spacing
+and motion tokens, plus reusable `.btn-primary` / `.btn-secondary`, `.badge-*`,
+`.notice`, `.input`, `.metric-tile` and `.empty-state` components. It is
+appended, so earlier rules stay in place and are overridden only where the
+refinement applies. Transitions sit in a 150-250 ms band and are disabled
+under `prefers-reduced-motion`.
+
+Two things the redesign fixed rather than restyled: `.btn-primary` previously
+existed only scoped under `.report-actions`, so buttons added elsewhere
+rendered as browser defaults; and the drag state is `.drag-active`, which is
+what `app.js` already toggles, so the hover and drag styling works without
+touching that file.
 
 The About tab states the measured results and the known limitations as the
 paper reports them, including the negative CBAM result and the shortcut-learning
@@ -127,24 +147,53 @@ or from the model being agreed with.
 | `/api/v1/feedback/export` | POST | Write a versioned manifest and freeze |
 | `/api/v1/feedback/exports` | GET | List manifests |
 
-### Why there is no "train" button
+### Learning from the reviewed cases
 
-Fine-tuning from reviewer feedback is viable but is not safe to trigger from a
-web request, so it was not built. Doing it properly would require, in order:
+The queue is not the end of the line. `scripts/finetune_from_feedback.py`
+consumes an export manifest and produces a new, versioned model.
 
-1. Take an export manifest as the only input.
-2. Hold out the original 624-image Kaggle test partition untouched, so the new
-   model stays comparable to the paper's numbers.
-3. Split reviewed cases into their own train/validation sets; never merge them
-   into the original split.
-4. Fine-tune from an existing checkpoint into a **new** version
-   (`weights/best_hybrid_v2_model.pt`), leaving the original in place.
-5. Re-run `scripts/evaluate_all.py` on the untouched test partition and
-   compare against the recorded baseline.
-6. Require explicit human approval before the new version is selectable.
+```bash
+# train on reviewed cases
+python scripts/finetune_from_feedback.py \
+    --manifest feedback_store/exports/reviewed-export-<stamp>.jsonl \
+    --base-model hybrid
 
-Steps 1–3 are satisfied by the export format. Steps 4–6 belong in an offline
-script run deliberately, not in the serving process.
+# read the printed comparison, then if it is a genuine improvement:
+python scripts/finetune_from_feedback.py --promote weights/best_hybrid_v2_model.pt
+```
+
+It loads the manifest, splits reviewed cases into their own stratified train
+and validation sets, scores the base model on the untouched Kaggle test
+partition, fine-tunes from the existing checkpoint at low discriminative
+learning rates, scores the result on that same partition, and writes
+`weights/best_<model>_v<N>_model.pt` with provenance and both metric sets
+recorded inside the checkpoint.
+
+Guarantees:
+
+- The 624-image Kaggle test partition is **never trained on**. It is loaded
+  for scoring only, which keeps a new version comparable to the paper.
+- The original checkpoint is **never overwritten**. Promotion copies the live
+  one to `*_superseded_<stamp>.pt` first.
+- Reviewed cases are never merged into the split the paper reports.
+- **Nothing is promoted automatically.** The script prints the comparison and
+  stops.
+- Preprocessing is the same single path, imported rather than reimplemented.
+
+It refuses to run on fewer than four usable cases, or on cases of only one
+class, since either would damage the classifier rather than improve it. The
+verdict uses a 0.002 tolerance band, because a few thousandths on 624 images
+is sampling noise rather than a real difference.
+
+Verified end to end on twelve stand-in cases: the baseline reproduced the
+paper exactly (accuracy 0.9199, AUROC 0.9736, TN/FP/FN/TP 200/34/16/374), one
+epoch moved accuracy to 0.9247, the new version went to a separate file, and
+the base checkpoint's MD5 was unchanged afterwards.
+
+Images from other institutions already work for inference: preprocessing
+accepts any JPEG or PNG and normalises it through CLAHE and the 224x224
+resize. What differs between institutions is acquisition and framing, which is
+what fine-tuning on reviewed local cases addresses.
 
 ---
 

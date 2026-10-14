@@ -4,14 +4,12 @@
   --bg-main: #fbfcfd;
   --bg-card: #ffffff;
   --bg-card-subtle: #f8fafc;
-  /* Accent tokens keep their original names so no component rule changes;
-     only the values moved from amber to a restrained medical blue-teal. */
-  --bg-orange-soft: #f0f7fa;
-  --bg-orange-subtle: #dceef3;
+  --bg-orange-soft: #fff7ed;
+  --bg-orange-subtle: #ffedd5;
   
-  --primary-orange: #0f6f8c;
-  --primary-orange-hover: #0b586f;
-  --primary-orange-active: #084354;
+  --primary-orange: #f97316;
+  --primary-orange-hover: #ea580c;
+  --primary-orange-active: #c2410c;
   
   --text-main: #0f172a;
   --text-muted: #64748b;
@@ -19,7 +17,7 @@
   
   --border-light: #e2e8f0;
   --border-subtle: #f1f5f9;
-  --border-orange: #b8dbe5;
+  --border-orange: #fed7aa;
   
   --success: #10b981;
   --success-bg: #ecfdf5;
@@ -28,7 +26,7 @@
   
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
-  --shadow-orange: 0 8px 24px rgba(15, 111, 140, 0.16);
+  --shadow-orange: 0 8px 24px rgba(249, 115, 22, 0.18);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;
@@ -88,7 +86,7 @@ body {
   justify-content: center;
   color: #ffffff;
   font-size: 20px;
-  box-shadow: 0 4px 10px rgba(15, 111, 140, 0.22);
+  box-shadow: 0 4px 10px rgba(249, 115, 22, 0.25);
 }
 
 .brand-title {
@@ -380,7 +378,7 @@ body {
 .input-group textarea:focus {
   outline: none;
   border-color: var(--primary-orange);
-  box-shadow: 0 0 0 3px rgba(15, 111, 140, 0.14);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
 
 /* Primary Action Button */
@@ -859,7 +857,7 @@ body {
 .notice-amber {
   background: var(--bg-orange-soft);
   border-color: var(--border-orange);
-  color: #0b4356;
+  color: #9a3412;
 }
 .notice-red {
   background: var(--danger-bg);
@@ -978,7 +976,7 @@ body {
 .chat-input:focus {
   outline: none;
   border-color: var(--primary-orange);
-  box-shadow: 0 0 0 3px rgba(15, 111, 140, 0.14);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
 
 /* --- feedback workspace --- */
@@ -1006,7 +1004,7 @@ body {
 .input:focus {
   outline: none;
   border-color: var(--primary-orange);
-  box-shadow: 0 0 0 3px rgba(15, 111, 140, 0.14);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
 textarea.input { resize: vertical; }
 
@@ -1126,4 +1124,477 @@ textarea.input { resize: vertical; }
 @media (max-width: 768px) {
   .about-table { font-size: 0.78rem; }
   .about-table th, .about-table td { padding: 7px 8px; }
+}
+
+/* ===================================================================
+   DESIGN SYSTEM REFINEMENT
+   Depth, spacing, typography and motion tokens, plus polished variants
+   of the shared primitives. Additive: earlier rules are left in place
+   and overridden only where the refinement applies.
+   =================================================================== */
+
+:root {
+  /* Surface depth */
+  --surface-sunken: #f1f5f9;
+  --surface-raised: #ffffff;
+  --surface-overlay: rgba(15, 23, 42, 0.04);
+
+  /* Shadow ladder */
+  --elev-1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --elev-2: 0 2px 4px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.07);
+  --elev-3: 0 4px 8px rgba(15, 23, 42, 0.05), 0 12px 28px rgba(15, 23, 42, 0.10);
+  --ring-accent: 0 0 0 3px rgba(249, 115, 22, 0.16);
+
+  /* Spacing scale */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+  /* Motion, within the 150-250ms band */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 250ms;
+}
+
+body {
+  background-color: var(--bg-main);
+  background-image:
+    radial-gradient(900px 400px at 15% -8%, rgba(249, 115, 22, 0.045), transparent 60%),
+    radial-gradient(700px 360px at 90% -5%, rgba(15, 23, 42, 0.035), transparent 62%);
+  background-attachment: fixed;
+  letter-spacing: -0.005em;
+}
+
+/* --- workspace navigation ------------------------------------------ */
+
+.tabs {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-light);
+}
+.tabs-inner {
+  max-width: 1080px;
+  padding: var(--sp-2) var(--sp-6);
+  gap: var(--sp-1);
+  align-items: center;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.tab .tab-ico {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tab:hover { background: var(--surface-overlay); color: var(--text-main); }
+.tab.is-active {
+  background: var(--bg-orange-soft);
+  border-color: var(--border-orange);
+  color: var(--primary-orange-hover);
+}
+.tab:focus-visible { outline: none; box-shadow: var(--ring-accent); }
+
+.tab-panel.is-active { animation: panel-in var(--dur-slow) var(--ease); }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* --- cards ---------------------------------------------------------- */
+
+.card {
+  box-shadow: var(--elev-1);
+  transition: box-shadow var(--dur-base) var(--ease);
+}
+.card:hover { box-shadow: var(--elev-2); }
+
+.card-title {
+  letter-spacing: -0.018em;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* Numbered step marker for the guided analysis flow */
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-orange-soft);
+  border: 1px solid var(--border-orange);
+  color: var(--primary-orange-hover);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* --- buttons -------------------------------------------------------- */
+
+.btn-primary, .btn-secondary {
+  transition: background var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease),
+              opacity var(--dur-fast) var(--ease);
+}
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled) { transform: translateY(1px); }
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible { outline: none; box-shadow: var(--ring-accent); }
+.btn-primary:disabled, .btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.btn-primary.is-loading { position: relative; color: transparent !important; }
+.btn-primary.is-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- inputs --------------------------------------------------------- */
+
+.input, .chat-input {
+  transition: border-color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease);
+}
+.input:hover:not(:focus), .chat-input:hover:not(:focus) { border-color: #cbd5e1; }
+.input:focus, .chat-input:focus { box-shadow: var(--ring-accent); }
+
+/* --- badges and alerts ---------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.badge-ok      { background: var(--success-bg); color: #047857; border-color: #a7f3d0; }
+.badge-warn    { background: var(--danger-bg);  color: #b91c1c; border-color: #fecaca; }
+.badge-neutral { background: var(--surface-sunken); color: var(--text-muted); border-color: var(--border-light); }
+.badge-accent  { background: var(--bg-orange-soft); color: var(--primary-orange-hover); border-color: var(--border-orange); }
+
+.notice {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding: var(--sp-3) var(--sp-4);
+}
+.notice .notice-ico {
+  width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px;
+  stroke: currentColor; fill: none; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* The persistent educational disclaimer stays readable but recedes. */
+.notice-amber {
+  background: var(--surface-sunken);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* --- chat ----------------------------------------------------------- */
+
+.chat-log { background: var(--surface-sunken); gap: var(--sp-4); }
+.bubble { animation: bubble-in var(--dur-slow) var(--ease); box-shadow: var(--elev-1); }
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: none; }
+}
+.bubble-row { display: flex; gap: var(--sp-3); align-items: flex-start; max-width: 92%; }
+.bubble-row.is-user { align-self: flex-end; flex-direction: row-reverse; }
+.bubble-row.is-bot  { align-self: flex-start; }
+
+.avatar {
+  width: 29px; height: 29px; flex-shrink: 0;
+  border-radius: var(--radius-full);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-orange-soft);
+  border: 1px solid var(--border-orange);
+  color: var(--primary-orange-hover);
+}
+.avatar svg {
+  width: 15px; height: 15px; stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.avatar.is-emergency { background: var(--danger-bg); border-color: #fecaca; color: #b91c1c; }
+
+.bubble-sources { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.source-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-full);
+  padding: 3px 9px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: var(--transition);
+}
+.source-chip:hover {
+  border-color: var(--border-orange);
+  color: var(--primary-orange-hover);
+  background: var(--bg-orange-soft);
+}
+.source-chip svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+.chat-form { align-items: stretch; }
+.btn-send {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; flex-shrink: 0;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--primary-orange); color: #fff; cursor: pointer;
+  transition: var(--transition);
+}
+.btn-send:hover:not(:disabled) { background: var(--primary-orange-hover); }
+.btn-send:active:not(:disabled) { transform: translateY(1px); }
+.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-send:focus-visible { outline: none; box-shadow: var(--ring-accent); }
+.btn-send svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* --- review queue --------------------------------------------------- */
+
+.queue-item {
+  box-shadow: var(--elev-1);
+  transition: box-shadow var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
+}
+.queue-item:hover { box-shadow: var(--elev-2); }
+.queue-item.is-frozen { box-shadow: none; }
+.queue-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); align-items: center; }
+.queue-meta .meta-ico { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; opacity: 0.7; }
+
+.empty-state { text-align: center; padding: var(--sp-8) var(--sp-4); color: var(--text-light); }
+.empty-state svg {
+  width: 34px; height: 34px; stroke: currentColor; fill: none;
+  stroke-width: 1.5; margin-bottom: var(--sp-3); opacity: 0.55;
+}
+.empty-state p { font-size: 0.84rem; margin: 0; }
+
+/* --- about ---------------------------------------------------------- */
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+}
+.metric-tile {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-3) var(--sp-4);
+}
+.metric-tile .metric-value {
+  font-size: 1.32rem; font-weight: 700; letter-spacing: -0.03em;
+  color: var(--text-main); line-height: 1.15;
+}
+.metric-tile .metric-label {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); margin-top: 3px;
+}
+
+.about-table tbody tr { transition: background var(--dur-fast) var(--ease); }
+.about-table tbody tr:hover { background: var(--surface-sunken); }
+.about-table tbody tr.is-best { background: var(--bg-orange-soft); }
+.about-table tbody tr.is-best td:first-child { font-weight: 650; }
+
+.limitation-list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: var(--sp-2); }
+.limitation-list li {
+  display: flex; gap: var(--sp-3); align-items: flex-start;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--border-orange);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: 0.84rem; color: var(--text-muted); line-height: 1.55;
+}
+.limitation-list svg {
+  width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px;
+  stroke: var(--primary-orange); fill: none; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; opacity: 0.8;
+}
+
+/* --- accessibility -------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--primary-orange);
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  .tabs-inner { padding: var(--sp-2) var(--sp-3); }
+  .tab { padding: var(--sp-2) var(--sp-3); font-size: 0.8rem; }
+  .tab .tab-ico { width: 15px; height: 15px; }
+  .metric-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* --- analysis workflow polish --------------------------------------- */
+
+.results-step { margin-bottom: var(--sp-4); }
+
+.dropzone {
+  transition: border-color var(--dur-base) var(--ease),
+              background var(--dur-base) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.dropzone:hover, .dropzone:focus-visible {
+  border-color: var(--primary-orange);
+  background: var(--bg-orange-soft);
+}
+.dropzone.drag-active {
+  border-color: var(--primary-orange);
+  background: var(--bg-orange-subtle);
+  transform: scale(1.012);
+}
+.dropzone-icon svg {
+  width: 30px; height: 30px;
+  stroke: var(--text-light); fill: none; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+  transition: stroke var(--dur-base) var(--ease);
+}
+.dropzone:hover .dropzone-icon svg,
+.dropzone.drag-active .dropzone-icon svg { stroke: var(--primary-orange); }
+
+.opt-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+  margin-left: 6px;
+}
+
+/* --- reusable button components -------------------------------------
+   .btn-primary previously existed only scoped under .report-actions, so
+   buttons added elsewhere rendered unstyled. These are the standalone
+   components; the scoped navy variant is more specific and still wins
+   inside the report actions row. */
+
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--primary-orange);
+  color: #ffffff;
+  border: 1px solid var(--primary-orange);
+  box-shadow: 0 1px 2px rgba(249, 115, 22, 0.2);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-orange-hover);
+  border-color: var(--primary-orange-hover);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.24);
+}
+.btn-primary:active:not(:disabled) {
+  background: var(--primary-orange-active);
+  border-color: var(--primary-orange-active);
+}
+
+.btn-secondary {
+  background: var(--surface-raised);
+  color: var(--text-main);
+  border: 1px solid var(--border-light);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-card-subtle);
+  border-color: #cbd5e1;
+}
+
+/* The analysis button keeps its own rule; give it the shared states. */
+.btn-analyze {
+  transition: background var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease),
+              opacity var(--dur-fast) var(--ease);
+}
+.btn-analyze:focus-visible { outline: none; box-shadow: var(--ring-accent); }
+.btn-analyze:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* File inputs are browser-chrome by default; bring them into the system. */
+input[type="file"].input {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  cursor: pointer;
+}
+input[type="file"].input::file-selector-button {
+  margin-right: var(--sp-3);
+  padding: 6px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+input[type="file"].input::file-selector-button:hover {
+  border-color: var(--primary-orange);
+  color: var(--primary-orange-hover);
+  background: var(--bg-orange-soft);
 }

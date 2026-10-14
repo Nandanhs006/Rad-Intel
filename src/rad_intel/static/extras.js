@@ -61,13 +61,38 @@ document.addEventListener("DOMContentLoaded", () => {
       assistantStatus.textContent = "Could not reach the assistant service.";
     });
 
+  const BOT_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v2a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>' +
+    '<path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>';
+  const ALERT_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>' +
+    '<path d="M12 9v4M12 17h.01"/></svg>';
+  const LINK_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>' +
+    '<path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>';
+
+  // A bubble is wrapped in a row so the assistant can carry an avatar; the
+  // returned node is the bubble itself, so callers update it as before.
   function appendBubble(role, html, extraClass = "") {
     const empty = chatLog.querySelector(".chat-empty");
     if (empty) empty.remove();
+
+    const row = document.createElement("div");
+    row.className = `bubble-row ${role === "user" ? "is-user" : "is-bot"}`;
+
+    if (role !== "user") {
+      const avatar = document.createElement("div");
+      avatar.className = "avatar";
+      avatar.innerHTML = BOT_ICON;
+      row.appendChild(avatar);
+    }
+
     const el = document.createElement("div");
     el.className = `bubble bubble-${role} ${extraClass}`.trim();
     el.innerHTML = html;
-    chatLog.appendChild(el);
+    row.appendChild(el);
+
+    chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
     return el;
   }
@@ -89,6 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
     appendBubble("user", renderText(question));
     chatInput.value = "";
     chatSend.disabled = true;
+    chatSend.classList.add("is-loading");
     const thinking = appendBubble("bot", "<span class='dots'>Thinking…</span>");
 
     try {
@@ -112,14 +138,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const data = await res.json();
       thinking.className = `bubble bubble-bot${data.is_emergency ? " bubble-emergency" : ""}`;
+      if (data.is_emergency) {
+        const av = thinking.parentElement.querySelector(".avatar");
+        if (av) { av.classList.add("is-emergency"); av.innerHTML = ALERT_ICON; }
+      }
       let html = renderText(data.answer);
 
       if (data.sources && data.sources.length) {
-        const links = data.sources
-          .map((s) => `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.name)}</a>`)
-          .filter((v, i, a) => a.indexOf(v) === i)
-          .join(" · ");
-        html += `<div class="bubble-sources">Sources: ${links}</div>`;
+        const seen = new Set();
+        const chips = data.sources
+          .filter((s) => !seen.has(s.name) && seen.add(s.name))
+          .map((s) => `<a class="source-chip" href="${escapeHtml(s.url)}" target="_blank" ` +
+                      `rel="noopener noreferrer">${LINK_ICON}${escapeHtml(s.name)}</a>`)
+          .join("");
+        html += `<div class="bubble-sources">${chips}</div>`;
       }
       if (data.mode === "knowledge_base") {
         html += `<div class="bubble-mode">Answered from built-in reference notes.</div>`;
@@ -130,6 +162,7 @@ document.addEventListener("DOMContentLoaded", () => {
       thinking.textContent = "Network error — the assistant could not be reached.";
     } finally {
       chatSend.disabled = false;
+      chatSend.classList.remove("is-loading");
       chatLog.scrollTop = chatLog.scrollHeight;
     }
   }
@@ -178,6 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       fbRun.disabled = true;
+      fbRun.classList.add("is-loading");
       fbNotify("Running prediction…");
       try {
         const fd = new FormData();
@@ -200,6 +234,7 @@ document.addEventListener("DOMContentLoaded", () => {
         fbNotify("Network error while predicting.", "error");
       } finally {
         fbRun.disabled = false;
+        fbRun.classList.remove("is-loading");
       }
     });
   }
@@ -266,7 +301,10 @@ document.addEventListener("DOMContentLoaded", () => {
         .join("");
 
       if (!d.items.length) {
-        fbQueue.innerHTML = "<p class='muted'>No reviews yet.</p>";
+        fbQueue.innerHTML =
+          "<div class='empty-state'><svg viewBox='0 0 24 24' aria-hidden='true'>" +
+          "<path d='M9 11l3 3L22 4'/><path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/>" +
+          "</svg><p>No reviews yet. Run a case to start the queue.</p></div>";
       } else {
         fbQueue.innerHTML = d.items.map((it) => {
           const p = (it.predicted_probability * 100).toFixed(1);
@@ -275,8 +313,8 @@ document.addEventListener("DOMContentLoaded", () => {
           const frozen = it.status === "exported";
           return `<div class="queue-item ${frozen ? "is-frozen" : ""}">
             <div class="queue-head">
-              <span class="queue-verdict queue-${escapeHtml(it.verdict)}">${escapeHtml(it.verdict)}</span>
-              <span class="queue-status">${escapeHtml(it.status)}</span>
+              <span class="badge ${it.verdict === "correct" ? "badge-ok" : "badge-warn"}">${escapeHtml(it.verdict)}</span>
+              <span class="badge ${frozen ? "badge-neutral" : "badge-accent"}">${escapeHtml(it.status)}</span>
             </div>
             <div class="queue-body">
               <code>${escapeHtml(it.model_version)}</code> predicted
@@ -302,7 +340,10 @@ document.addEventListener("DOMContentLoaded", () => {
         fbExports.innerHTML = "";
       }
     } catch {
-      fbQueue.innerHTML = "<p class='muted'>Could not load the review queue.</p>";
+      fbQueue.innerHTML =
+        "<div class='empty-state'><svg viewBox='0 0 24 24' aria-hidden='true'>" +
+        "<circle cx='12' cy='12' r='9'/><path d='M12 8v5M12 16h.01'/></svg>" +
+        "<p>Could not load the review queue.</p></div>";
     }
   }
 

@@ -28,21 +28,35 @@ DISCLAIMER = (
     "Seek qualified medical care for urgent or personal concerns."
 )
 
-_SYSTEM_PROMPT = """You answer general educational questions about lung health, pneumonia, \
-chest radiography, and the Rad-Intel research project.
+_SYSTEM_PROMPT = """You are a knowledgeable educator on respiratory medicine, with depth \
+in pneumonia, lung health and chest radiography. You also explain the Rad-Intel research \
+project. Read the whole question, work out what is actually being asked, and answer it \
+directly and accurately.
 
-Absolute rules:
-- Answer ONLY from the reference extracts supplied in the user message. If they do not \
-cover the question, say so plainly and suggest what the person could ask instead.
+Knowledge:
+- Draw on established respiratory medicine to answer well. Reference extracts are supplied \
+below; where they bear on the question, prefer them and follow their wording, because they \
+are the project's own verified notes.
+- Where the extracts do not cover the question, still answer from established general \
+knowledge of lungs and pneumonia, and do not pretend the extracts said it.
+- Stay inside respiratory and pulmonary topics, chest imaging, and this project. If a \
+question drifts outside that, answer only the part that falls inside and say the rest is \
+outside what you cover.
+- Distinguish what is well established from what is uncertain or contested, and say which \
+you are giving. Do not invent statistics, trial results, guidelines or citations. If you \
+do not know, say so.
+
+Hard limits, which override everything above:
 - Never tell the user they have, might have, or probably have any condition.
 - Never interpret anyone's personal radiograph, symptoms or test result.
-- Never recommend, name or dose a medication, and never give a treatment plan.
-- Never claim clinical certainty. Describe what is generally understood, not what is \
-true of the reader.
-- Do not invent statistics, study results or sources.
+- Never recommend, name or dose a medication for the reader, and never give them a \
+treatment plan. You may describe in general terms how a class of condition is typically \
+managed in clinical practice, phrased as general information and never as instruction.
+- Never claim clinical certainty about an individual.
 
-Style: plain English, 2 to 5 short sentences or a brief list. No preamble, no sign-off, \
-no emoji. Do not restate the disclaimer; the interface already shows it."""
+Style: plain English. Two to six sentences, or a short list when the question has parts. \
+Lead with the answer. No preamble, no sign-off, no emoji. Do not restate the disclaimer; \
+the interface already shows it."""
 
 
 @dataclass
@@ -74,7 +88,7 @@ def _build_user_prompt(question: str, entries: list[KBEntry], app_context: str |
     refs = "\n\n".join(
         f"[{i + 1}] {e.title} (source: {e.source_name})\n{e.body}"
         for i, e in enumerate(entries)
-    )
+    ) or "(no project notes matched this question; answer from general knowledge)"
     ctx = ""
     if app_context:
         ctx = (
@@ -82,7 +96,10 @@ def _build_user_prompt(question: str, entries: list[KBEntry], app_context: str |
             "application. These are the recorded model outputs; describe them as model "
             "outputs, never as findings about a person:\n" + app_context
         )
-    return f"REFERENCE EXTRACTS:\n{refs}{ctx}\n\nQUESTION: {question}\n\nAnswer from the extracts above."
+    return (
+        f"REFERENCE EXTRACTS (project notes, prefer these where they apply):\n{refs}{ctx}"
+        f"\n\nQUESTION: {question}"
+    )
 
 
 def _gemini_answer(question: str, entries: list[KBEntry], app_context: str | None) -> str | None:
@@ -142,9 +159,10 @@ def answer_question(question: str, app_context: str | None = None) -> ChatAnswer
     if route == "out_of_scope":
         return ChatAnswer(safety.SCOPE_NOTICE, [], "refusal")
 
+    # Retrieval grounds the answer where the project has a verified note, but an
+    # in-scope question with no matching note is still answered from general
+    # respiratory knowledge rather than refused.
     entries = retrieve(question, k=3)
-    if not entries:
-        return ChatAnswer(_kb_answer([]), [], "knowledge_base")
 
     text = _gemini_answer(question, entries, app_context)
     if text:
