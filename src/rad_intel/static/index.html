@@ -34,10 +34,10 @@
   <!-- Section Navigation -->
   <nav class="tabs" role="tablist" aria-label="Sections">
     <div class="tabs-inner">
-      <button class="tab is-active" role="tab" aria-selected="true" data-tab="analyse">Analyse X-ray</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="learn">Ask &amp; Learn</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="feedback">Clinician Feedback</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="about">About &amp; Limitations</button>
+      <button class="tab is-active" role="tab" aria-selected="true" data-tab="analyse"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 12h8M12 8v8"/></svg><span>Analyse X-ray</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="learn"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg><span>Ask &amp; Learn</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="feedback"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Clinician Feedback</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="about"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>About &amp; Limitations</span></button>
     </div>
   </nav>
 
@@ -48,12 +48,15 @@
 
       <!-- Left Column: Upload & Parameters -->
       <section class="card" aria-label="Upload Radiograph">
-        <h1 class="card-title">Chest Radiograph</h1>
+        <h1 class="card-title"><span class="step-badge">1</span>Chest Radiograph</h1>
         <p class="card-subtitle">Upload a frontal Chest X-Ray (CXR) for automated pneumonia screening.</p>
 
         <!-- Drag & Drop Zone -->
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload chest x-ray image">
-          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <path d="M17 8l-5-5-5 5"/><path d="M12 3v13"/></svg>
+          </div>
           <div class="dropzone-prompt">Drag & drop radiograph, or <span>browse</span></div>
           <div class="dropzone-hint">Supports JPEG, PNG (DICOM converted) • Max 20MB</div>
           <input type="file" id="file-input" accept="image/jpeg,image/png,image/jpg">
@@ -81,7 +84,7 @@
         <!-- Optional Patient Metadata Accordion -->
         <div class="meta-accordion">
           <button id="meta-toggle" class="meta-toggle" type="button" aria-expanded="false">
-            <span>⚙️</span> Clinical Context & Model Settings ▾
+            <span>⚙️</span> Clinical context &amp; model settings <span class="opt-tag">optional</span> ▾
           </button>
           <div id="meta-fields" class="meta-fields">
             <div class="input-row">
@@ -129,6 +132,8 @@
 
       <!-- Right Column: Results & Report -->
       <section class="card" aria-label="Diagnostic Results">
+
+        <h2 class="card-title results-step"><span class="step-badge">2</span>Assessment</h2>
 
         <!-- Empty Placeholder State -->
         <div id="results-empty" class="results-empty">
@@ -252,8 +257,9 @@
           </p>
 
           <div class="notice notice-amber" id="assistant-disclaimer">
-            Educational information only; not medical diagnosis. Seek qualified medical care
-            for urgent or personal concerns.
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Educational information only; not medical diagnosis. Seek qualified medical care
+            for urgent or personal concerns.</span>
           </div>
 
           <div id="assistant-status" class="assistant-status" hidden></div>
@@ -280,7 +286,7 @@
             <input type="text" id="chat-input" class="chat-input" autocomplete="off"
                    placeholder="Ask a general question about lungs, pneumonia or this project…"
                    maxlength="1000" aria-label="Your question">
-            <button type="submit" class="btn-primary" id="chat-send">Ask</button>
+            <button type="submit" class="btn-send" id="chat-send" aria-label="Send question"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </form>
         </section>
       </div>
@@ -297,7 +303,8 @@
           </p>
 
           <div class="notice notice-red" id="fb-warning">
-            Do not upload identifiable patient data without appropriate authorisation.
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Do not upload identifiable patient data without appropriate authorisation.</span>
           </div>
 
           <div class="form-row">
@@ -354,7 +361,7 @@
           <h2 class="card-title">Review queue</h2>
           <p class="card-subtitle">Queued reviews can be edited until they are exported.</p>
           <div id="fb-counts" class="fb-counts"></div>
-          <div id="fb-queue" class="fb-queue"><p class="muted">No reviews yet.</p></div>
+          <div id="fb-queue" class="fb-queue"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><p>No reviews yet. Run a case to start the queue.</p></div></div>
           <div class="fb-actions">
             <button class="btn-secondary" id="fb-refresh" type="button">Refresh</button>
             <button class="btn-primary" id="fb-export" type="button">Create reviewed training export</button>
@@ -380,14 +387,21 @@
             that every displayed sentence traces back to a number the model produced.
           </p>
           <div class="notice notice-red">
-            Restricted to technical research and education. It does not provide diagnosis,
-            treatment, triage or autonomous decision support, and it is not a medical device.
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Restricted to technical research and education. It does not provide diagnosis,
+            treatment, triage or autonomous decision support, and it is not a medical device.</span>
           </div>
         </section>
 
         <section class="card">
           <h2 class="card-title">Measured results</h2>
           <p class="card-subtitle">Held-out 624-image test partition, single run at seed 42.</p>
+          <div class="metric-strip">
+            <div class="metric-tile"><div class="metric-value">93.4%</div><div class="metric-label">Best accuracy</div></div>
+            <div class="metric-tile"><div class="metric-value">0.977</div><div class="metric-label">Best AUROC</div></div>
+            <div class="metric-tile"><div class="metric-value">624</div><div class="metric-label">Test images</div></div>
+            <div class="metric-tile"><div class="metric-value">5</div><div class="metric-label">Configurations</div></div>
+          </div>
           <div class="about-table-wrap">
           <table class="about-table">
             <thead><tr><th>Configuration</th><th>Acc.</th><th>AUROC</th><th>Sens.</th><th>Spec.</th></tr></thead>
@@ -395,7 +409,7 @@
               <tr><td>DenseNet121</td><td>91.5%</td><td>0.962</td><td>95.6%</td><td>84.6%</td></tr>
               <tr><td>Swin-T</td><td>90.1%</td><td>0.975</td><td>97.4%</td><td>77.8%</td></tr>
               <tr><td>ResNet50</td><td>89.7%</td><td>0.954</td><td>93.3%</td><td>83.8%</td></tr>
-              <tr><td>Fusion without CBAM</td><td>93.4%</td><td>0.977</td><td>94.6%</td><td>91.4%</td></tr>
+              <tr class="is-best"><td>Fusion without CBAM</td><td>93.4%</td><td>0.977</td><td>94.6%</td><td>91.4%</td></tr>
               <tr><td>Complete classifier</td><td>92.0%</td><td>0.974</td><td>95.9%</td><td>85.5%</td></tr>
             </tbody>
           </table>
@@ -404,19 +418,19 @@
 
         <section class="card">
           <h2 class="card-title">Known limitations</h2>
-          <ul class="about-list">
-            <li>Paediatric images from a single institution; nothing extends to other ages,
+          <ul class="limitation-list">
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Paediatric images from a single institution; nothing extends to other ages,
                 institutions or acquisition protocols without external validation.</li>
-            <li>Labels collapse bacterial and viral pneumonia into one class.</li>
-            <li>No dependable patient identifier, so the split cannot guarantee patient-level
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Labels collapse bacterial and viral pneumonia into one class.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>No dependable patient identifier, so the split cannot guarantee patient-level
                 independence.</li>
-            <li>Each configuration was trained once, so no result separates an architectural
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Each configuration was trained once, so no result separates an architectural
                 effect from seed variation.</li>
-            <li>Between 21% and 48% of model response falls outside the segmented lung fields,
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Between 21% and 48% of model response falls outside the segmented lung fields,
                 consistent with shortcut learning on this dataset.</li>
-            <li>Grad-CAM and LIME agree only weakly with each other; a heatmap shows model
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Grad-CAM and LIME agree only weakly with each other; a heatmap shows model
                 sensitivity, not pathology.</li>
-            <li>Generated summaries read as diagnostic to a reviewing clinician in half of
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Generated summaries read as diagnostic to a reviewing clinician in half of
                 sampled cases despite passing schema validation.</li>
           </ul>
         </section>

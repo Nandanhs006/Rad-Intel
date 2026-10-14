@@ -72,14 +72,32 @@ _PERSONAL_PATTERNS = (
 
 # Topic gate. A question must touch at least one of these to be answered.
 _IN_SCOPE = (
-    "lung", "lungs", "pneumonia", "chest", "x-ray", "xray", "radiograph", "radiology",
-    "breath", "breathing", "respiratory", "cough", "alveol", "opacity", "consolidation",
-    "infection", "infect", "fever", "oxygen", "airway", "pleural", "thorax", "thoracic",
-    "bronch", "sputum", "vaccine", "vaccination", "grad-cam", "gradcam", "heatmap",
-    "saliency", "lime", "model", "accuracy", "auroc", "sensitivity", "specificity",
+    # Respiratory anatomy, physiology and disease
+    "lung", "lungs", "pulmonary", "pneumonia", "chest", "respiratory", "respiration",
+    "breath", "breathing", "breathless", "dyspn", "cough", "alveol", "airway", "bronch",
+    "pleural", "pleurisy", "thorax", "thoracic", "diaphragm", "trachea", "oxygen",
+    "hypox", "sputum", "phlegm", "mucus", "wheez", "crackle", "rale", "auscultat",
+    "copd", "asthma", "emphysema", "bronchitis", "bronchiolitis", "tuberculosis", "tb",
+    "covid", "influenza", "flu", "rsv", "aspiration", "empyema", "abscess", "effusion",
+    "atelectasis", "fibrosis", "ards", "sepsis", "ventilat", "intubat", "icu",
+    # Infection and disease course
+    "infection", "infect", "bacteri", "viral", "virus", "fungal", "pathogen",
+    "streptococcus", "pneumococc", "haemophilus", "mycoplasma", "legionella",
+    "fever", "chills", "symptom", "sign", "incubation", "contagious", "spread",
+    "transmit", "recovery", "recover", "prognosis", "complication", "mortality",
+    "risk factor", "prevent", "vaccine", "vaccination", "immunis", "immuniz",
+    "antibiotic", "antiviral", "treatment", "therapy", "management", "diagnos", "test",
+    # Imaging
+    "x-ray", "xray", "radiograph", "radiolog", "imaging", "ct scan", "ultrasound",
+    "opacity", "consolidation", "infiltrate", "lobar", "interstitial", "silhouette",
+    "costophrenic", "hilar", "mediastin", "projection", "pa view", "ap view",
+    # This project and its interface
+    "grad-cam", "gradcam", "heatmap", "saliency", "lime", "model", "accuracy", "auroc",
+    "auprc", "sensitivity", "specificity", "precision", "recall", "f1", "calibration",
     "threshold", "dataset", "rad-intel", "radintel", "this project", "this app",
     "this system", "this tool", "classifier", "prediction", "confidence", "cbam",
-    "densenet", "swin", "resnet", "explanation", "limitation", "report", "summary",
+    "densenet", "swin", "resnet", "transformer", "cnn", "neural", "explanation",
+    "explainab", "limitation", "report", "summary", "feedback", "training", "seed",
 )
 
 # Phrases that must not appear in generated output.
