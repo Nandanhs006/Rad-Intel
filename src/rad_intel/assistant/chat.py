@@ -102,8 +102,16 @@ def _build_user_prompt(question: str, entries: list[KBEntry], app_context: str |
     )
 
 
-def _gemini_answer(question: str, entries: list[KBEntry], app_context: str | None) -> str | None:
-    """Ask Gemini to phrase an answer from the extracts. None if unavailable or unusable."""
+_GENERAL_SUFFIX = """
+
+This question is outside your speciality. Answer it correctly and briefly in one or two \
+sentences, then add a short line noting that you are here mainly for lungs, pneumonia, \
+chest imaging and this project. Never give medical advice about the reader."""
+
+
+def _gemini_answer(question: str, entries: list[KBEntry], app_context: str | None,
+                   general: bool = False) -> str | None:
+    """Ask Gemini to phrase an answer. None if unavailable or unusable."""
     if not settings.GEMINI_API_KEY:
         return None
     try:
@@ -115,7 +123,7 @@ def _gemini_answer(question: str, entries: list[KBEntry], app_context: str | Non
             model=settings.GEMINI_MODEL,
             contents=_build_user_prompt(question, entries, app_context),
             config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
+                system_instruction=_SYSTEM_PROMPT + (_GENERAL_SUFFIX if general else ""),
                 temperature=0.2,
                 max_output_tokens=400,
             ),
@@ -156,7 +164,12 @@ def answer_question(question: str, app_context: str | None = None) -> ChatAnswer
     if route == "personal":
         return ChatAnswer(safety.PERSONAL_NOTICE, [], "refusal")
 
-    if route == "out_of_scope":
+    if route == "general":
+        # Outside the speciality but harmless: answer it rather than refuse,
+        # then point back to what this assistant is actually for.
+        text = _gemini_answer(question, [], app_context, general=True)
+        if text:
+            return ChatAnswer(text, [], "general")
         return ChatAnswer(safety.SCOPE_NOTICE, [], "refusal")
 
     # Retrieval grounds the answer where the project has a verified note, but an

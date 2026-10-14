@@ -173,6 +173,7 @@ class FeedbackItem(BaseModel):
     preprocessing_version: str
     image_sha256: str
     image_path: str | None = None
+    institution: str | None = None
     predicted_label: str
     predicted_probability: float
     threshold: float
@@ -185,6 +186,7 @@ class FeedbackItem(BaseModel):
 
 class FeedbackListResponse(BaseModel):
     counts: dict[str, int]
+    institutions: dict[str, int] = Field(default_factory=dict)
     items: list[FeedbackItem]
 
 

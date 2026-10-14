@@ -132,6 +132,24 @@ def show(tag: str, m: dict) -> None:
           f"TN/FP/FN/TP {m['confusion']}")
 
 
+def _find_dataset() -> str | None:
+    """
+    Locate the Kaggle dataset without requiring --data-dir.
+
+    The shared loader only probes its own conventional paths, and this
+    repository keeps the dataset beside the paper, so the usual locations are
+    checked here rather than changing a module the evaluation also uses.
+    """
+    for candidate in (
+        settings.BASE_DIR / "Rad-Intel paper" / "chest_xray",
+        settings.BASE_DIR / "chest_xray",
+        settings.BASE_DIR / "data" / "chest_xray",
+    ):
+        if (candidate / "test").is_dir():
+            return str(candidate)
+    return None
+
+
 # ----------------------------------------------------------------------- promotion
 
 def promote(checkpoint: Path) -> None:
@@ -197,7 +215,8 @@ def main() -> None:
     # The Kaggle test partition is loaded for scoring only. It is never put in
     # a training loader, which is what keeps a new version comparable to the
     # numbers the paper reports.
-    _, _, test_samples, class_weights = load_dataset_splits(data_dir=args.data_dir)
+    data_dir = args.data_dir or _find_dataset()
+    _, _, test_samples, class_weights = load_dataset_splits(data_dir=data_dir)
     print(f"  held-out Kaggle test partition: {len(test_samples)} images (never trained on)")
 
     eval_tf = get_transforms(is_train=False)

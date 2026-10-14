@@ -137,15 +137,19 @@ def output_violations(text: str) -> list[str]:
 
 def classify(question: str) -> str:
     """
-    Route a question: 'emergency', 'personal', 'out_of_scope' or 'answerable'.
+    Route a question: 'emergency', 'personal', 'general' or 'answerable'.
 
-    Emergency wins over everything else, including out-of-scope, because a
-    person in trouble should not be met with a scope lecture.
+    Emergency wins over everything, because a person in trouble should not be
+    met with a scope lecture. A request for a personal medical verdict is
+    always refused. Everything else is answered: a question inside the
+    respiratory domain is answered as the assistant's speciality, and anything
+    else is answered briefly and steered back, rather than refused outright,
+    because a flat refusal on an ordinary question reads as broken.
     """
     if is_emergency(question):
         return "emergency"
     if is_personal_medical_request(question):
         return "personal"
     if not is_in_scope(question):
-        return "out_of_scope"
+        return "general"
     return "answerable"

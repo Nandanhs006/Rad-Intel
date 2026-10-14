@@ -13,6 +13,9 @@ versioned JSONL manifest and marks the records it consumed.
 
 import hashlib
 import json
+import subprocess
+import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,6 +76,7 @@ async def submit_feedback(
     verdict: str = Form(..., description="correct | incorrect"),
     corrected_label: str | None = Form(None, description="NORMAL | PNEUMONIA"),
     note: str | None = Form(None, description="Optional short review note"),
+    institution: str | None = Form(None, description="Source institution, for multi-site tracking"),
     model_name: ModelType | None = Form(None, description="Model version reviewed"),
     manager: ModelManager = Depends(get_model_manager),
     preprocessor: CXRPreprocessor = Depends(get_preprocessor),
@@ -137,6 +141,7 @@ async def submit_feedback(
         corrected_label=corrected_label,
         note=(note or "").strip()[:2000] or None,
         image_path=str(stored.relative_to(settings.BASE_DIR)),
+        institution=(institution or "").strip()[:120] or None,
     )
 
     return FeedbackSubmitResponse(
@@ -157,6 +162,7 @@ async def list_feedback(status: str | None = None, limit: int = 100, offset: int
     rows = await db_manager.list_feedback(status=status, limit=min(limit, 500), offset=offset)
     return FeedbackListResponse(
         counts=await db_manager.feedback_counts(),
+        institutions=await db_manager.feedback_institutions(),
         items=[FeedbackItem(**r) for r in rows],
     )
 
@@ -215,6 +221,7 @@ async def create_training_export():
                 "image_sha256": row["image_sha256"],
                 "label": row["corrected_label"] or row["predicted_label"],
                 "label_source": "reviewer_correction" if row["corrected_label"] else "model_agreed",
+                "institution": row["institution"],
                 "model_version": row["model_version"],
                 "preprocessing_version": row["preprocessing_version"],
                 "predicted_label": row["predicted_label"],
@@ -251,3 +258,104 @@ async def list_exports():
             "bytes": p.stat().st_size,
         })
     return {"exports": items}
+
+
+# --- training ---------------------------------------------------------------
+#
+# Fine-tuning takes minutes, so it cannot be a request/response cycle. The
+# endpoint starts scripts/finetune_from_feedback.py as a detached process and
+# the interface polls for progress. The script keeps every guarantee it has on
+# the command line: the Kaggle test partition is not trained on, the existing
+# checkpoint is not overwritten, and nothing is promoted automatically.
+
+TRAIN_LOG = FEEDBACK_DIR / "training.log"
+_train_state: dict[str, object] = {"running": False, "started_at": None, "manifest": None}
+_train_lock = threading.Lock()
+
+
+def _run_training(manifest: Path, base_model: str, epochs: int) -> None:
+    script = settings.BASE_DIR / "scripts" / "finetune_from_feedback.py"
+    cmd = [sys.executable, "-u", str(script), "--manifest", str(manifest),
+           "--base-model", base_model, "--epochs", str(epochs)]
+    try:
+        with TRAIN_LOG.open("w", encoding="utf-8") as log:
+            log.write(f"$ {' '.join(cmd)}\n\n")
+            log.flush()
+            subprocess.run(cmd, cwd=settings.BASE_DIR, stdout=log,
+                           stderr=subprocess.STDOUT, check=False)
+    except Exception as exc:
+        with TRAIN_LOG.open("a", encoding="utf-8") as log:
+            log.write(f"\nTraining process failed to run: {exc}\n")
+    finally:
+        with _train_lock:
+            _train_state["running"] = False
+
+
+@router.post("/train")
+async def start_training(base_model: str = Form("hybrid"), epochs: int = Form(3)):
+    """Start a fine-tuning run over the most recent export."""
+    with _train_lock:
+        if _train_state["running"]:
+            raise HTTPException(status_code=409, detail="A training run is already in progress.")
+
+    _ensure_dirs()
+    manifests = sorted(EXPORT_DIR.glob("reviewed-export-*.jsonl"), reverse=True)
+    if not manifests:
+        raise HTTPException(
+            status_code=400,
+            detail="No export to train on. Review some cases and create an export first.",
+        )
+
+    manifest = manifests[0]
+    usable = sum(1 for line in manifest.open(encoding="utf-8") if line.strip())
+    if usable < 4:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The latest export holds {usable} case(s). At least 4 are needed, "
+                   f"covering both classes, before fine-tuning is meaningful.",
+        )
+
+    with _train_lock:
+        _train_state.update(running=True,
+                            started_at=datetime.now(timezone.utc).isoformat(),
+                            manifest=manifest.name)
+    threading.Thread(target=_run_training, args=(manifest, base_model, epochs),
+                     daemon=True).start()
+
+    return {
+        "started": True,
+        "manifest": manifest.name,
+        "cases": usable,
+        "base_model": base_model,
+        "epochs": epochs,
+        "note": "Training runs in the background. The original checkpoint is untouched "
+                "and nothing will be promoted automatically.",
+    }
+
+
+@router.get("/train/status")
+async def training_status():
+    """Progress of the current or most recent run."""
+    with _train_lock:
+        running = bool(_train_state["running"])
+        started_at = _train_state["started_at"]
+        manifest = _train_state["manifest"]
+
+    log = ""
+    if TRAIN_LOG.exists():
+        log = TRAIN_LOG.read_text(encoding="utf-8", errors="replace")[-6000:]
+
+    produced = None
+    for line in reversed(log.splitlines()):
+        if line.startswith("Saved "):
+            produced = line.split("Saved ", 1)[1].strip()
+            break
+
+    return {
+        "running": running,
+        "started_at": started_at,
+        "manifest": manifest,
+        "log": log,
+        "produced_checkpoint": produced,
+        "promoted": False,
+    }

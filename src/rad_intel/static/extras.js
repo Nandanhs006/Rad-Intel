@@ -115,7 +115,7 @@ document.addEventListener("DOMContentLoaded", () => {
     chatInput.value = "";
     chatSend.disabled = true;
     chatSend.classList.add("is-loading");
-    const thinking = appendBubble("bot", "<span class='dots'>Thinking…</span>");
+    const thinking = appendBubble("bot", '<span class="typing"><i></i><i></i><i></i></span>');
 
     try {
       const res = await fetch("/api/v1/assistant/chat", {
@@ -189,6 +189,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const fbSubmit = $("fb-submit");
   const fbReviewer = $("fb-reviewer");
   const fbModel = $("fb-model");
+  const fbInstitution = $("fb-institution");
   const fbQueue = $("fb-queue");
   const fbCounts = $("fb-counts");
   const fbExports = $("fb-exports");
@@ -265,6 +266,9 @@ document.addEventListener("DOMContentLoaded", () => {
         fd.append("reviewer", fbReviewer.value.trim());
         fd.append("verdict", selectedVerdict);
         fd.append("model_name", fbModel.value);
+        if (fbInstitution && fbInstitution.value.trim()) {
+          fd.append("institution", fbInstitution.value.trim());
+        }
         if (fbCorrected.value) fd.append("corrected_label", fbCorrected.value);
         if (fbNote.value.trim()) fd.append("note", fbNote.value.trim());
 
@@ -296,9 +300,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!res.ok) throw new Error();
       const d = await res.json();
 
-      fbCounts.innerHTML = Object.entries(d.counts)
-        .map(([k, v]) => `<span class="count-pill">${escapeHtml(k)}: <strong>${v}</strong></span>`)
-        .join("");
+      fbCounts.innerHTML =
+        Object.entries(d.counts)
+          .map(([k, v]) => `<span class="count-pill">${escapeHtml(k)}: <strong>${v}</strong></span>`)
+          .join("") +
+        Object.entries(d.institutions || {})
+          .map(([k, v]) => `<span class="count-pill is-site">${escapeHtml(k)}: <strong>${v}</strong></span>`)
+          .join("");
 
       if (!d.items.length) {
         fbQueue.innerHTML =
@@ -391,4 +399,155 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+});
+
+/* ---------------------------------------------------------------- report
+ * app.js flattens the generated report before writing it: the markdown is
+ * stripped and the newlines go with it, so sections run together as
+ * "...infiltrates.Pleural Spaces No evidence of..." and the result is a wall
+ * of text. The structure still exists in the API response, so fetch is
+ * wrapped to keep the original sections and the three nodes are re-rendered
+ * from those. app.js is untouched.
+ */
+(() => {
+  "use strict";
+
+  const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const inline = (t) =>
+    esc(t)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/(\d+(?:\.\d+)?\s?%)/g, '<span class="num">$1</span>');
+
+  function toHtml(raw) {
+    const lines = String(raw).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    let html = "", open = false;
+    for (const line of lines) {
+      const bullet = line.replace(/^[-*\u2022]\s*/, "");
+      if (bullet !== line) {
+        if (!open) { html += '<ul class="rep-list">'; open = true; }
+        const m = bullet.match(/^\*\*\s*(.+?)\s*:?\s*\*\*:?\s*(.*)$/);
+        html += m
+          ? `<li><span class="rep-key">${esc(m[1])}</span>${m[2] ? inline(m[2]) : ""}</li>`
+          : `<li>${inline(bullet)}</li>`;
+      } else {
+        if (open) { html += "</ul>"; open = false; }
+        html += `<p>${inline(line)}</p>`;
+      }
+    }
+    if (open) html += "</ul>";
+    return html;
+  }
+
+  function render(sections) {
+    const map = {
+      "report-findings": sections.findings,
+      "report-impression": sections.impression,
+      "report-recommendations": sections.recommendations,
+    };
+    for (const [id, raw] of Object.entries(map)) {
+      const node = document.getElementById(id);
+      if (!node || !raw) continue;
+      const html = toHtml(raw);
+      if (!html) continue;
+      node.innerHTML = html;
+      node.classList.add("is-formatted");
+    }
+  }
+
+  const originalFetch = window.fetch;
+  window.fetch = async function (...args) {
+    const response = await originalFetch.apply(this, args);
+    try {
+      const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
+      if (url.includes("/api/v1/analyze") && !url.includes("/pdf") && response.ok) {
+        // Read a clone so app.js still gets an unconsumed body.
+        response.clone().json().then((data) => {
+          const sections = data && data.report && data.report.sections;
+          // app.js writes after its own await resolves; run last.
+          if (sections) setTimeout(() => render(sections), 0);
+        }).catch(() => {});
+      }
+    } catch {
+      /* never let instrumentation break the request */
+    }
+    return response;
+  };
+})();
+
+/* ------------------------------------------------------- fine-tuning run
+ * Starts scripts/finetune_from_feedback.py on the server and streams its
+ * log back. The script owns every safety guarantee; this only drives it.
+ */
+document.addEventListener("DOMContentLoaded", () => {
+  "use strict";
+  const btn = document.getElementById("fb-train");
+  const log = document.getElementById("fb-train-log");
+  const title = document.querySelector(".train-title");
+  if (!btn || !log) return;
+
+  let poll = null;
+
+  function show(text) {
+    log.hidden = false;
+    log.textContent = text;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function tick() {
+    try {
+      const d = await fetch("/api/v1/feedback/train/status").then((r) => r.json());
+      if (d.log) show(d.log);
+      if (!d.running) {
+        clearInterval(poll);
+        poll = null;
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+        if (title) title.classList.remove("is-running");
+        if (d.produced_checkpoint) {
+          show(`${d.log}\n--- finished ---\nNew version: ${d.produced_checkpoint}\n` +
+               `Nothing was promoted. Review the comparison above before using it.`);
+        }
+      }
+    } catch {
+      clearInterval(poll);
+      poll = null;
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+      if (title) title.classList.remove("is-running");
+    }
+  }
+
+  btn.addEventListener("click", async () => {
+    if (!window.confirm(
+      "Start a fine-tuning run on the latest export?\n\n" +
+      "This creates a NEW model version. The current model stays in place and " +
+      "nothing is promoted automatically. It can take several minutes."
+    )) return;
+
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+    if (title) title.classList.add("is-running");
+    show("Starting…");
+
+    try {
+      const res = await fetch("/api/v1/feedback/train", { method: "POST", body: new FormData() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        show(`Could not start: ${d.detail || res.status}`);
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+        if (title) title.classList.remove("is-running");
+        return;
+      }
+      show(`Started on ${d.manifest} (${d.cases} cases, ${d.epochs} epochs).\nWaiting for output…`);
+      poll = setInterval(tick, 2500);
+    } catch {
+      show("Network error while starting the run.");
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+      if (title) title.classList.remove("is-running");
+    }
+  });
 });
