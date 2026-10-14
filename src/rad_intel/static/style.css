@@ -1835,3 +1835,117 @@ select.input,
   background: var(--bg-orange-soft);
 }
 .sample-btn:active, .btn-sample:active { transform: translateY(1px); }
+
+/* --- access gate ----------------------------------------------------- */
+
+.consent-box {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--primary-orange);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-4) var(--sp-5);
+  margin-bottom: var(--sp-5);
+}
+.consent-box h3 {
+  font-size: 0.9rem;
+  font-weight: 650;
+  margin-bottom: var(--sp-3);
+  letter-spacing: -0.012em;
+}
+.consent-box ul { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-2); }
+.consent-box li { font-size: 0.83rem; color: var(--text-muted); line-height: 1.58; }
+.consent-box strong { color: var(--text-main); }
+
+.auth-form { max-width: 420px; }
+.auth-heading {
+  font-size: 0.95rem;
+  font-weight: 650;
+  margin-bottom: var(--sp-3);
+  letter-spacing: -0.015em;
+}
+.request-details {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-light);
+}
+.request-details summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--primary-orange-hover);
+  list-style: none;
+}
+.request-details summary::-webkit-details-marker { display: none; }
+.request-details summary::before { content: "+ "; font-weight: 700; }
+.request-details[open] summary::before { content: "– "; }
+.request-details summary:hover { text-decoration: underline; }
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+.session-who { display: flex; align-items: center; gap: var(--sp-2); font-size: 0.86rem; font-weight: 600; }
+.session-ico { width: 16px; height: 16px; stroke: var(--primary-orange); fill: none; stroke-width: 2; }
+
+/* --- reviewed image thumbnails --------------------------------------- */
+
+.queue-thumb-row { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-2) 0; }
+.queue-thumb {
+  width: 54px; height: 54px; flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: #0f172a;
+  cursor: zoom-in;
+  transition: transform var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
+}
+.queue-thumb:hover { transform: scale(1.06); box-shadow: var(--elev-2); }
+.queue-thumb-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, 0.82);
+  padding: var(--sp-6);
+  animation: fade-in var(--dur-base) var(--ease);
+  cursor: zoom-out;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.lightbox img {
+  max-width: min(760px, 92vw);
+  max-height: 88vh;
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
+}
+
+.shared-model-note {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  background: var(--bg-orange-soft);
+  border: 1px solid var(--border-orange);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.shared-model-note svg {
+  width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px;
+  stroke: var(--primary-orange); fill: none; stroke-width: 2;
+}
+.shared-model-note strong { color: var(--text-main); }
+
+/* The hidden attribute is a UA rule, so any class that sets display wins
+   over it. .learn-grid is display:grid, which left the signed-out gate
+   visible underneath the workspace. */
+[hidden] { display: none !important; }

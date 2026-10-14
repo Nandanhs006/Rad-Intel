@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=3">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -294,7 +294,106 @@
 
     <!-- ============ CLINICIAN FEEDBACK ============ -->
     <section id="tab-feedback" class="tab-panel" role="tabpanel">
-      <div class="app-grid">
+
+      <!-- Signed out: what this is, sign in, or request access -->
+      <div id="fb-gate" class="learn-grid">
+        <section class="card">
+          <h1 class="card-title">Clinician review workspace</h1>
+          <p class="card-subtitle">Access is granted to named clinicians only. There is no public sign-up.</p>
+
+          <div class="consent-box">
+            <h3>What this is, before you sign in</h3>
+            <ul>
+              <li><strong>A shared model.</strong> Every participating clinician reviews
+                  cases against the same model. Reviews from all sites are pooled and used
+                  to fine-tune that one shared model, which all participants then use.
+                  Your reviews are not kept to yourself, and neither is anyone else's.</li>
+              <li><strong>What is stored.</strong> The radiograph you upload, its SHA-256,
+                  your name and institution, the model's prediction and probability, your
+                  verdict, and any note. The image is kept because training needs the
+                  pixels.</li>
+              <li><strong>Who can see it.</strong> Every other signed-in clinician in this
+                  group, and the study administrator. It is not public and not shared
+                  outside the group, but it is <em>not</em> private to you.</li>
+              <li><strong>Your responsibility.</strong> Upload only images you are
+                  authorised to share, de-identified, with any approval your institution
+                  requires. There is no automatic de-identification here.</li>
+              <li><strong>Scope.</strong> This is a research and education study. It does
+                  not provide diagnosis, treatment, triage or autonomous decision support,
+                  and it is not a medical device.</li>
+              <li><strong>Leaving.</strong> Ask the administrator to disable your account
+                  at any time. Reviews already folded into a trained model cannot be
+                  retrospectively removed from that model's weights.</li>
+            </ul>
+          </div>
+
+          <form id="login-form" class="auth-form">
+            <h3 class="auth-heading">Sign in</h3>
+            <div class="form-row">
+              <label class="field-label" for="login-email">Email</label>
+              <input type="email" id="login-email" class="input" autocomplete="username" required>
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="login-password">Password</label>
+              <input type="password" id="login-password" class="input" autocomplete="current-password" required>
+            </div>
+            <button class="btn-primary" type="submit" id="login-submit">Sign in</button>
+            <div id="login-error" class="fb-result fb-error" hidden></div>
+          </form>
+
+          <details class="request-details">
+            <summary>I am a clinician and would like access</summary>
+            <p class="muted small">
+              Submitting this creates no account. The administrator reads each request and
+              contacts you at the address you give.
+            </p>
+            <form id="request-form" class="auth-form">
+              <div class="form-row">
+                <label class="field-label" for="req-name">Full name</label>
+                <input type="text" id="req-name" class="input" maxlength="120" required>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-email">Email</label>
+                <input type="email" id="req-email" class="input" maxlength="200" required>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-institution">Institution</label>
+                <input type="text" id="req-institution" class="input" maxlength="160" required>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-registration">Medical registration number <span class="opt-tag">optional</span></label>
+                <input type="text" id="req-registration" class="input" maxlength="120">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-message">Anything else <span class="opt-tag">optional</span></label>
+                <textarea id="req-message" class="input" rows="2" maxlength="1000"></textarea>
+              </div>
+              <button class="btn-secondary" type="submit" id="request-submit">Send access request</button>
+              <div id="request-result" class="fb-result" hidden></div>
+            </form>
+          </details>
+        </section>
+      </div>
+
+      <!-- Signed in -->
+      <div id="fb-workspace" hidden>
+      <div class="session-bar">
+        <span class="session-who">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="session-ico">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          <span id="session-name">—</span>
+          <span class="badge badge-neutral" id="session-site">—</span>
+        </span>
+        <button class="btn-link" id="btn-signout" type="button">Sign out</button>
+      </div>
+
+      <div id="must-change" class="notice notice-red" hidden>
+        <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <span>You are still on the password the administrator issued. Change it below.</span>
+      </div>
+
+            <div class="app-grid">
         <section class="card" aria-label="Submit review">
           <h1 class="card-title">Clinician Feedback</h1>
           <p class="card-subtitle">
@@ -309,25 +408,15 @@
           </div>
 
           <div class="form-row">
-            <label class="field-label" for="fb-reviewer">Reviewer</label>
-            <input type="text" id="fb-reviewer" class="input" placeholder="Name or identifier" maxlength="120">
-          </div>
-
-          <div class="form-row">
             <label class="field-label" for="fb-institution">Institution <span class="opt-tag">multi-site</span></label>
             <input type="text" id="fb-institution" class="input" maxlength="120"
                    placeholder="e.g. Malnad Hospital — where this image came from">
           </div>
 
-          <div class="form-row">
-            <label class="field-label" for="fb-model">Model version</label>
-            <select id="fb-model" class="input">
-              <option value="hybrid">Hybrid (DenseNet + Swin + CBAM)</option>
-              <option value="hybrid_no_cbam">Fusion without CBAM</option>
-              <option value="densenet121">DenseNet121</option>
-              <option value="swin_t">Swin-T</option>
-              <option value="resnet50">ResNet50</option>
-            </select>
+          <div class="shared-model-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Reviews go to the <strong>shared model</strong> every participating site
+            uses — DenseNet121 + Swin-T + CBAM. There is no per-site model to choose.</span>
           </div>
 
           <div class="form-row">
@@ -395,8 +484,30 @@
             </div>
             <pre id="fb-train-log" class="train-log" hidden></pre>
           </div>
+
+          <div class="train-panel">
+            <h3 class="train-title">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="train-ico">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Your password
+            </h3>
+            <form id="password-form" class="auth-form">
+              <div class="form-row">
+                <label class="field-label" for="pw-current">Current password</label>
+                <input type="password" id="pw-current" class="input" autocomplete="current-password" required>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="pw-new">New password <span class="opt-tag">min 10 characters</span></label>
+                <input type="password" id="pw-new" class="input" autocomplete="new-password" minlength="10" required>
+              </div>
+              <button class="btn-secondary" type="submit" id="pw-submit">Change password</button>
+              <div id="pw-result" class="fb-result" hidden></div>
+            </form>
+          </div>
         </section>
       </div>
+      </div><!-- /fb-workspace -->
     </section>
 
     <!-- ============ ABOUT & LIMITATIONS ============ -->
@@ -465,7 +576,7 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast">Copied to clipboard</div>
 
-  <script src="/static/app.js"></script>
-  <script src="/static/extras.js"></script>
+  <script src="/static/app.js?v=3"></script>
+  <script src="/static/extras.js?v=3"></script>
 </body>
 </html>

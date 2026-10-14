@@ -34,8 +34,8 @@ from rad_intel.api.schemas import (
     FeedbackSubmitResponse,
     FeedbackUpdateRequest,
 )
+from rad_intel.auth.dependencies import require_clinician
 from rad_intel.config import settings
-from rad_intel.models.factory import ModelType
 from rad_intel.storage.database import db_manager
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["Clinician Feedback"])
@@ -52,6 +52,10 @@ ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png"}
 # which pipeline produced the probability a reviewer was judging.
 PREPROCESSING_VERSION = "clahe2.0-8x8_pil-bilinear-224_imagenet-norm"
 
+# Every contribution trains the same shared model, so the configuration is
+# fixed here rather than chosen per review.
+SHARED_MODEL = "hybrid"
+
 UPLOAD_WARNING = (
     "Do not upload identifiable patient data without appropriate authorisation. "
     "This is a research and education store, not a clinical record system."
@@ -64,7 +68,7 @@ def _ensure_dirs() -> None:
 
 
 @router.get("/warning")
-async def upload_warning():
+async def upload_warning(_user: dict = Depends(require_clinician)):
     """The notice the interface shows above the upload control."""
     return {"warning": UPLOAD_WARNING, "preprocessing_version": PREPROCESSING_VERSION}
 
@@ -72,12 +76,11 @@ async def upload_warning():
 @router.post("/submit", response_model=FeedbackSubmitResponse)
 async def submit_feedback(
     file: UploadFile = File(..., description="Chest radiograph reviewed by the clinician"),
-    reviewer: str = Form(..., description="Reviewer name or identifier"),
     verdict: str = Form(..., description="correct | incorrect"),
     corrected_label: str | None = Form(None, description="NORMAL | PNEUMONIA"),
     note: str | None = Form(None, description="Optional short review note"),
     institution: str | None = Form(None, description="Source institution, for multi-site tracking"),
-    model_name: ModelType | None = Form(None, description="Model version reviewed"),
+    user: dict = Depends(require_clinician),
     manager: ModelManager = Depends(get_model_manager),
     preprocessor: CXRPreprocessor = Depends(get_preprocessor),
 ):
@@ -117,7 +120,7 @@ async def submit_feedback(
             detail=f"Could not decode the uploaded file as an image: {decode_error}",
         )
 
-    target = manager.require_trained(model_name)
+    target = manager.require_trained(SHARED_MODEL)
     pred_class, _confidence, probs, _latency = manager.predict(tensor, target)
     threshold = manager.get_threshold(target)
     p_pneumonia = probs.get("PNEUMONIA", 0.0)
@@ -130,7 +133,7 @@ async def submit_feedback(
         stored.write_bytes(image_bytes)
 
     record_id = await db_manager.save_feedback(
-        reviewer=reviewer.strip()[:120] or "anonymous",
+        reviewer=user["full_name"],
         model_version=target,
         preprocessing_version=PREPROCESSING_VERSION,
         image_sha256=digest,
@@ -141,7 +144,7 @@ async def submit_feedback(
         corrected_label=corrected_label,
         note=(note or "").strip()[:2000] or None,
         image_path=str(stored.relative_to(settings.BASE_DIR)),
-        institution=(institution or "").strip()[:120] or None,
+        institution=(institution or user["institution"] or "").strip()[:120] or None,
     )
 
     return FeedbackSubmitResponse(
@@ -157,7 +160,8 @@ async def submit_feedback(
 
 
 @router.get("", response_model=FeedbackListResponse)
-async def list_feedback(status: str | None = None, limit: int = 100, offset: int = 0):
+async def list_feedback(status: str | None = None, limit: int = 100, offset: int = 0,
+                        _user: dict = Depends(require_clinician)):
     """Lists the review queue, newest first."""
     rows = await db_manager.list_feedback(status=status, limit=min(limit, 500), offset=offset)
     return FeedbackListResponse(
@@ -168,7 +172,8 @@ async def list_feedback(status: str | None = None, limit: int = 100, offset: int
 
 
 @router.patch("/{record_id}", response_model=FeedbackItem)
-async def update_feedback(record_id: str, req: FeedbackUpdateRequest):
+async def update_feedback(record_id: str, req: FeedbackUpdateRequest,
+                          _user: dict = Depends(require_clinician)):
     """Edits a queued review before it is exported."""
     existing = await db_manager.get_feedback(record_id)
     if not existing:
@@ -197,7 +202,7 @@ async def update_feedback(record_id: str, req: FeedbackUpdateRequest):
 
 
 @router.post("/export", response_model=FeedbackExportResponse)
-async def create_training_export():
+async def create_training_export(_user: dict = Depends(require_clinician)):
     """
     Writes a versioned JSONL manifest of every pending review and freezes them.
 
@@ -246,7 +251,7 @@ async def create_training_export():
 
 
 @router.get("/exports")
-async def list_exports():
+async def list_exports(_user: dict = Depends(require_clinician)):
     """Lists the export manifests written so far."""
     _ensure_dirs()
     items = []
@@ -292,7 +297,8 @@ def _run_training(manifest: Path, base_model: str, epochs: int) -> None:
 
 
 @router.post("/train")
-async def start_training(base_model: str = Form("hybrid"), epochs: int = Form(3)):
+async def start_training(epochs: int = Form(3),
+                         _user: dict = Depends(require_clinician)):
     """Start a fine-tuning run over the most recent export."""
     with _train_lock:
         if _train_state["running"]:
@@ -311,22 +317,27 @@ async def start_training(base_model: str = Form("hybrid"), epochs: int = Form(3)
     if usable < 4:
         raise HTTPException(
             status_code=400,
-            detail=f"The latest export holds {usable} case(s). At least 4 are needed, "
-                   f"covering both classes, before fine-tuning is meaningful.",
+            detail=(
+                f"Only {usable} reviewed radiograph"
+                f"{'' if usable == 1 else 's'} in this batch. Training on so few would "
+                f"teach the model almost nothing and risks skewing it. Review a few more "
+                f"cases — a mix of normal and pneumonia, including ones the model got "
+                f"wrong — then export again."
+            ),
         )
 
     with _train_lock:
         _train_state.update(running=True,
                             started_at=datetime.now(timezone.utc).isoformat(),
                             manifest=manifest.name)
-    threading.Thread(target=_run_training, args=(manifest, base_model, epochs),
+    threading.Thread(target=_run_training, args=(manifest, SHARED_MODEL, epochs),
                      daemon=True).start()
 
     return {
         "started": True,
         "manifest": manifest.name,
         "cases": usable,
-        "base_model": base_model,
+        "base_model": SHARED_MODEL,
         "epochs": epochs,
         "note": "Training runs in the background. The original checkpoint is untouched "
                 "and nothing will be promoted automatically.",
@@ -334,7 +345,7 @@ async def start_training(base_model: str = Form("hybrid"), epochs: int = Form(3)
 
 
 @router.get("/train/status")
-async def training_status():
+async def training_status(_user: dict = Depends(require_clinician)):
     """Progress of the current or most recent run."""
     with _train_lock:
         running = bool(_train_state["running"])
@@ -358,4 +369,48 @@ async def training_status():
         "log": log,
         "produced_checkpoint": produced,
         "promoted": False,
+    }
+
+
+@router.get("/image/{record_id}")
+async def feedback_image(record_id: str, _user: dict = Depends(require_clinician)):
+    """
+    Serve a reviewed radiograph to a signed-in clinician.
+
+    Images are not served from a static directory: they are only reachable
+    through this endpoint, which means a URL alone is useless without a
+    session. The record id is a UUID rather than the file path, so the store
+    cannot be walked by guessing names.
+    """
+    from fastapi.responses import FileResponse
+
+    record = await db_manager.get_feedback(record_id)
+    if not record or not record.get("image_path"):
+        raise HTTPException(status_code=404, detail="No image for this review.")
+
+    path = (settings.BASE_DIR / record["image_path"]).resolve()
+    # Containment check: a stored path must never escape the feedback store.
+    if not str(path).startswith(str(IMAGE_DIR.resolve())) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file is missing.")
+
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(path, media_type=media)
+
+
+@router.get("/storage")
+async def storage_summary(_user: dict = Depends(require_clinician)):
+    """Where reviewed images live and how much room they take."""
+    _ensure_dirs()
+    files = [f for f in IMAGE_DIR.iterdir() if f.is_file()]
+    total = sum(f.stat().st_size for f in files)
+    return {
+        "directory": str(IMAGE_DIR.relative_to(settings.BASE_DIR)),
+        "image_count": len(files),
+        "bytes": total,
+        "human": f"{total / (1024 * 1024):.1f} MB",
+        "note": (
+            "Images are stored once per distinct file, named by SHA-256, so the same "
+            "radiograph submitted twice costs nothing extra. They are kept because "
+            "fine-tuning needs the pixels; the database holds only the hash and the path."
+        ),
     }
