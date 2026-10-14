@@ -42,8 +42,13 @@ def test_personal_medical_requests_are_declined(text):
     "write me a python script",
     "what is the capital of France",
 ])
-def test_out_of_scope_questions_are_declined(text):
-    assert safety.classify(text) == "out_of_scope"
+def test_general_questions_are_answered_not_refused(text):
+    """
+    A flat refusal on an ordinary question reads as broken, so these are
+    answered briefly and steered back. The medical guards are unaffected:
+    an emergency or a request for a personal verdict never reaches here.
+    """
+    assert safety.classify(text) == "general"
 
 
 @pytest.mark.parametrize("text", [
@@ -56,9 +61,15 @@ def test_educational_questions_are_answerable(text):
     assert safety.classify(text) == "answerable"
 
 
-def test_emergency_beats_out_of_scope():
+def test_emergency_beats_every_other_route():
     """Someone in trouble must not be met with a scope lecture."""
     assert safety.classify("help my friend collapsed and is unconscious") == "emergency"
+
+
+def test_personal_medical_request_beats_general():
+    """Widening to general questions must not open a path to personal advice."""
+    assert safety.classify("what antibiotic should I take for my chest") == "personal"
+    assert safety.classify("do I have pneumonia") == "personal"
 
 
 # --- answers ---------------------------------------------------------------

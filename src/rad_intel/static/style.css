@@ -1598,3 +1598,240 @@ input[type="file"].input::file-selector-button:hover {
   color: var(--primary-orange-hover);
   background: var(--bg-orange-soft);
 }
+
+/* --- generated report readability ----------------------------------- */
+
+.report-section { margin-bottom: var(--sp-5); }
+.report-section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+  color: var(--primary-orange-hover);
+  margin-bottom: var(--sp-2);
+}
+.report-section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-light);
+}
+
+.report-section-content.is-formatted { white-space: normal; }
+.report-section-content p { margin: 0 0 var(--sp-2); line-height: 1.62; }
+.report-section-content p:last-child { margin-bottom: 0; }
+
+.rep-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.rep-list li {
+  position: relative;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-5);
+  background: var(--bg-card-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.845rem;
+  line-height: 1.6;
+}
+.rep-list li::before {
+  content: "";
+  position: absolute;
+  left: var(--sp-3);
+  top: 0.82em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary-orange);
+  opacity: 0.55;
+}
+.rep-key {
+  display: block;
+  font-weight: 650;
+  color: var(--text-main);
+  font-size: 0.78rem;
+  letter-spacing: -0.005em;
+  margin-bottom: 2px;
+}
+.report-section-content .num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--primary-orange-hover);
+}
+
+/* --- training panel -------------------------------------------------- */
+
+.train-panel {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--border-light);
+}
+.train-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin-bottom: var(--sp-2);
+}
+.train-ico {
+  width: 16px; height: 16px;
+  stroke: var(--primary-orange); fill: none; stroke-width: 2;
+  stroke-linecap: round;
+}
+.train-title.is-running .train-ico { animation: spin 2.4s linear infinite; }
+.train-note { margin-bottom: var(--sp-3); }
+
+.train-log {
+  margin-top: var(--sp-3);
+  max-height: 260px;
+  overflow: auto;
+  padding: var(--sp-3);
+  background: #0f172a;
+  color: #cbd5e1;
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.count-pill.is-site {
+  background: var(--bg-orange-soft);
+  border-color: var(--border-orange);
+  color: var(--primary-orange-hover);
+}
+
+/* ===================================================================
+   VISUAL REFINEMENT — inputs, chat, depth and micro-interaction
+   =================================================================== */
+
+/* --- inputs: filled, with a clear resting state --------------------- */
+
+.input,
+.chat-input,
+#input-patient-id,
+#input-patient-age,
+#input-patient-history,
+#select-model,
+#select-patient-sex {
+  background: var(--surface-sunken);
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 1px var(--border-light);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease);
+}
+.input:hover:not(:focus),
+.chat-input:hover:not(:focus),
+#input-patient-id:hover:not(:focus),
+#input-patient-history:hover:not(:focus) {
+  background: #eef2f7;
+  box-shadow: inset 0 0 0 1px #cbd5e1;
+}
+.input:focus,
+.chat-input:focus,
+#input-patient-id:focus,
+#input-patient-age:focus,
+#input-patient-history:focus,
+#select-model:focus,
+#select-patient-sex:focus {
+  background: var(--surface-raised);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--primary-orange), var(--ring-accent);
+  outline: none;
+}
+.input::placeholder, .chat-input::placeholder { color: var(--text-light); }
+
+select.input,
+#select-model,
+#select-patient-sex {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 15px;
+  padding-right: 32px;
+}
+
+/* --- card headers get a quiet accent rule --------------------------- */
+
+.card { position: relative; overflow: hidden; }
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary-orange), transparent 62%);
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+.card:hover::before { opacity: 0.5; }
+.tab-panel.is-active .card:first-child::before { opacity: 0.35; }
+
+/* --- chat: warmer, with a live typing indicator --------------------- */
+
+.chat-log {
+  background:
+    linear-gradient(var(--surface-sunken), var(--surface-sunken)) padding-box,
+    var(--surface-sunken);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(15, 23, 42, 0.05) 1px, transparent 0);
+  background-size: 18px 18px;
+}
+.bubble-user {
+  background: linear-gradient(180deg, var(--primary-orange), var(--primary-orange-hover));
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.22);
+}
+.chat-empty { text-align: center; padding: var(--sp-6) var(--sp-3); }
+.chat-empty p { color: var(--text-light); font-size: 0.8rem; }
+.chat-empty .chip-row { justify-content: center; }
+
+/* Three-dot thinking indicator, replacing the static word. */
+.typing { display: inline-flex; gap: 4px; align-items: center; padding: 2px 0; }
+.typing i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-light);
+  animation: typing 1.25s var(--ease) infinite;
+}
+.typing i:nth-child(2) { animation-delay: 0.16s; }
+.typing i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* --- verdict and results emphasis ----------------------------------- */
+
+.probability-bar, .prob-bar { overflow: hidden; }
+.probability-bar > *, .prob-bar > * {
+  transition: width var(--dur-slow) var(--ease);
+}
+
+/* --- queue + chips: press feedback ---------------------------------- */
+
+.chip:active { transform: translateY(1px); }
+.queue-item { position: relative; }
+.queue-item::after {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--border-light);
+  transition: background var(--dur-base) var(--ease);
+}
+.queue-item:has(.badge-ok)::after { background: var(--success); }
+.queue-item:has(.badge-warn)::after { background: var(--danger); }
+.queue-item { padding-left: var(--sp-4); }
+
+/* --- benchmark buttons --------------------------------------------- */
+
+.sample-btn, .btn-sample {
+  transition: border-color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.sample-btn:hover, .btn-sample:hover {
+  border-color: var(--border-orange);
+  background: var(--bg-orange-soft);
+}
+.sample-btn:active, .btn-sample:active { transform: translateY(1px); }

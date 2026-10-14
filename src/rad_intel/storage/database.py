@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS clinician_feedback (
     preprocessing_version TEXT NOT NULL,
     image_sha256 TEXT NOT NULL,
     image_path TEXT,
+    institution TEXT,
     predicted_label TEXT NOT NULL,
     predicted_probability REAL NOT NULL,
     threshold REAL NOT NULL,
@@ -65,6 +66,11 @@ class DatabaseManager:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(CREATE_TABLE_SQL)
             await db.execute(CREATE_FEEDBACK_TABLE_SQL)
+            # Additive migration for databases created before institution tracking.
+            async with db.execute("PRAGMA table_info(clinician_feedback);") as cur:
+                columns = {row[1] for row in await cur.fetchall()}
+            if "institution" not in columns:
+                await db.execute("ALTER TABLE clinician_feedback ADD COLUMN institution TEXT;")
             await db.commit()
         self._initialized = True
 
@@ -171,6 +177,7 @@ class DatabaseManager:
         corrected_label: str | None = None,
         note: str | None = None,
         image_path: str | None = None,
+        institution: str | None = None,
     ) -> str:
         """Inserts a feedback record and returns its UUID."""
         await self._ensure_db()
@@ -179,14 +186,14 @@ class DatabaseManager:
         query = """
         INSERT INTO clinician_feedback (
             id, created_at, updated_at, reviewer, model_version, preprocessing_version,
-            image_sha256, image_path, predicted_label, predicted_probability, threshold,
-            verdict, corrected_label, note, status, exported_in
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL);
+            image_sha256, image_path, institution, predicted_label, predicted_probability,
+            threshold, verdict, corrected_label, note, status, exported_in
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL);
         """
         params = (
             rec_id, now, now, reviewer, model_version, preprocessing_version,
-            image_sha256, image_path, predicted_label, float(predicted_probability),
-            float(threshold), verdict, corrected_label, note,
+            image_sha256, image_path, institution, predicted_label,
+            float(predicted_probability), float(threshold), verdict, corrected_label, note,
         )
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(query, params)
@@ -265,6 +272,16 @@ class DatabaseManager:
             )
             await db.commit()
             return cur.rowcount
+
+    async def feedback_institutions(self) -> dict[str, int]:
+        """Review counts per institution, so multi-site coverage is visible."""
+        await self._ensure_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COALESCE(NULLIF(TRIM(institution), ''), 'unspecified'), COUNT(*) "
+                "FROM clinician_feedback GROUP BY 1 ORDER BY 2 DESC;"
+            ) as cur:
+                return {name: count for name, count in await cur.fetchall()}
 
     async def feedback_counts(self) -> dict[str, int]:
         """Counts by status, for the review queue header."""
