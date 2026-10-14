@@ -202,3 +202,32 @@ class FeedbackExportResponse(BaseModel):
     path: str
     record_count: int
     note: str
+
+
+# --- Authentication --------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthMeResponse(BaseModel):
+    authenticated: bool
+    email: str | None = None
+    full_name: str | None = None
+    institution: str | None = None
+    role: str | None = None
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AccessRequestSubmission(BaseModel):
+    full_name: str
+    email: str
+    institution: str
+    registration: str | None = None
+    message: str | None = None

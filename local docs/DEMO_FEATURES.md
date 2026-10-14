@@ -237,3 +237,89 @@ on the reference radiograph, identical to the value recorded before the work.
   2 and 90 seconds.
 - LIME is exposed at `/api/v1/explain?method=lime` but returns no quadrant
   statistics; that is pre-existing behaviour and was left alone.
+
+---
+
+## Closed clinician workspace
+
+The review tab is not public. Everything in it requires a signed-in clinician
+account, and the server enforces that independently of the interface.
+
+### How a clinician gets in
+
+There is no sign-up page. They open the Clinician Feedback tab, read what the
+study is, and use **"I am a clinician and would like access"**. That records a
+request — name, email, institution, optional registration number — and grants
+nothing. You see it with:
+
+```bash
+python scripts/manage_clinicians.py requests
+```
+
+The output prints the exact command to approve each one. Creating the account
+prints a one-off password to hand over through a channel they already trust;
+they are prompted to change it on first sign-in.
+
+```bash
+python scripts/manage_clinicians.py add --email a@hospital.org \
+    --name "Dr A" --institution "A Hospital"
+python scripts/manage_clinicians.py list
+python scripts/manage_clinicians.py reset   --email a@hospital.org
+python scripts/manage_clinicians.py disable --email a@hospital.org   # immediate
+python scripts/manage_clinicians.py enable  --email a@hospital.org
+```
+
+Disabling takes effect on the account's next request, not when their session
+expires.
+
+### What the sign-in page tells them first
+
+Before the form, in plain language: that the model is **shared**, that reviews
+from every site are pooled to train it, that the radiograph and their name and
+institution are stored, that every other clinician in the group and the
+administrator can see it, that it is their job to upload only images they are
+authorised to share, that the study is research and education only, and that
+reviews already folded into a trained model cannot be pulled back out of its
+weights. The intent is that nobody can later say they did not know.
+
+### Security, and its limits
+
+Passwords are scrypt hashes with a per-account salt (N=2^15, 96 MB ceiling).
+Sessions are HMAC-SHA256 signed cookies, HttpOnly and SameSite=Lax, twelve
+hours. A wrong password and an unknown address return the same message and
+take the same time, so the endpoint cannot be used to discover who has an
+account.
+
+Set `RAD_INTEL_SECRET_KEY` in the environment, or sessions use a random
+per-process secret and everyone is signed out on restart. Set `secure=True` on
+the cookie in `routes/auth.py` once it is behind HTTPS.
+
+What this is not: there is no two-factor, no rate limiting on sign-in, no
+audit log of who viewed which image, and no encryption at rest. It is a
+credible closed-group control for a study, not a hospital-grade system.
+
+### One shared model
+
+Reviewers cannot pick an architecture. Every contribution trains the same
+model (DenseNet121 + Swin-T + CBAM), because a per-site choice would fork the
+lineage into a model per institution, which is the opposite of a jointly
+trained one. Each run produces `best_hybrid_v<N>_model.pt`; the series is one
+lineage, and only a promoted version is served.
+
+### Images
+
+Stored at `feedback_store/images/<sha256>.<ext>`, one file per distinct image,
+so the same radiograph submitted twice costs nothing extra. They are kept
+because fine-tuning needs the pixels; the database holds only the hash and the
+path. They are never served from a static directory: `GET
+/api/v1/feedback/image/{record_id}` requires a session, takes a record UUID
+rather than a path, and refuses anything resolving outside the store. Signed-in
+clinicians see thumbnails in the queue and can click one to view it full size.
+`GET /api/v1/feedback/storage` reports the directory, file count and size.
+
+### Multi-institution
+
+Each review carries an institution, the queue shows per-site counts, and the
+export manifest records it. The Kaggle test partition deliberately stays
+single-site: it is the fixed yardstick that keeps a new version comparable to
+the paper's numbers. The training data is what grows with each site.

@@ -14,19 +14,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const tabs = document.querySelectorAll(".tab");
   const panels = document.querySelectorAll(".tab-panel");
 
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const name = tab.dataset.tab;
-      tabs.forEach((t) => {
-        const on = t === tab;
-        t.classList.toggle("is-active", on);
-        t.setAttribute("aria-selected", String(on));
-      });
-      panels.forEach((p) => p.classList.toggle("is-active", p.id === `tab-${name}`));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      if (name === "feedback") refreshQueue();
+  const TAB_NAMES = [...tabs].map((t) => t.dataset.tab);
+
+  function activate(name, { scroll = true, pushHash = true } = {}) {
+    if (!TAB_NAMES.includes(name)) name = TAB_NAMES[0];
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", String(on));
     });
-  });
+    panels.forEach((p) => p.classList.toggle("is-active", p.id === `tab-${name}`));
+    if (pushHash && window.location.hash.slice(1) !== name) {
+      history.replaceState(null, "", `#${name}`);
+    }
+    if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
+    if (name === "feedback") refreshQueue();
+  }
+
+  tabs.forEach((tab) => tab.addEventListener("click", () => activate(tab.dataset.tab)));
+  window.addEventListener("hashchange", () =>
+    activate(window.location.hash.slice(1), { scroll: false, pushHash: false }));
+
+  // A reload should land where the reader was, not back at the first tab.
+  const initial = window.location.hash.slice(1);
+  if (initial) activate(initial, { scroll: false });
 
   const escapeHtml = (s) =>
     String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -187,8 +198,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const fbCorrected = $("fb-corrected");
   const fbNote = $("fb-note");
   const fbSubmit = $("fb-submit");
-  const fbReviewer = $("fb-reviewer");
-  const fbModel = $("fb-model");
   const fbInstitution = $("fb-institution");
   const fbQueue = $("fb-queue");
   const fbCounts = $("fb-counts");
@@ -217,7 +226,6 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const fd = new FormData();
         fd.append("file", file);
-        fd.append("model_name", fbModel.value);
         const res = await fetch("/api/v1/predict", { method: "POST", body: fd });
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
@@ -257,15 +265,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (selectedVerdict === "incorrect" && !fbCorrected.value) {
         return fbNotify("A corrected label is required when marking a prediction incorrect.", "error");
       }
-      if (!fbReviewer.value.trim()) return fbNotify("Enter a reviewer name.", "error");
 
       fbSubmit.disabled = true;
       try {
         const fd = new FormData();
         fd.append("file", file);
-        fd.append("reviewer", fbReviewer.value.trim());
         fd.append("verdict", selectedVerdict);
-        fd.append("model_name", fbModel.value);
         if (fbInstitution && fbInstitution.value.trim()) {
           fd.append("institution", fbInstitution.value.trim());
         }
@@ -328,6 +333,13 @@ document.addEventListener("DOMContentLoaded", () => {
               <code>${escapeHtml(it.model_version)}</code> predicted
               <strong>${escapeHtml(it.predicted_label)}</strong> at ${p}%${corrected}
             </div>
+            <div class="queue-thumb-row">
+              <img class="queue-thumb" loading="lazy" alt="Reviewed radiograph"
+                   src="/api/v1/feedback/image/${escapeHtml(it.id)}">
+              <div class="queue-thumb-meta">
+                ${it.institution ? `<span class="badge badge-accent">${escapeHtml(it.institution)}</span>` : ""}
+              </div>
+            </div>
             <div class="queue-meta">
               ${escapeHtml(it.reviewer)} · ${escapeHtml(it.created_at.slice(0, 16).replace("T", " "))}
               · sha256 <code>${escapeHtml(it.image_sha256.slice(0, 10))}</code>
@@ -371,6 +383,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     refreshQueue();
   });
+
+  document.addEventListener("radintel:signedin", () => refreshQueue());
 
   const fbRefresh = $("fb-refresh");
   if (fbRefresh) fbRefresh.addEventListener("click", refreshQueue);
@@ -548,6 +562,175 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.disabled = false;
       btn.classList.remove("is-loading");
       if (title) title.classList.remove("is-running");
+    }
+  });
+});
+
+
+/* ------------------------------------------------------------- access
+ * The review workspace is a closed group. Everything in the feedback tab is
+ * hidden until a clinician account signs in, and the server enforces the
+ * same rule independently, so hiding the panel is a convenience rather than
+ * the control.
+ */
+document.addEventListener("DOMContentLoaded", () => {
+  "use strict";
+
+  const gate = document.getElementById("fb-gate");
+  const workspace = document.getElementById("fb-workspace");
+  const loginForm = document.getElementById("login-form");
+  const loginError = document.getElementById("login-error");
+  const requestForm = document.getElementById("request-form");
+  const requestResult = document.getElementById("request-result");
+  const sessionName = document.getElementById("session-name");
+  const sessionSite = document.getElementById("session-site");
+  const mustChange = document.getElementById("must-change");
+  const signOut = document.getElementById("btn-signout");
+  if (!gate || !workspace) return;
+
+  function applySession(me) {
+    const inWorkspace = !!(me && me.authenticated);
+    gate.hidden = inWorkspace;
+    workspace.hidden = !inWorkspace;
+    if (inWorkspace) {
+      sessionName.textContent = me.full_name || me.email;
+      sessionSite.textContent = me.institution || "";
+      if (mustChange) mustChange.hidden = !me.must_change_password;
+      document.dispatchEvent(new CustomEvent("radintel:signedin"));
+    }
+  }
+
+  fetch("/api/v1/auth/me")
+    .then((r) => r.json())
+    .then(applySession)
+    .catch(() => applySession(null));
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("login-submit");
+      btn.disabled = true;
+      btn.classList.add("is-loading");
+      loginError.hidden = true;
+      try {
+        const res = await fetch("/api/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: document.getElementById("login-email").value.trim(),
+            password: document.getElementById("login-password").value,
+          }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          loginError.hidden = false;
+          loginError.textContent = d.detail || `Sign-in failed (HTTP ${res.status}).`;
+          return;
+        }
+        document.getElementById("login-password").value = "";
+        applySession(d);
+      } catch {
+        loginError.hidden = false;
+        loginError.textContent = "Network error while signing in.";
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+      }
+    });
+  }
+
+  if (signOut) {
+    signOut.addEventListener("click", async () => {
+      await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => {});
+      applySession(null);
+    });
+  }
+
+  if (requestForm) {
+    requestForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("request-submit");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/v1/auth/request-access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            full_name: document.getElementById("req-name").value.trim(),
+            email: document.getElementById("req-email").value.trim(),
+            institution: document.getElementById("req-institution").value.trim(),
+            registration: document.getElementById("req-registration").value.trim() || null,
+            message: document.getElementById("req-message").value.trim() || null,
+          }),
+        });
+        const d = await res.json().catch(() => ({}));
+        requestResult.hidden = false;
+        if (!res.ok) {
+          requestResult.className = "fb-result fb-error";
+          requestResult.textContent = d.detail || "Could not send the request.";
+        } else {
+          requestResult.className = "fb-result fb-ok";
+          requestResult.textContent = `${d.detail} Your reference is ${d.reference}.`;
+          requestForm.reset();
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+});
+
+
+/* Click a reviewed thumbnail to see it full size. */
+document.addEventListener("click", (e) => {
+  const thumb = e.target.closest(".queue-thumb");
+  if (!thumb) return;
+  const box = document.createElement("div");
+  box.className = "lightbox";
+  box.innerHTML = `<img src="${thumb.getAttribute("src")}" alt="Reviewed radiograph">`;
+  const close = () => box.remove();
+  box.addEventListener("click", close);
+  document.addEventListener("keydown", function esc(ev) {
+    if (ev.key === "Escape") { close(); document.removeEventListener("keydown", esc); }
+  });
+  document.body.appendChild(box);
+});
+
+
+/* Change the administrator-issued password. */
+document.addEventListener("DOMContentLoaded", () => {
+  "use strict";
+  const form = document.getElementById("password-form");
+  if (!form) return;
+  const result = document.getElementById("pw-result");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("pw-submit");
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/v1/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_password: document.getElementById("pw-current").value,
+          new_password: document.getElementById("pw-new").value,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      result.hidden = false;
+      if (!res.ok) {
+        result.className = "fb-result fb-error";
+        result.textContent = d.detail || `Could not change the password (HTTP ${res.status}).`;
+      } else {
+        result.className = "fb-result fb-ok";
+        result.textContent = d.detail || "Password updated.";
+        form.reset();
+        const banner = document.getElementById("must-change");
+        if (banner) banner.hidden = true;
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 });
