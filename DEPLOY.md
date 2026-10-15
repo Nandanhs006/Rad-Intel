@@ -29,10 +29,11 @@ That is the one mistake everybody makes. Step 3 is how you avoid it.
 
 You need a host that gives you:
 
-- **2 GB of memory.** Measured: the service sits at about **820 MB** with the
-  default model loaded, and peaks near **1.6 GB** if somebody tries several
-  models and runs the explanation view, which loads a lung-segmentation model
-  of its own. 1 GB is not enough. 512 MB will not start.
+- **2 GB of memory.** Measured on a running server: **871 MB** once started,
+  and it plateaus at about **1.17 GB** however many other models get tried,
+  because only one is held at a time. The explanation view lazily loads a
+  lung-segmentation model worth another 380 MB, so the realistic ceiling is
+  **~1.55 GB**. 1 GB is not enough. 512 MB will not start.
 - **a disk that keeps files between deploys** (called a *volume*)
 - **HTTPS** (every host below gives this free)
 
@@ -109,8 +110,28 @@ gdown <THE_ID> -O /data/weights/best_hybrid_model.pt
 ls -lh /data/weights/
 ```
 
-You should see `best_hybrid_model.pt` at about **136M**. Only this one file
-is needed. The other four are for your paper, not for running the site.
+**Upload every model you want people to be able to choose.** A model with no
+checkpoint on the server is simply not offered in the list — better than
+offering it and erroring, but it does mean the chooser only shows what you
+uploaded.
+
+| file | size | needed |
+|---|---|---|
+| `best_hybrid_model.pt` | 136 MB | **yes** — the default |
+| `best_hybrid_no_cbam_model.pt` | 136 MB | only to offer the ablation |
+| `best_swin_t_model.pt` | 105 MB | only to offer Swin-T |
+| `best_densenet121_model.pt` | 27 MB | only to offer DenseNet121 |
+| `best_resnet50_model.pt` | 90 MB | only to offer ResNet50 |
+
+All five is about **494 MB**, which is why the volume in Step 3 is 2 GB. Only
+the hybrid is **not** cheaper to run — see below — it just means fewer
+choices.
+
+> **Having them all costs disk, not memory.** A model loads when somebody
+> picks it, and the previous choice is unloaded to make room. Measured on a
+> running server: 871 MB at rest, plateauing at about 1.17 GB however many
+> times you switch. A switch adds 200–700 ms to that one request; the default
+> model is never unloaded, so nobody using it ever waits.
 
 ---
 
@@ -177,12 +198,16 @@ GOOGLE_DRIVE_REFRESH_TOKEN = <from Step 4b>
 **Optional, for a small box:**
 
 ```
-RAD_INTEL_MODEL_CACHE = 3
+RAD_INTEL_MODEL_CACHE = 2
 ```
 
-How many models may be held in memory at once. Three is the default and fits
-2 GB. Each extra one is 30–600 MB, so on a 1 GB machine set it to `1`; with
-4 GB or more you can raise it and switching models gets quicker.
+How many models stay in memory at once. **Leave it empty** unless you have a
+reason: the default is one, meaning the default model plus whichever somebody
+has chosen, which is what keeps a 2 GB box comfortable however many
+checkpoints you uploaded.
+
+Raise it to 2 or 3 if several people compare different models at the same
+time and keep waiting for reloads — each extra model held costs 30–600 MB.
 
 **Leave these empty.** They are only for development:
 

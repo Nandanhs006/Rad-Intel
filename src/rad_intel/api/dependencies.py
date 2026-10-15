@@ -28,23 +28,30 @@ logger = logging.getLogger(__name__)
 # byte-identical on disk and reverting cannot fail halfway through a copy.
 ACTIVE_POINTER = settings.BASE_DIR / "weights" / "active_models.json"
 
-# How many models may be held in memory at once, besides the default.
+# How many models may be held in memory at once.
 #
-# Each one is between 30 MB and 600 MB of weights, and a loaded model was
-# never dropped: anybody could click down the model list on the Analyse tab
-# and load every architecture plus every released version. Measured, that is
-# 1.2 GB for the five built-in ones, and the lung-segmentation model the
-# explanation path loads lazily adds 380 MB on top -- enough to be killed on
-# the 2 GB box this is meant to run on, by a visitor doing nothing wrong.
+# One, by default: the default model, which nearly every request wants, plus
+# whichever one somebody has chosen. Pick a different model and the previous
+# choice is dropped to make room; pick it again and it loads again.
 #
-# Three is room for the default plus two people comparing, which is what the
-# chooser is actually for. Raise it with RAD_INTEL_MODEL_CACHE on a bigger
-# machine.
+# A loaded model was never dropped before this, so anybody could walk down
+# the model list on the Analyse tab and hold every architecture at once, and
+# then every released version on top, for ever. Measured on this machine:
+#
+#     unbounded, six released versions tried   1506 MB
+#     limit of three                           1193 MB
+#     limit of one                             1070 MB, and it stops there
+#
+# The cost of the low limit is reloading on a switch, which is 142 ms for
+# DenseNet121 and 643 ms for the hybrid -- paid only by somebody who
+# deliberately chose another model, never by the default. Raise it with
+# RAD_INTEL_MODEL_CACHE if several people compare models at once and the
+# machine has the room, since each extra one costs 30-600 MB.
 def _cache_limit() -> int:
     try:
-        return max(1, int(os.environ.get("RAD_INTEL_MODEL_CACHE", "").strip() or 3))
+        return max(1, int(os.environ.get("RAD_INTEL_MODEL_CACHE", "").strip() or 1))
     except ValueError:
-        return 3
+        return 1
 
 
 def _read_pointer() -> dict[str, str]:
