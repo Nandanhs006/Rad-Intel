@@ -21,6 +21,7 @@ Two guards are enforced rather than left to care:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from rad_intel.api.ratelimit import client_address, limit
 from rad_intel.api.schemas import AdminProfileUpdate, AdminUserCreate, AdminUserUpdate
@@ -63,7 +64,13 @@ def _active_admin_count() -> int:
 async def overview(admin: dict = Depends(require_admin)):
     """Headline numbers plus whether code and email delivery are actually working."""
     everyone = accounts.list_clinicians()
-    requests_waiting = accounts.list_access_requests(status="new")
+    every_request = accounts.list_access_requests()
+    requests_waiting = [r for r in every_request if r["status"] == "new"]
+    # Requests that never reached an inbox. A misconfigured or expired SMTP
+    # password fails quietly from the applicant's side -- they are told the
+    # administrator will be in touch either way, which is true -- so the only
+    # place it can surface is here.
+    unemailed = [r for r in every_request if not r.get("notified")]
     return {
         "contact_note": CONTACT_NOTE,
         "users": {
@@ -73,6 +80,7 @@ async def overview(admin: dict = Depends(require_admin)):
             "admins": sum(1 for u in everyone if u["role"] == "admin"),
         },
         "access_requests_waiting": len(requests_waiting),
+        "access_requests_unemailed": len(unemailed),
         "open_sessions": len(session.list_active()),
         "activity_entries": activity.count(),
         "delivery": notify.delivery_status(),
@@ -306,6 +314,56 @@ async def list_requests(status: str | None = None, admin: dict = Depends(require
             "emailed_to_admin": bool(r.get("notified")),
         } for r in rows],
     }
+
+
+@router.post("/test-email",
+             dependencies=[Depends(limit("admin-test-email", 10, 600, "test emails"))])
+async def send_test_email(request: Request, admin: dict = Depends(require_admin)):
+    """
+    Send a test message to the administrator's address.
+
+    So SMTP can be checked after configuring it, rather than by submitting a
+    fake access request and waiting to see whether anything arrives.
+    """
+    if not notify.email_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=("No SMTP server is configured, so there is nothing to test. Set "
+                    "SMTP_HOST, SMTP_FROM and the rest in .env, restart, and try again."),
+        )
+    sent, detail = await run_in_threadpool(
+        notify.send_email,
+        "Rad-Intel: email delivery is working",
+        ("This is a test from the Rad-Intel administrator console.\n\n"
+         "If you are reading it, access requests will reach you at this address.\n"),
+    )
+    activity.record("admin.test_email", user=admin, ip=client_address(request),
+                    detail=detail, outcome="ok" if sent else "error")
+    if not sent:
+        raise HTTPException(status_code=502, detail=detail)
+    return {"sent": True, "detail": detail}
+
+
+@router.post("/requests/{request_id}/resend")
+async def resend_request_email(request_id: str, request: Request,
+                               admin: dict = Depends(require_admin)):
+    """Email a request that was recorded while mail delivery was not working."""
+    match = next((r for r in accounts.list_access_requests() if r["id"] == request_id), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="No such request.")
+
+    sent, detail = await run_in_threadpool(
+        notify.send_access_request_email,
+        match["full_name"], match["email"], match["institution"], match.get("phone"),
+        match.get("registration"), match.get("message"), request_id[:8],
+    )
+    if sent:
+        accounts.mark_request_notified(request_id)
+    activity.record("admin.request_resent", user=admin, ip=client_address(request),
+                    detail=f"{request_id[:8]} {detail}", outcome="ok" if sent else "error")
+    if not sent:
+        raise HTTPException(status_code=502, detail=detail)
+    return {"sent": True, "detail": detail}
 
 
 @router.patch("/requests/{request_id}")
