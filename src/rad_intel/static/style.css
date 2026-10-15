@@ -2601,3 +2601,58 @@ code.id-reveal {
 /* Form rows inside the console's two-column cards. */
 #admin-console .auth-form .form-row { margin-bottom: var(--sp-4); }
 #admin-console .form-divided { margin-top: var(--sp-6); padding-top: var(--sp-6); }
+
+/* ===================================================================
+   LISTS THAT SCROLL INSIDE THEMSELVES
+   A list long enough to need scrolling should scroll in its own box,
+   not push the rest of the page down. The height is set from the real
+   rows by showRows() in workspace.js; everything here is the chrome
+   around that -- the scrollbar, and the hint that there is more below.
+   =================================================================== */
+
+.scroll-box,
+.table-wrap {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-light) transparent;
+}
+
+/* A fixed cap is still wanted when a list is rendered before its rows
+   can be measured, so nothing can run away down the page. */
+.scroll-box { max-height: 420px; }
+.table-wrap { max-height: 560px; }
+
+.table-wrap::-webkit-scrollbar,
+.scroll-box::-webkit-scrollbar { width: 8px; height: 8px; }
+.table-wrap::-webkit-scrollbar-thumb,
+.scroll-box::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: var(--radius-full);
+}
+.table-wrap::-webkit-scrollbar-thumb:hover,
+.scroll-box::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* A capped list says so: a soft edge at the bottom, so it is obvious
+   there is more rather than looking like the list simply ends. */
+.scroll-box.has-more,
+.table-wrap.has-more {
+  position: relative;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+.scroll-box.has-more:hover,
+.table-wrap.has-more:hover {
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+
+/* The sticky header must sit above the rows scrolling under it. */
+.data-table thead th { z-index: 2; background: var(--surface-sunken); }
+
+/* The version lists in the side panels get the same treatment. */
+.version-list { overflow-y: auto; scrollbar-width: thin; }
+.version-list::-webkit-scrollbar { width: 8px; }
+.version-list::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: var(--radius-full);
+}
