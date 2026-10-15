@@ -2,7 +2,12 @@
 FastAPI dependency injection and singleton model management.
 """
 
+import json
+import logging
+import threading
 import time
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 from rad_intel.config import settings
@@ -10,6 +15,27 @@ from rad_intel.models.factory import create_model, ModelType, get_model_target_l
 from rad_intel.preprocessing.transforms import CXRPreprocessor, default_preprocessor
 from rad_intel.reporting.report_generator import ClinicalReportGenerator, default_report_generator
 from rad_intel.xai.gradcam import GradCAMExplainer
+
+logger = logging.getLogger(__name__)
+
+# Which checkpoint to serve for a given architecture, when it is not the base
+# one. Written by an administrator activating a fine-tuned version.
+#
+# A pointer file rather than copying the new weights over the base checkpoint:
+# the base file is the one whose numbers the project reports, so it stays
+# byte-identical on disk and reverting cannot fail halfway through a copy.
+ACTIVE_POINTER = settings.BASE_DIR / "weights" / "active_models.json"
+
+
+def _read_pointer() -> dict[str, str]:
+    if not ACTIVE_POINTER.exists():
+        return {}
+    try:
+        data = json.loads(ACTIVE_POINTER.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.warning("Ignoring unreadable %s: %s", ACTIVE_POINTER.name, exc)
+        return {}
 
 
 class ModelManager:
@@ -29,6 +55,61 @@ class ModelManager:
         # classifier head and returns confident-looking probabilities for it.
         self._trained: dict[str, bool] = {}
         self.active_model_name: str = settings.DEFAULT_MODEL
+        self._load_lock = threading.Lock()
+
+    # --- which checkpoint is served ---------------------------------------
+
+    def base_checkpoint(self, model_name: str) -> Path:
+        return settings.BASE_DIR / "weights" / f"best_{model_name}_model.pt"
+
+    def active_checkpoint(self, model_name: str | None = None) -> str | None:
+        """
+        The checkpoint path this model will actually load, or None if there is none.
+
+        An activated version wins; otherwise the architecture's own base file;
+        otherwise the hybrid base, which is the historical fallback.
+        """
+        target = self._clean_model_name(model_name)
+        if settings.MODEL_WEIGHTS_PATH:
+            return settings.MODEL_WEIGHTS_PATH
+
+        chosen = _read_pointer().get(target)
+        if chosen:
+            candidate = settings.BASE_DIR / "weights" / Path(chosen).name
+            if candidate.exists():
+                return str(candidate)
+            logger.warning("Activated checkpoint %s is missing; falling back to the base.",
+                           chosen)
+
+        own = self.base_checkpoint(target)
+        if own.exists():
+            return str(own)
+        fallback = self.base_checkpoint("hybrid")
+        return str(fallback) if fallback.exists() else None
+
+    def activate_checkpoint(self, model_name: str, checkpoint: Path | None) -> None:
+        """
+        Serve `checkpoint` for this architecture, or the base one when None.
+
+        The loaded model is dropped so the next request picks the new weights
+        up along with their own calibrated threshold. Loading happens on that
+        request rather than here, so a bad file surfaces as a failed request
+        instead of a half-swapped manager.
+        """
+        pointer = _read_pointer()
+        if checkpoint is None:
+            pointer.pop(model_name, None)
+        else:
+            pointer[model_name] = checkpoint.name
+        ACTIVE_POINTER.parent.mkdir(parents=True, exist_ok=True)
+        ACTIVE_POINTER.write_text(json.dumps(pointer, indent=2) + "\n", encoding="utf-8")
+
+        with self._load_lock:
+            self._models.pop(model_name, None)
+            self._thresholds.pop(model_name, None)
+            self._trained.pop(model_name, None)
+        logger.info("Serving %s for %s.",
+                    checkpoint.name if checkpoint else "the base checkpoint", model_name)
 
     def is_trained(self, model_name: str | None = None) -> bool:
         """True when a matching trained checkpoint was loaded for this model."""
@@ -73,14 +154,7 @@ class ModelManager:
         """Retrieves or lazily instantiates the requested model architecture."""
         target_name = self._clean_model_name(model_name)
         if target_name not in self._models:
-            # Check for model-specific checkpoint, then configured path
-            weights_to_load = settings.MODEL_WEIGHTS_PATH
-            if not weights_to_load:
-                model_ckpt = settings.BASE_DIR / "weights" / f"best_{target_name}_model.pt"
-                if model_ckpt.exists():
-                    weights_to_load = str(model_ckpt)
-                elif (settings.BASE_DIR / "weights" / "best_hybrid_model.pt").exists():
-                    weights_to_load = str(settings.BASE_DIR / "weights" / "best_hybrid_model.pt")
+            weights_to_load = self.active_checkpoint(target_name)
 
             model = create_model(
                 model_name=target_name,  # type: ignore

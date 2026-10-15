@@ -182,6 +182,11 @@ class FeedbackItem(BaseModel):
     note: str | None = None
     status: str
     exported_in: str | None = None
+    owner_id: str | None = None
+    # Whether the caller may change this record. Computed per request rather
+    # than stored: the same row is editable by its author and by the
+    # administrator, and by nobody else.
+    editable: bool = False
 
 
 class FeedbackListResponse(BaseModel):
@@ -205,18 +210,44 @@ class FeedbackExportResponse(BaseModel):
 
 
 # --- Authentication --------------------------------------------------------
+#
+# Signing in is two steps. The first names an account and gets a one-time code
+# sent to the phone on its record; the second exchanges that code for a
+# session. A clinician's first factor is the Rad-Intel ID the administrator
+# gave them, an administrator's is a password.
 
-class LoginRequest(BaseModel):
+
+class ClinicianCodeRequest(BaseModel):
+    email: str
+    radintel_id: str
+
+
+class AdminCodeRequest(BaseModel):
     email: str
     password: str
 
 
+class CodeRequestResponse(BaseModel):
+    sent: bool
+    channel: str
+    detail: str
+    expires_in_seconds: int
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
 class AuthMeResponse(BaseModel):
     authenticated: bool
+    id: str | None = None
     email: str | None = None
     full_name: str | None = None
     institution: str | None = None
     role: str | None = None
+    radintel_id: str | None = None
+    phone: str | None = None
     must_change_password: bool = False
 
 
@@ -229,5 +260,36 @@ class AccessRequestSubmission(BaseModel):
     full_name: str
     email: str
     institution: str
+    phone: str
     registration: str | None = None
     message: str | None = None
+
+
+# --- Administration --------------------------------------------------------
+
+class AdminUserCreate(BaseModel):
+    full_name: str
+    email: str
+    institution: str
+    phone: str
+    role: str = "clinician"
+    admin_note: str | None = None
+    radintel_id: str | None = None
+    password: str | None = None
+
+
+class AdminUserUpdate(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+    institution: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    status: str | None = None
+    admin_note: str | None = None
+
+
+class AdminProfileUpdate(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+    institution: str | None = None
+    phone: str | None = None

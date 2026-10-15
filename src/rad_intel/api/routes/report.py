@@ -8,11 +8,15 @@ from rad_intel.api.dependencies import (
     get_report_generator,
 )
 from rad_intel.api.schemas import ReportRequest, ReportResponse
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1", tags=["Clinical Reporting"])
 
 
-@router.post("/report", response_model=ReportResponse)
+@router.post("/report", response_model=ReportResponse,
+             dependencies=[Depends(limit("public-report", 20, 300,
+                                         "reports"))])
 async def generate_report(
     req: ReportRequest,
     generator: ClinicalReportGenerator = Depends(get_report_generator),
@@ -46,7 +50,9 @@ async def generate_report(
         raise HTTPException(status_code=500, detail=f"Report generation error: {str(e)}")
 
 
-@router.post("/report/pdf")
+@router.post("/report/pdf",
+             dependencies=[Depends(limit("public-report-pdf", 20, 300,
+                                         "report downloads"))])
 async def export_report_pdf(
     req: ReportRequest,
     generator: ClinicalReportGenerator = Depends(get_report_generator),

@@ -22,6 +22,7 @@ from rad_intel.api.routes import (
     assistant_router,
     feedback_router,
     auth_router,
+    admin_router,
 )
 
 logging.basicConfig(
@@ -98,6 +99,7 @@ app.include_router(history_router)
 app.include_router(assistant_router)
 app.include_router(feedback_router)
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 # Mount Static Assets and Sample Images
 static_dir = Path(__file__).resolve().parent.parent / "static"

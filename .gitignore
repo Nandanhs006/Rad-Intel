@@ -1,6 +1,9 @@
-# Environment variables
+# Environment variables and key material
 .env
 .env.local
+# Encrypts stored phone numbers and signs sessions. Losing it makes
+# stored phone numbers unreadable; leaking it makes them readable.
+.radintel_key
 
 # Python
 __pycache__/

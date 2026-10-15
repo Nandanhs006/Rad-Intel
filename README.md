@@ -164,6 +164,20 @@ Once running:
 | `GET` | `/api/v1/analyze/{id}/pdf` | Downloads the generated clinical PDF report for a completed analysis |
 | `GET` | `/api/v1/history` | Paginated query history of patient analyses from SQLite database |
 | `GET` | `/api/v1/history/{id}` | Detailed inspection of a specific past diagnostic scan |
+| `POST` | `/api/v1/assistant/chat` | Retrieval-grounded educational assistant (public, safety-gated) |
+| `POST` | `/api/v1/auth/code` | Clinician: email + Rad-Intel ID -> one-time code to their phone |
+| `POST` | `/api/v1/auth/admin/code` | Administrator: email + password -> one-time code |
+| `POST` | `/api/v1/auth/login` | Exchanges a one-time code for a session |
+| `POST` | `/api/v1/auth/request-access` | Records a request to join. Creates no account |
+| `GET` | `/api/v1/feedback` | The review queue. `scope=mine`, `sort=name` |
+| `POST` | `/api/v1/feedback/submit` | Runs the shared model and files the reviewer's verdict |
+| `PATCH`/`DELETE` | `/api/v1/feedback/{id}` | Correct or remove a case. Its author, or an administrator |
+| `POST` | `/api/v1/feedback/export` | Freezes pending cases into a versioned manifest |
+| `POST` | `/api/v1/feedback/train` | Starts the one fine-tuning run; `/train/cancel`, `/train/status` |
+| `GET` | `/api/v1/feedback/models` | Every version of the shared model and which one is served |
+| `GET` | `/api/v1/admin/*` | Accounts, access requests, sessions, activity log. Administrator only |
+
+Everything under `/api/v1/feedback` and `/api/v1/admin` requires a session; the rest is public.
 
 ---
 
@@ -182,4 +196,174 @@ DEFAULT_MODEL=hybrid
 # Port and Host
 HOST=127.0.0.1
 PORT=8000
+```
+---
+
+## 7. The Clinician Review Workspace
+
+A closed area of the web interface where named clinicians review cases against
+the one shared model and correct it where it is wrong. It is not public, there
+is no sign-up page, and an account exists only because an administrator
+created it.
+
+### How somebody gets in
+
+1. They open the **Clinician Feedback** tab, read what the study stores and
+   who can see it, and submit a request: name, institution, email and a phone
+   number. This creates no account.
+2. The request is recorded and — when SMTP is configured — emailed to the
+   administrator. It also appears in the administrator console.
+3. The administrator verifies their medical registration **independently**,
+   then creates the account and hands over the generated Rad-Intel ID in
+   person or by a channel the clinician already trusts.
+
+### Logging in
+
+Two factors, two requests, every time:
+
+| Who | First factor | Second factor |
+|---|---|---|
+| Clinician | email + Rad-Intel ID | one-time code to the registered phone |
+| Administrator | email + password | one-time code to the registered phone |
+
+A clinician has no password: the Rad-Intel ID their administrator issued is
+their first factor, so there is nothing for them to reuse from another site
+and nothing to phish out of them with a password form. The code is twelve
+characters, single-use, expires in ten minutes, is never issued twice to the
+same person, and is stored only as a hash.
+
+If a code cannot be delivered the sign-in is refused. It is never shown on
+screen: a system that falls back to displaying the code when its provider is
+down has a second factor in name only.
+
+### Administering it
+
+```bash
+# Create an account and print the Rad-Intel ID to hand over
+python scripts/manage_clinicians.py add --email a@b.org --name "Dr A" \
+    --institution "X Hospital" --phone "+91 98765 43210"
+
+python scripts/manage_clinicians.py list          # everyone
+python scripts/manage_clinicians.py show   --email a@b.org
+python scripts/manage_clinicians.py requests      # people waiting
+python scripts/manage_clinicians.py new-id --email a@b.org   # lost ID
+python scripts/manage_clinicians.py phone  --email a@b.org --phone "+91 ..."
+python scripts/manage_clinicians.py disable --email a@b.org  # takes effect at once
+python scripts/manage_clinicians.py delete  --email a@b.org
+python scripts/manage_clinicians.py migrate       # IDs for pre-existing accounts
+python scripts/manage_clinicians.py delivery      # is anything actually configured?
+```
+
+Everything above is also in the administrator console inside the workspace,
+along with the activity log, the open sessions and the access requests.
+
+### What each participant can do
+
+| | Clinician | Administrator |
+|---|---|---|
+| See every case from every site | yes | yes |
+| Edit or delete **their own** cases | yes | yes |
+| Edit or delete **anybody's** cases | no | yes |
+| Change the image on a filed case | no | no — delete and re-upload |
+| Create an export, start a fine-tuning run | yes | yes |
+| Cancel a run | only one they started | any |
+| Create, edit, disable or delete accounts | no | yes |
+| Read the activity log and open sessions | no | yes |
+| Choose which model version is served | no | yes |
+
+Other clinicians see only a participant's **name and institution**. Email
+addresses, phone numbers and Rad-Intel IDs are not in that response at all.
+
+### Training on reviewed cases
+
+Submitting a review changes nothing. Reviews are exported to a versioned
+manifest, which freezes them, and a fine-tuning run reads that manifest.
+
+There is **one shared model**, so there is one run at a time. While a run is
+going, everybody can keep uploading and correcting cases, but exporting and
+training are held and the interface says who is holding them. The run can be
+cancelled by the clinician who started it or by the administrator, and it
+cancels itself if the browser that started it stops reporting in for three
+minutes — training happens on the server, so a clinician's connection cannot
+interrupt the computation, but a run nobody is watching should not keep the
+queue locked.
+
+A run writes `weights/best_hybrid_v<N>_model.pt` and never overwrites the base
+checkpoint. **Nothing is served until an administrator activates it** from the
+"shared model" panel, which writes `weights/active_models.json` rather than
+copying over the base file — so the version the project's reported results
+describe stays byte-identical on disk and switching back cannot fail.
+
+To try the shared model without filing a review, use the **Analyse X-ray**
+tab: it runs whichever version is currently active.
+
+### Where images live
+
+`feedback_store/images/<sha256>.jpg`, one file per distinct radiograph, so the
+same image submitted twice costs nothing extra. The database holds only the
+hash and the path. They are served to logged-in clinicians through an
+authenticated endpoint that takes a record UUID, not a path, and the resolved
+path is checked against the store before anything is read — a URL alone is
+useless without a session. Deleting a case removes its image unless another
+case still refers to the same file.
+
+### Security, stated plainly
+
+What is in place:
+
+- Passwords and one-time codes are hashed (scrypt and a keyed digest); neither
+  is recoverable from the database.
+- Rad-Intel IDs and phone numbers are AES-256-GCM encrypted at rest, with a
+  keyed blind index so exact lookup still works without decrypting the table.
+- Sessions are server-side. The cookie carries a random token, `HttpOnly` and
+  `SameSite=Lax`, with no `Max-Age`, so it dies when the browser closes. The
+  server closes a session after an hour idle or twelve hours absolute, and
+  disabling an account or rotating an ID ends its sessions immediately.
+- Every action against shared data is logged against a name and readable only
+  by the administrator.
+- Rate limits on sign-in, code requests, access requests, submissions,
+  exports, training runs and the public analysis endpoints.
+
+What is **not** in place, and should be before this is anything but a study:
+
+- No TLS by default — set `RAD_INTEL_COOKIE_SECURE=1` once there is.
+- No encryption of the stored radiographs themselves, and no automatic
+  de-identification. That is the uploading clinician's responsibility, and the
+  consent panel says so.
+- No hardware tokens, no IP allow-list, no intrusion detection.
+- Rate-limit counters live in the process, which is correct for one Uvicorn
+  worker and would need shared storage before running several.
+
+Set `RAD_INTEL_SECRET_KEY` in any real deployment. Without it a key is
+generated into `.radintel_key`; that works, but it is one more file to keep
+and back up, and losing it makes stored phone numbers unreadable.
+
+---
+
+## 8. Environment Variables for the Workspace
+
+These are read from the process environment rather than through the settings
+object, so no endpoint or log can return them. See `.env.example` for the full
+list with comments.
+
+```ini
+RAD_INTEL_SECRET_KEY=        # signs sessions, encrypts phone numbers
+RAD_INTEL_COOKIE_SECURE=     # 1 behind HTTPS
+
+# one-time codes: WhatsApp when a WhatsApp sender is set, otherwise SMS
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_FROM=
+TWILIO_WHATSAPP_FROM=
+
+# LOCAL TESTING ONLY: with no provider, write codes to the server's own log
+RAD_INTEL_OTP_ECHO=
+
+# where access requests are emailed
+RAD_INTEL_ADMIN_EMAIL=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=
 ```
