@@ -29,7 +29,10 @@ That is the one mistake everybody makes. Step 3 is how you avoid it.
 
 You need a host that gives you:
 
-- **2 GB of memory** (the model needs roughly 1–1.5 GB just to load)
+- **2 GB of memory.** Measured: the service sits at about **820 MB** with the
+  default model loaded, and peaks near **1.6 GB** if somebody tries several
+  models and runs the explanation view, which loads a lung-segmentation model
+  of its own. 1 GB is not enough. 512 MB will not start.
 - **a disk that keeps files between deploys** (called a *volume*)
 - **HTTPS** (every host below gives this free)
 
@@ -170,6 +173,16 @@ GOOGLE_DRIVE_CLIENT_ID     = <from Step 4b>
 GOOGLE_DRIVE_CLIENT_SECRET = <from Step 4b>
 GOOGLE_DRIVE_REFRESH_TOKEN = <from Step 4b>
 ```
+
+**Optional, for a small box:**
+
+```
+RAD_INTEL_MODEL_CACHE = 3
+```
+
+How many models may be held in memory at once. Three is the default and fits
+2 GB. Each extra one is 30–600 MB, so on a 1 GB machine set it to `1`; with
+4 GB or more you can raise it and switching models gets quicker.
 
 **Leave these empty.** They are only for development:
 
