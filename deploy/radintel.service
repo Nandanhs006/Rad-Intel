@@ -1,0 +1,51 @@
+# Keeps Rad-Intel running on a Linux server.
+#
+# Install:
+#   sudo cp deploy/radintel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now radintel
+#
+# Watch it:    journalctl -u radintel -f
+# Restart it:  sudo systemctl restart radintel
+# Stop it:     sudo systemctl stop radintel
+#
+# Change User= and the two paths if your username or folder differ.
+
+[Unit]
+Description=Rad-Intel
+# Wait for the network, or the first start races DNS and the model load.
+After=network-online.target
+Wants=network-online.target
+# These belong in [Unit], not [Service]. systemd still accepts the old
+# placement and warns about it; this is the current spelling.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=exec
+User=azureuser
+WorkingDirectory=/home/azureuser/Rad-Intel
+Environment=RAD_INTEL_HOME=/home/azureuser/Rad-Intel
+ExecStart=/home/azureuser/Rad-Intel/deploy/run-rad-intel.sh
+
+# Loading the model takes a minute or two on a small machine, and systemd
+# must not decide it has hung and kill it.
+TimeoutStartSec=300
+
+# If it ever stops, start it again -- but not in a tight loop, so a genuine
+# crash shows up in the log instead of being hidden by a thousand restarts.
+Restart=always
+RestartSec=15
+
+# It needs its own folder and nothing else on the machine.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/azureuser/Rad-Intel
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
