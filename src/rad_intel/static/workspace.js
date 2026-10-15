@@ -77,6 +77,41 @@
     return "Could not reach the server. Check your connection and try again.";
   }
 
+  /**
+   * Cap a list at `visible` rows and let the rest be scrolled to.
+   *
+   * The height is measured from the rows that are actually there rather
+   * than guessed in the stylesheet, because a clinician row with a private
+   * note on it is twice the height of a session row, and one fixed pixel
+   * value would cut one off mid-line and leave the other half empty.
+   *
+   * Re-run after every render: the rows change, and so does the answer.
+   */
+  function showRows(container, visible, rowSelector) {
+    if (!container) return;
+    const rows = [...container.querySelectorAll(rowSelector)];
+    if (rows.length <= visible) {
+      container.style.maxHeight = "";
+      container.classList.remove("has-more");
+      return;
+    }
+    const gap = parseFloat(getComputedStyle(container).rowGap) || 0;
+    // A sticky table header sits inside the scrolling box, so its height is
+    // part of the box rather than part of a row.
+    const header = container.querySelector("thead");
+    const headerHeight = header ? header.getBoundingClientRect().height : 0;
+    const height = rows.slice(0, visible)
+      .reduce((total, row) => total + row.getBoundingClientRect().height, 0);
+    // The box's own borders, and a horizontal scrollbar when the table is
+    // wider than its column, both take height away from the rows. Measured
+    // while the box is still unconstrained, which is the only moment the
+    // difference between its outer and inner height is exactly that.
+    const chrome = container.offsetHeight - container.clientHeight;
+    container.style.maxHeight =
+      `${Math.ceil(headerHeight + height + gap * (visible - 1) + chrome)}px`;
+    container.classList.add("has-more");
+  }
+
   function busy(button, isBusy) {
     if (!button) return;
     button.disabled = isBusy;
@@ -795,6 +830,7 @@
             : ""}
         </div>`;
       }).join("");
+      showRows($("model-versions"), 3, ".version-row");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -864,6 +900,7 @@
             ? '<span class="badge badge-neutral">admin</span>' : ""}
         </div>`;
       }).join("");
+      showRows($("participants"), 5, ".roster-row");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -939,6 +976,7 @@
           </div>
         </div>`;
       }).join("");
+      showRows(panel, 3, ".version-row");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -1155,6 +1193,7 @@
           </td>
         </tr>
         <tr class="edit-row" hidden><td colspan="7"></td></tr>`).join("");
+      showRows($("admin-users").closest(".table-wrap"), 5, "tbody tr:not(.edit-row)");
     } catch (error) {
       if (error.status === 401) return applySession(null);
       body.innerHTML = `<tr><td colspan="7" class="table-empty">${esc(readable(error))}</td></tr>`;
@@ -1339,6 +1378,7 @@
             <button class="btn-link btn-link-danger" data-request-delete="${esc(request.id)}">Remove</button>
           </div>
         </div>`).join("");
+      showRows($("admin-requests"), 5, ".request-row");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -1434,6 +1474,7 @@
               `<button class="btn-link btn-link-danger" data-session-close="${esc(row.id)}">Close</button>`}
           </div>`).join("")
         : "<p class='muted small'>Nobody has the workspace open.</p>";
+      showRows($("admin-sessions"), 5, ".roster-row");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -1468,6 +1509,7 @@
             <td><small>${esc(entry.ip || "")}</small></td>
           </tr>`).join("")
         : `<tr><td colspan="5" class="table-empty">Nothing logged yet.</td></tr>`;
+      showRows($("admin-activity").closest(".table-wrap"), 10, "tbody tr");
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
