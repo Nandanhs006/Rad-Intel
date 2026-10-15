@@ -237,7 +237,7 @@ Two factors, two requests, every time:
 A clinician has no password: the Rad-Intel ID their administrator issued is
 their first factor, so there is nothing for them to reuse from another site
 and nothing to phish out of them with a password form. The code is twelve
-characters, single-use, expires in ten minutes, is never issued twice to the
+characters, single-use, expires in thirty minutes, is never issued twice to the
 same person, and is stored only as a hash.
 
 The code goes **by email**, to the address on the account. There is no SMS:
@@ -279,7 +279,7 @@ python scripts/manage_clinicians.py code --email you@example.org
 python scripts/manage_clinicians.py code --email you@example.org --admin
 ```
 
-It prints an ordinary sign-in code — single use, ten minutes, same
+It prints an ordinary sign-in code — single use, thirty minutes, same
 verification as any other — and sends it nowhere. In the login form, press
 **I already have a code** instead of **Send verification code**, and type it
 in. Running it needs a shell on the machine the service runs on, and anybody

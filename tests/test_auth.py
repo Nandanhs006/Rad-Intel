@@ -633,3 +633,38 @@ def test_an_administrator_minted_code_ignores_both_limits():
     for _ in range(otp.MAX_REQUESTS_PER_WINDOW + 4):
         code, message = otp.issue_code(user["id"], channel="console", rate_limited=False)
         assert code, message
+
+
+def test_the_email_states_the_real_lifetime(monkeypatch):
+    """
+    This drifted once already: the message said ten minutes while a code was
+    good for twelve hours, because the number was written out in one place
+    and defined in another. It is now derived, and this is what keeps it so.
+    """
+    from rad_intel.auth import notify
+
+    sent: list[str] = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SMTP_FROM", "study@example.org")
+    monkeypatch.delenv("RAD_INTEL_OTP_CHANNEL", raising=False)
+    monkeypatch.setattr(notify, "send_email",
+                        lambda subject, body, to=None: (sent.append(body), (True, "ok"))[1])
+
+    assert notify.send_verification_code("Known-Code1", "Dr A", "a@h.org")[0]
+    body = sent[0]
+    assert f"{otp.CODE_TTL_SECONDS // 60} minutes" in body
+    assert "One use only" in body
+
+
+def test_thirty_minutes_is_what_a_code_actually_gets():
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    assert otp.CODE_TTL_SECONDS == 30 * 60
+    user = _clinician()
+    otp.issue_code(user["id"])
+    with sqlite3.connect(otp.DB_PATH) as conn:
+        (expires,) = conn.execute(
+            "SELECT expires_at FROM login_codes WHERE state = 'live';").fetchone()
+    left = (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds()
+    assert timedelta(minutes=29).total_seconds() < left <= otp.CODE_TTL_SECONDS

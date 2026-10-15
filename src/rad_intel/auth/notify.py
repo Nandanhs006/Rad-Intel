@@ -87,8 +87,15 @@ def send_verification_code(code: str, full_name: str,
     the code went -- never what it is.
     """
     channel = channel_name()
+    # Derived, not written out. This said "10 minutes" while codes were
+    # actually good for twelve hours, because the number lived in two places
+    # and only one of them was changed.
+    from rad_intel.auth.otp import CODE_TTL_SECONDS
+
+    minutes = CODE_TTL_SECONDS // 60
+    window = f"{minutes} minutes" if minutes < 120 else f"{minutes // 60} hours"
     body = (f"Rad-Intel sign-in code for {full_name}: {code}\n"
-            f"Valid for 10 minutes. One use only. If you did not ask for it, ignore "
+            f"Valid for {window}. One use only. If you did not ask for it, ignore "
             f"this and tell the study administrator.")
 
     if channel == "email":
