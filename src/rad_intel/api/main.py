@@ -50,12 +50,57 @@ async def lifespan(app: FastAPI):
     logger.info("Rad-Intel server shutting down.")
 
 
+# The interactive API documentation is a complete map of the service,
+# administrator routes included. It is useful while building and it is of no
+# use to a member of the public, so it is off unless asked for. Every route
+# it described is still guarded; this removes the directory, not the locks.
+_docs_enabled = os.environ.get("RAD_INTEL_ENABLE_DOCS", "").strip() in ("1", "true", "yes")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Research and education framework for automated pneumonia classification, explanation and evidence-constrained reporting from chest radiographs. Not for clinical use.",
     lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """
+    Headers every response carries.
+
+    None of these replace a check on the server; they close off the ways a
+    browser can be talked into doing something with this page on somebody
+    else's behalf.
+    """
+    response = await call_next(request)
+    # The login form must not be loadable inside another site's frame, or a
+    # clinician can be persuaded to click something they cannot see.
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    # No guessing a type: an uploaded file served as an image stays an image.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Do not hand the full URL, which can carry a record id, to another site.
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # Nothing here needs a camera, a microphone or a location.
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    # Scripts and styles come from this origin and the few CDNs the page
+    # uses; frames come from nowhere. 'unsafe-inline' is still needed for the
+    # inline handlers the original page was written with.
+    response.headers.setdefault("Content-Security-Policy", "; ".join([
+        "default-src 'self'",
+        "img-src 'self' data: blob:",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ]))
+    return response
 
 from pathlib import Path
 from fastapi.responses import FileResponse

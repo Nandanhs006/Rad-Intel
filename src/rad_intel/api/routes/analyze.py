@@ -6,7 +6,9 @@ import time
 import uuid
 from pathlib import Path
 from typing import Literal
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Response
+from fastapi import (
+    APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile,
+)
 from rad_intel.api.dependencies import (
     ModelManager,
     get_model_manager,
@@ -27,9 +29,19 @@ from rad_intel.config import BASE_DIR
 from rad_intel.storage.database import db_manager
 from rad_intel.xai.gradcam import GradCAMExplainer
 from rad_intel.api.ratelimit import limit
+from rad_intel.api import grants
+from rad_intel.auth.dependencies import current_clinician, is_admin_session
 
 
 router = APIRouter(prefix="/api/v1", tags=["Comprehensive Analysis"])
+
+import os
+
+
+def _cookie_secure() -> bool:
+    """Set RAD_INTEL_COOKIE_SECURE=1 behind HTTPS."""
+    return os.environ.get("RAD_INTEL_COOKIE_SECURE", "").strip() in ("1", "true", "yes")
+
 
 REPORTS_DIR = BASE_DIR / "uploads" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,6 +51,8 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
              dependencies=[Depends(limit("public-analyze", 20, 300,
                                          "full analyses"))])
 async def analyze_xray(
+    request: Request,
+    response: Response,
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG)"),
     model_name: ModelType | None = Form(
         None, description="Model architecture (defaults to config default: hybrid)"
@@ -158,6 +172,20 @@ async def analyze_xray(
             execution_time_ms=total_elapsed_ms,
         )
 
+        # Remember, in this browser only, that it produced this report. The
+        # download route below asks for the same proof, so a report id that
+        # leaks -- in a shared link, in browser history, in a log -- does not
+        # carry the report with it.
+        response.set_cookie(
+            key=grants.COOKIE_NAME,
+            value=grants.grant(request.cookies.get(grants.COOKIE_NAME), analysis_id),
+            max_age=grants.COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=_cookie_secure(),
+            path="/",
+        )
+
         return AnalysisResponse(
             analysis_id=analysis_id,
             prediction=PredictionResponse(
@@ -196,12 +224,22 @@ async def analyze_xray(
 @router.get("/analyze/{analysis_id}/pdf",
             dependencies=[Depends(limit("public-pdf", 30, 300,
                                         "report downloads"))])
-async def download_analysis_pdf(analysis_id: str):
+async def download_analysis_pdf(analysis_id: str, request: Request,
+                                user: dict | None = Depends(current_clinician)):
     """
-    Downloads the compiled clinical radiology PDF report for the specified analysis ID.
+    Download the compiled report for an analysis.
+
+    Only the browser that ran it, or an administrator. The report carries the
+    patient reference and clinical history whoever ran it typed in, and an
+    analysis id on its own is a capability: it travels in URLs, in history,
+    in a shared link, in a server log. The same refusal is given for an id
+    that does not exist and one this browser may not have, so the route
+    cannot be used to find out which ids are real.
     """
+    allowed = (grants.holds(request.cookies.get(grants.COOKIE_NAME), analysis_id)
+               or is_admin_session(user))
     pdf_path = REPORTS_DIR / f"{analysis_id}.pdf"
-    if not pdf_path.exists():
+    if not allowed or not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF report not found for this analysis ID.")
 
     return Response(
