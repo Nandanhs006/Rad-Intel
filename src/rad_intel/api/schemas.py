@@ -21,7 +21,11 @@ class ModelInfo(BaseModel):
     description: str
     is_hybrid: bool
     is_ablation: bool
-    parameters_count: int
+    # None when the count could not be read from the checkpoint. It is taken
+    # from the file's shapes rather than from a loaded model, because this
+    # list is fetched on every page load and loading five models for a number
+    # is how a small host runs out of memory.
+    parameters_count: int | None = None
     # A short label for the model chooser, e.g. "92.0% acc, AUC 0.974".
     label: str | None = None
     # Set on a version an administrator released from reviewed cases, so the

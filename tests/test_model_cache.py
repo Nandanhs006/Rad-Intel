@@ -106,3 +106,53 @@ def test_a_cache_of_one_still_serves_everything(monkeypatch):
     # The default plus whichever was asked for last.
     assert "hybrid" in manager._models
     assert len(manager._models) <= 2
+
+
+# --- listing the models must not load them ----------------------------------
+
+async def test_listing_the_models_does_not_load_any_of_them():
+    """
+    The interface fetches this on every page load, to fill the chooser.
+
+    It used to count parameters with sum(p.numel() for p in
+    get_model(name).parameters()), so every visitor arriving loaded all five
+    architectures and every released version — 1.2 GB and several seconds,
+    for a number that is written in the checkpoint's own shapes.
+    """
+    from rad_intel.api.dependencies import model_manager
+    from rad_intel.api.routes.health import list_models
+
+    model_manager._models.clear()
+    listing = await list_models(model_manager)
+
+    assert model_manager._models == {}, "not one model was loaded to list them"
+    counts = {m.name: m.parameters_count for m in listing.available_models}
+    assert counts["hybrid"] and counts["hybrid"] > 30_000_000
+    # Read from the file, so it matches the architecture rather than a guess.
+    assert counts["densenet121"] and counts["densenet121"] < counts["hybrid"]
+
+
+async def test_a_model_with_no_weights_here_is_not_offered(monkeypatch):
+    """
+    A deployment uploads one checkpoint, not five.
+
+    The others are names with nothing behind them, and offering one means a
+    visitor picks it and gets an error rather than a result.
+    """
+    from rad_intel.api.dependencies import model_manager
+    from rad_intel.api.routes.health import list_models
+
+    monkeypatch.setattr(model_manager, "has_checkpoint",
+                        lambda name: name == "hybrid")
+    listing = await list_models(model_manager)
+    assert [m.name for m in listing.available_models] == ["hybrid"]
+
+
+async def test_the_default_is_offered_even_with_nothing_behind_it(monkeypatch):
+    """Otherwise the chooser is empty and says nothing about why."""
+    from rad_intel.api.dependencies import model_manager
+    from rad_intel.api.routes.health import list_models
+
+    monkeypatch.setattr(model_manager, "has_checkpoint", lambda name: False)
+    listing = await list_models(model_manager)
+    assert [m.name for m in listing.available_models] == [model_manager.active_model_name]

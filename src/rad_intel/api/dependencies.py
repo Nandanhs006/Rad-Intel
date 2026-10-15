@@ -76,6 +76,10 @@ class ModelManager:
         # API happily serves an ImageNet-initialised network with a random
         # classifier head and returns confident-looking probabilities for it.
         self._trained: dict[str, bool] = {}
+        # Parameter counts, read from the checkpoints rather than from loaded
+        # models. Cached for the life of the process: a checkpoint's shapes
+        # do not change under it.
+        self._parameter_counts: dict[str, int] = {}
         self.active_model_name: str = settings.DEFAULT_MODEL
         self._load_lock = threading.Lock()
 
@@ -143,6 +147,7 @@ class ModelManager:
         instead of a half-swapped manager.
         """
         pointer = _read_pointer()
+        self._parameter_counts.pop(model_name, None)
         if checkpoint is None:
             pointer.pop(model_name, None)
         else:
@@ -156,6 +161,63 @@ class ModelManager:
             self._trained.pop(model_name, None)
         logger.info("Serving %s for %s.",
                     checkpoint.name if checkpoint else "the base checkpoint", model_name)
+
+    def parameter_count(self, model_name: str | None = None) -> int | None:
+        """
+        How many parameters a model has, without loading the model.
+
+        Counted from the shapes in its checkpoint, read through mmap so the
+        136 MB of weights are never pulled into memory. This used to be
+        `sum(p.numel() for p in self.get_model(name).parameters())`, in an
+        endpoint the interface calls on *every page load* to fill the model
+        chooser -- which meant every visitor arriving loaded all five
+        architectures and every released version, for a number.
+
+        None when there is no checkpoint, which is also how the caller finds
+        out a model has no weights on this server.
+        """
+        target = self._clean_model_name(model_name)
+        with self._load_lock:
+            if target in self._parameter_counts:
+                return self._parameter_counts[target]
+
+        # Already in memory: counting it there is free and exact.
+        if target in self._models:
+            total = sum(p.numel() for p in self._models[target].parameters())
+        else:
+            path = self.active_checkpoint(target)
+            if not path or not Path(path).is_file():
+                return None
+            try:
+                blob = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
+                state = blob.get("model_state_dict", blob) if isinstance(blob, dict) else {}
+                total = sum(v.numel() for v in state.values() if hasattr(v, "numel"))
+            except Exception as exc:
+                logger.warning("Could not count parameters in %s: %s", path, exc)
+                return None
+            if not total:
+                return None
+
+        with self._load_lock:
+            self._parameter_counts[target] = total
+        return total
+
+    def has_checkpoint(self, model_name: str) -> bool:
+        """
+        Whether this server actually has weights for a model.
+
+        A deployment is told to upload one checkpoint, not five, so the other
+        architectures exist as names with nothing behind them. Offering those
+        in the chooser means a visitor picks one and gets an error; this is
+        how they stay out of the list instead.
+        """
+        target = self._clean_model_name(model_name)
+        own = self.base_checkpoint(target)
+        if own.is_file():
+            return True
+        from rad_intel.models import registry
+
+        return registry.resolve(target) is not None
 
     def is_trained(self, model_name: str | None = None) -> bool:
         """True when a matching trained checkpoint was loaded for this model."""
