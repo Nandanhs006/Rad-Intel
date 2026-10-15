@@ -419,6 +419,17 @@ What is in place:
 - Rate limits on sign-in, code requests, access requests, submissions,
   exports, training runs and the public analysis endpoints.
 
+- Reports are downloadable only by the browser that produced them, or by an
+  administrator. An analysis id alone is not enough: the browser proves it
+  with a signed cookie listing the ids it ran. An id that leaks in a URL, a
+  shared link or a log does not carry the report with it.
+- The interactive API documentation is off unless `RAD_INTEL_ENABLE_DOCS=1`,
+  so the service does not publish a directory of its own administrator routes.
+- Every response carries `X-Frame-Options: DENY`, `X-Content-Type-Options`,
+  a `Referrer-Policy`, a `Permissions-Policy` and a Content-Security-Policy
+  with `frame-ancestors 'none'`, so the login form cannot be framed and a
+  record id cannot leak through a referrer.
+
 What is **not** in place, and should be before this is anything but a study:
 
 - No TLS by default — set `RAD_INTEL_COOKIE_SECURE=1` once there is.

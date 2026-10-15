@@ -1438,3 +1438,76 @@ async def test_no_website_can_make_a_credentialed_request_to_this_api():
     assert allowed != "https://evil.example"
     assert allowed != "*"
     assert res.headers.get("access-control-allow-credentials") != "true"
+
+
+# --- a report belongs to the browser that made it ---------------------------
+
+async def test_a_report_cannot_be_fetched_with_its_id_alone(dummy_cxr_bytes):
+    """
+    The id was the only thing between a stranger and somebody else's report,
+    and a report carries the patient reference and clinical history whoever
+    ran it typed in. An id is a capability: it travels in URLs, in history,
+    in a shared link, in a log. "Unguessable" is not "nobody else can have
+    it".
+    """
+    async with _client() as mine:
+        res = await mine.post("/api/v1/analyze",
+                              files={"file": ("x.png", dummy_cxr_bytes, "image/png")},
+                              data={"patient_id": "PT-PRIVATE"})
+        assert res.status_code == 200
+        analysis_id = res.json()["analysis_id"]
+        # The browser that ran it can have it.
+        assert (await mine.get(f"/api/v1/analyze/{analysis_id}/pdf")).status_code == 200
+
+    # Somebody else holding the same id cannot.
+    async with _client() as stranger:
+        assert (await stranger.get(f"/api/v1/analyze/{analysis_id}/pdf")).status_code == 404
+
+
+async def test_a_grant_cookie_cannot_be_edited_to_add_an_id():
+    from rad_intel.api import grants
+
+    real = grants.grant(None, "analysis-one")
+    assert grants.holds(real, "analysis-one")
+
+    ids, _, signature = real.rpartition(".")
+    forged = f"{ids},analysis-two.{signature}"
+    assert not grants.holds(forged, "analysis-two"), "the list must be signed as a whole"
+    assert not grants.holds(forged, "analysis-one"), "a tampered cookie is worth nothing"
+    assert grants.read("nonsense") == []
+    assert grants.read(None) == []
+
+
+async def test_the_grant_list_does_not_grow_without_bound():
+    from rad_intel.api import grants
+
+    cookie = None
+    for n in range(grants.MAX_GRANTS + 10):
+        cookie = grants.grant(cookie, f"analysis-{n}")
+    assert len(grants.read(cookie)) == grants.MAX_GRANTS
+    assert grants.holds(cookie, f"analysis-{grants.MAX_GRANTS + 9}"), "newest kept"
+    assert not grants.holds(cookie, "analysis-0"), "oldest dropped"
+
+
+# --- what the service tells the world about itself --------------------------
+
+async def test_the_api_map_is_not_published():
+    """
+    The interactive docs are a complete directory of the service, including
+    every administrator route. Useful while building, of no use to a visitor.
+    """
+    async with _client() as client:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert (await client.get(path)).status_code == 404, path
+
+
+async def test_every_response_carries_the_browser_side_protections():
+    async with _client() as client:
+        res = await client.get("/api/v1/health")
+    headers = {k.lower(): v for k, v in res.headers.items()}
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["x-content-type-options"] == "nosniff"
+    assert "strict-origin" in headers["referrer-policy"]
+    csp = headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "default-src 'self'" in csp

@@ -750,7 +750,9 @@ async def activate_version(request: Request, file: str = Form(...),
 
 # --- stored images ----------------------------------------------------------
 
-@router.get("/image/{record_id}")
+@router.get("/image/{record_id}",
+            dependencies=[Depends(limit("feedback-image", 400, 3600,
+                                        "radiograph views"))])
 async def feedback_image(record_id: str, _user: dict = Depends(require_clinician)):
     """
     Serve a reviewed radiograph to a signed-in clinician.
