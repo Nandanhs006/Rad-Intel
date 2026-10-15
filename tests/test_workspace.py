@@ -1386,3 +1386,55 @@ def test_a_tampered_path_cannot_reach_a_file_outside_the_store():
     for attempt in ("../rad_intel.db", "/etc/passwd", "feedback_store/../rad_intel.db"):
         assert fb._resolve_image(attempt) is None, attempt
     assert fb._resolve_image(None) is None
+
+
+# --- what an anonymous visitor can read -------------------------------------
+
+async def test_the_analysis_audit_log_is_not_public():
+    """
+    The analyse form invites a patient identifier and a clinical history, so
+    this table is the one place holding free text somebody typed about a
+    patient. It used to be readable by anyone who asked.
+    """
+    async with _client() as client:
+        listing = await client.get("/api/v1/history")
+        detail = await client.get("/api/v1/history/any-id")
+    assert listing.status_code == 401
+    assert detail.status_code == 401
+
+
+async def test_a_clinician_cannot_read_it_either():
+    """
+    Those rows include runs by members of the public, who never saw the
+    workspace's consent panel and did not agree to be visible to a group of
+    named clinicians. Only the administrator answers for them.
+    """
+    user = _make_clinician()
+    async with _client() as client:
+        res = await client.get("/api/v1/history", cookies=_signed_in(user))
+    assert res.status_code == 403
+
+
+async def test_an_administrator_can_read_it():
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.get("/api/v1/history", cookies=_signed_in(admin))
+    assert res.status_code == 200
+    assert "records" in res.json()
+
+
+async def test_no_website_can_make_a_credentialed_request_to_this_api():
+    """
+    allow_origins=["*"] with allow_credentials=True makes Starlette echo back
+    whichever Origin asked. SameSite=Lax kept the cookie off those requests,
+    so it was not exploitable as it stood -- but it was one cookie attribute
+    away, and the interface is same-origin and needs no CORS at all.
+    """
+    user = _make_clinician()
+    async with _client() as client:
+        res = await client.get("/api/v1/feedback", cookies=_signed_in(user),
+                               headers={"Origin": "https://evil.example"})
+    allowed = res.headers.get("access-control-allow-origin")
+    assert allowed != "https://evil.example"
+    assert allowed != "*"
+    assert res.headers.get("access-control-allow-credentials") != "true"

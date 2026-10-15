@@ -48,5 +48,30 @@ def no_live_delivery(monkeypatch):
     for name in (
         "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
         "RAD_INTEL_OTP_CHANNEL", "RAD_INTEL_OTP_ECHO", "RAD_INTEL_ADMIN_EMAIL",
+        "RAD_INTEL_CORS_ORIGINS", "RAD_INTEL_FEEDBACK_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_live_language_model(monkeypatch):
+    """
+    Keep the suite off the language API.
+
+    Running it was making real calls on whoever's key was in .env: it spent
+    their quota, needed a network, and made the reporting test flaky because
+    it asserted things about wording a model chooses afresh each time. The
+    offline path is the one worth testing anyway -- it is what runs when the
+    key is missing or the service is down, which is exactly when a report
+    still has to come out. A test that wants the live client sets the key
+    itself.
+    """
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("rad_intel.config.settings.GEMINI_API_KEY", None)
+    try:
+        from rad_intel.reporting import report_generator as rg
+
+        monkeypatch.setattr(rg.default_report_generator.gemini_client, "_client", None,
+                            raising=False)
+    except Exception:
+        pass

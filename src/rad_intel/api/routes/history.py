@@ -1,12 +1,23 @@
 """
-History and audit log retrieval API routes.
+The analysis audit log.
+
+Every run of the public tool is recorded here, and the form that feeds it
+invites a patient identifier and a clinical history. That makes this table
+the one place in the service holding free text somebody typed about a
+patient, so it is **not** public, even though the tool that writes to it is.
+
+It was: `/history` returned every record ever created, patient identifiers
+and all, to anyone who asked. Nothing in the interface used it. It is now
+behind the administrator, who is the person answerable for what the study
+stores -- not merely behind a clinician session, because the rows include
+runs by members of the public who never saw the review workspace's consent
+panel and did not agree to be visible to a group of named clinicians.
 """
 
-from fastapi import APIRouter, HTTPException, Query
-from rad_intel.api.schemas import (
-    AnalysisHistoryResponse,
-    AnalysisHistoryItem,
-)
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from rad_intel.api.schemas import AnalysisHistoryItem, AnalysisHistoryResponse
+from rad_intel.auth.dependencies import require_admin
 from rad_intel.storage.database import db_manager
 
 router = APIRouter(prefix="/api/v1", tags=["Audit & History"])
@@ -16,8 +27,9 @@ router = APIRouter(prefix="/api/v1", tags=["Audit & History"])
 async def get_history(
     limit: int = Query(50, ge=1, le=100, description="Max records to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
+    _admin: dict = Depends(require_admin),
 ):
-    """Retrieves logged historical patient CXR analyses."""
+    """Logged historical analyses. Administrator only."""
     records = await db_manager.list_analyses(limit=limit, offset=offset)
     items = [
         AnalysisHistoryItem(
@@ -38,8 +50,8 @@ async def get_history(
 
 
 @router.get("/history/{record_id}")
-async def get_history_detail(record_id: str):
-    """Retrieves full analysis record including raw report markdown and probabilities."""
+async def get_history_detail(record_id: str, _admin: dict = Depends(require_admin)):
+    """One record in full, including the generated report. Administrator only."""
     record = await db_manager.get_analysis(record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Analysis record not found.")
