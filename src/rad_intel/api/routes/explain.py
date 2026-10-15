@@ -11,7 +11,6 @@ from rad_intel.api.dependencies import (
     get_preprocessor,
     CXRPreprocessor,
 )
-from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import ExplanationResponse, AnatomicalLocalization
 from rad_intel.xai.gradcam import GradCAMExplainer
 from rad_intel.xai.lime_explainer import LIMECXRExplainer
@@ -29,7 +28,7 @@ async def explain_xray(
     method: Literal["gradcam", "gradcam++", "lime"] = Form(
         "gradcam", description="Explainability algorithm to apply"
     ),
-    model_name: ModelType | None = Form(None, description="Target model architecture"),
+    model_name: str | None = Form(None, description="Model name, as listed by /api/v1/models"),
     target_category: int | None = Form(
         None, description="Category index (0=NORMAL, 1=PNEUMONIA, None=predicted class)"
     ),

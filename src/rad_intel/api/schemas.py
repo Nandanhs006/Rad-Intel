@@ -22,6 +22,13 @@ class ModelInfo(BaseModel):
     is_hybrid: bool
     is_ablation: bool
     parameters_count: int
+    # A short label for the model chooser, e.g. "92.0% acc, AUC 0.974".
+    label: str | None = None
+    # Set on a version an administrator released from reviewed cases, so the
+    # interface can mark it apart from the ones the project reports.
+    is_released: bool = False
+    released_at: str | None = None
+    metrics: dict[str, float] | None = None
 
 
 class ModelsListResponse(BaseModel):
@@ -304,3 +311,10 @@ class AdminProfileUpdate(BaseModel):
     email: str | None = None
     institution: str | None = None
     phone: str | None = None
+
+
+class ModelReleaseRequest(BaseModel):
+    """Publishing a model is confirmed with the administrator's password."""
+    file: str
+    password: str
+    note: str | None = None

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=17">
+  <link rel="stylesheet" href="/static/style.css?v=19">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -96,13 +96,14 @@
               </div>
               <div class="input-group">
                 <label for="select-model">Model Architecture</label>
-                <select id="select-model">
+<select id="select-model">
                   <option value="hybrid" selected>Hybrid (DenseNet + Swin + CBAM) &mdash; 92.0% acc, AUC 0.974</option>
-                  <option value="hybrid_no_cbam">Fusion without CBAM &mdash; 93.4% acc, AUC 0.977</option>
-                  <option value="densenet121">DenseNet121 &mdash; 91.5% acc, AUC 0.962</option>
-                  <option value="swin_t">Swin-T &mdash; 90.1% acc, AUC 0.975</option>
-                  <option value="resnet50">ResNet50 &mdash; 89.7% acc, AUC 0.954</option>
                 </select>
+                <span class="field-hint" id="model-hint">
+                  The list is filled in from the server, so a version released from
+                  clinician-reviewed cases appears here with the scores it was measured
+                  at.
+                </span>
               </div>
             </div>
             <div class="input-row">
@@ -313,9 +314,15 @@
             <ul>
               <li><strong>One shared model, pooled data.</strong> Every participating
                   clinician reviews cases against the same model. Reviews from all sites
-                  are pooled and used to fine-tune that one model, which all participants
-                  then use. Your reviews are not kept to yourself, and neither is anyone
-                  else's.</li>
+                  are pooled and used to fine-tune that one model. Your reviews are not
+                  kept to yourself, and neither is anyone else's.</li>
+              <li><strong>Where a trained model can end up.</strong> A version
+                  fine-tuned on these reviews — yours among them — may be released by the
+                  study administrator onto the <em>public</em> part of this site, where
+                  anyone visiting can select it. It is published with the scores it was
+                  measured at, and the default model is not changed. Your radiographs
+                  are never published; what can become public is a model whose weights
+                  were shaped by them.</li>
               <li><strong>What is stored.</strong> The radiograph you upload, its SHA-256
                   hash, your name and institution, the model's prediction and probability,
                   your verdict, and any note. The image is kept on this server because
@@ -340,8 +347,9 @@
               <li><strong>Leaving.</strong> Ask the administrator to disable your account
                   at any time, and your cases can be deleted on request. Reviews already
                   folded into a trained model cannot be retrospectively removed from that
-                  model's weights — that is why this is said before you log in and not
-                  afterwards.</li>
+                  model's weights, and a version already released cannot be unlearned by
+                  anyone who downloaded it — that is why this is said before you log in
+                  and not afterwards.</li>
             </ul>
           </div>
 
@@ -859,6 +867,19 @@
             </section>
           </div>
 
+          <section class="card" aria-label="Release a model">
+            <h3 class="card-title card-title-sm">Release a model to the public</h3>
+            <p class="card-subtitle">
+              A fine-tuning run writes a new version and changes nothing. Releasing one
+              puts it in the model list on the <strong>Analyse X-ray</strong> tab, beside
+              the models the project reports, with the scores it was measured at. The
+              model the site uses by default does not change — people choose it
+              deliberately. Your password is asked for every time.
+            </p>
+            <div id="release-list" class="version-list"></div>
+            <div id="release-result" class="fb-result" hidden></div>
+          </section>
+
           <section class="card" aria-label="Activity log">
             <h3 class="card-title card-title-sm">
               Activity log <span class="count-pill" id="activity-count">—</span>
@@ -939,6 +960,24 @@
                 sampled cases despite passing schema validation.</li>
           </ul>
         </section>
+
+        <section class="card">
+          <h2 class="card-title">Which model you are using</h2>
+          <p class="card-subtitle">
+            The table above describes the five configurations trained for this project,
+            measured on the held-out partition named there.
+          </p>
+          <div class="notice notice-amber">
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>The model chooser on the Analyse tab may also offer versions marked
+            <strong>released from reviewed cases</strong>. Those were fine-tuned on
+            radiographs contributed by participating clinicians <em>after</em> these
+            results were measured. They are scored on the same held-out partition and
+            their numbers are shown beside their names, but <strong>the table above does
+            not describe them</strong> — it describes the five configurations only. The
+            default is unchanged: the complete classifier.</span>
+          </div>
+        </section>
       </div>
     </section>
   </main>
@@ -946,8 +985,8 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast">Copied to clipboard</div>
 
-  <script src="/static/app.js?v=4"></script>
-  <script src="/static/extras.js?v=17"></script>
-  <script src="/static/workspace.js?v=17"></script>
+  <script src="/static/app.js?v=5"></script>
+  <script src="/static/extras.js?v=19"></script>
+  <script src="/static/workspace.js?v=19"></script>
 </body>
 </html>

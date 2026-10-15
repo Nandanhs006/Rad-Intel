@@ -62,6 +62,14 @@ class ModelManager:
     def base_checkpoint(self, model_name: str) -> Path:
         return settings.BASE_DIR / "weights" / f"best_{model_name}_model.pt"
 
+    def known_models(self) -> list[str]:
+        """Built-in architectures plus whatever has been released."""
+        from rad_intel.models import registry
+
+        return list(settings.CLASS_NAMES and [
+            "hybrid", "densenet121", "swin_t", "hybrid_no_cbam", "resnet50",
+        ]) + sorted(registry.released())
+
     def active_checkpoint(self, model_name: str | None = None) -> str | None:
         """
         The checkpoint path this model will actually load, or None if there is none.
@@ -70,6 +78,15 @@ class ModelManager:
         otherwise the hybrid base, which is the historical fallback.
         """
         target = self._clean_model_name(model_name)
+
+        # A released version names its own checkpoint, and wins over
+        # everything else: it was published deliberately.
+        from rad_intel.models import registry
+
+        resolved = registry.resolve(target)
+        if resolved:
+            return str(resolved[1])
+
         if settings.MODEL_WEIGHTS_PATH:
             return settings.MODEL_WEIGHTS_PATH
 
@@ -86,6 +103,13 @@ class ModelManager:
             return str(own)
         fallback = self.base_checkpoint("hybrid")
         return str(fallback) if fallback.exists() else None
+
+    def forget(self, model_name: str) -> None:
+        """Drop a cached model so the next request loads it afresh."""
+        with self._load_lock:
+            self._models.pop(model_name, None)
+            self._thresholds.pop(model_name, None)
+            self._trained.pop(model_name, None)
 
     def activate_checkpoint(self, model_name: str, checkpoint: Path | None) -> None:
         """
@@ -127,6 +151,18 @@ class ModelManager:
         from fastapi import HTTPException
 
         target_name = self._clean_model_name(model_name)
+
+        # The form field is a plain string now, because a released version's
+        # name is not known until it is released. This is where a name that
+        # is not on offer gets refused.
+        known = self.known_models()
+        if target_name not in known:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"There is no model called '{target_name}'. The ones available "
+                        f"are: {', '.join(known)}."),
+            )
+
         if not self.is_trained(target_name):
             raise HTTPException(
                 status_code=503,
@@ -154,10 +190,17 @@ class ModelManager:
         """Retrieves or lazily instantiates the requested model architecture."""
         target_name = self._clean_model_name(model_name)
         if target_name not in self._models:
+            from rad_intel.models import registry
+
             weights_to_load = self.active_checkpoint(target_name)
+            resolved = registry.resolve(target_name)
+            # A released version is one of the known architectures carrying
+            # different weights, so the network is built from the
+            # architecture and the name is only a label.
+            architecture = resolved[0] if resolved else target_name
 
             model = create_model(
-                model_name=target_name,  # type: ignore
+                model_name=architecture,  # type: ignore
                 num_classes=settings.NUM_CLASSES,
                 pretrained=True,
                 weights_path=weights_to_load,
@@ -174,7 +217,7 @@ class ModelManager:
             if weights_to_load:
                 try:
                     meta = torch.load(weights_to_load, map_location="cpu", weights_only=False)
-                    if isinstance(meta, dict) and meta.get("model_type") in (None, target_name):
+                    if isinstance(meta, dict) and meta.get("model_type") in (None, architecture):
                         self._trained[target_name] = True
                         thr = meta.get("optimal_threshold")
                         if isinstance(thr, (int, float)) and 0.0 < float(thr) < 1.0:

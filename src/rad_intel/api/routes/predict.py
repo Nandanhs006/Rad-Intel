@@ -9,7 +9,6 @@ from rad_intel.api.dependencies import (
     get_preprocessor,
     CXRPreprocessor,
 )
-from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import PredictionResponse
 from rad_intel.api.ratelimit import limit
 
@@ -22,7 +21,7 @@ router = APIRouter(prefix="/api/v1", tags=["Prediction"])
                                          "predictions"))])
 async def predict_xray(
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG, or DICOM-derived)"),
-    model_name: ModelType | None = Form(
+    model_name: str | None = Form(
         None, description="Model architecture to use (optional, defaults to config)"
     ),
     manager: ModelManager = Depends(get_model_manager),
