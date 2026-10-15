@@ -17,7 +17,10 @@ The rules, and what each one costs and buys:
   was open somewhere else. Two clinicians cannot quietly share one Rad-Intel
   ID, and if an ID is passed around, the person it was issued to finds
   themselves logged out -- a far better alarm than a line in a log nobody
-  reads.
+  reads. "Device" is a long-lived cookie that outlives the browser session,
+  so closing the browser and logging in again on the same machine is not
+  reported as a second device. Clearing cookies or using another browser
+  makes a new one, which is the honest limit of what a web page can know.
 * **The session remembers which door was used.** An administrator who signed
   in with their Rad-Intel ID holds a clinician session and gets clinician
   powers; the console needs a session opened with the administrator password.
@@ -39,11 +42,21 @@ from rad_intel.config import BASE_DIR
 DB_PATH = BASE_DIR / "rad_intel.db"
 
 COOKIE_NAME = "radintel_session"
+# A long-lived marker for "this browser on this machine", so that closing the
+# browser and logging in again is not mistaken for a second device. It names
+# nothing and grants nothing: on its own it is a random string that lets no
+# one in.
+DEVICE_COOKIE_NAME = "radintel_device"
+DEVICE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
-# A ceiling for a browser that restores its tabs, and so its session cookies,
-# rather than a lifetime anybody should notice. Normal use ends the session
-# by closing the browser long before this.
-SESSION_TTL_SECONDS = 12 * 60 * 60
+
+def new_device_id() -> str:
+    return secrets.token_urlsafe(16)
+
+# A ceiling for a browser that is never closed. Closing one ends the session
+# immediately -- the cookie has no Max-Age -- so this only bites a machine
+# left running for a week, where asking for a fresh code is reasonable.
+SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 
 # How stale last_seen_at may get before it is written again. It no longer
 # governs expiry -- it is only what the administrator's view shows -- and
@@ -62,7 +75,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT NOT NULL,
     ip TEXT,
     user_agent TEXT,
-    mode TEXT NOT NULL DEFAULT 'clinician'
+    mode TEXT NOT NULL DEFAULT 'clinician',
+    device_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
@@ -88,6 +102,8 @@ def _build(conn) -> None:
     if "mode" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL"
                      " DEFAULT 'clinician';")
+    if "device_id" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN device_id TEXT;")
 
 
 def init() -> None:
@@ -120,7 +136,8 @@ def active_for_user(user_id: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent,"
-            " mode FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC;",
+            " mode, device_id FROM sessions WHERE user_id = ?"
+            " ORDER BY last_seen_at DESC;",
             (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -128,7 +145,7 @@ def active_for_user(user_id: str) -> list[dict]:
 
 def issue(user_id: str, ttl: int = SESSION_TTL_SECONDS, ip: str | None = None,
           user_agent: str | None = None, single_device: bool = True,
-          mode: str = "clinician") -> str:
+          mode: str = "clinician", device_id: str | None = None) -> str:
     """
     Open a session and return the opaque token to put in the cookie.
 
@@ -146,10 +163,11 @@ def issue(user_id: str, ttl: int = SESSION_TTL_SECONDS, ip: str | None = None,
             conn.execute("DELETE FROM sessions WHERE user_id = ?;", (user_id,))
         conn.execute(
             "INSERT INTO sessions (id, token_hash, user_id, created_at, last_seen_at,"
-            " expires_at, ip, user_agent, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            " expires_at, ip, user_agent, mode, device_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
             (secrets.token_hex(8), fast_hash(token), user_id, _iso(now), _iso(now),
              _iso(now + timedelta(seconds=ttl)), ip, (user_agent or "")[:200] or None,
-             mode),
+             mode, device_id),
         )
     return token
 
@@ -215,6 +233,19 @@ def destroy(token: str | None) -> None:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?;", (fast_hash(token),))
 
 
+def displaced_devices(user_id: str, device_id: str | None) -> int:
+    """
+    How many *other* devices this account has open.
+
+    Sessions on the same device do not count: closing a browser and logging
+    in again from the same machine is one device being used twice, and
+    telling somebody they have just signed themselves out is both wrong and
+    alarming.
+    """
+    return sum(1 for row in active_for_user(user_id)
+               if not device_id or row.get("device_id") != device_id)
+
+
 def destroy_all_for_user(user_id: str) -> int:
     """Close every session an account has. Used when access is revoked."""
     init()
@@ -230,7 +261,7 @@ def list_active() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent,"
-            " mode FROM sessions ORDER BY last_seen_at DESC;"
+            " mode, device_id FROM sessions ORDER BY last_seen_at DESC;"
         ).fetchall()
     return [dict(r) for r in rows]
 

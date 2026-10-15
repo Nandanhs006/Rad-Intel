@@ -321,21 +321,50 @@ def test_an_idle_session_stays_open():
 
 def test_a_session_ends_when_the_browser_does():
     """
-    No Max-Age on the cookie is what actually ends it, which is the
-    browser's business. The server keeps a ceiling for the case the browser
-    does not honour -- one told to restore its tabs restores session cookies
-    with them -- and twelve hours is short enough to matter.
+    No Max-Age on the cookie is what actually ends it, which is the browser's
+    business. The ceiling below is for a machine that is never closed, where
+    a week is long enough not to be a nuisance and short enough to matter.
     """
     import sqlite3
     from datetime import datetime, timedelta, timezone
 
-    assert session.SESSION_TTL_SECONDS == 12 * 60 * 60
+    assert session.SESSION_TTL_SECONDS == 7 * 24 * 60 * 60
     token = session.issue("user-123")
     with sqlite3.connect(session.DB_PATH) as conn:
         (expires,) = conn.execute("SELECT expires_at FROM sessions;").fetchone()
     left = (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds()
-    assert timedelta(hours=11).total_seconds() < left <= timedelta(hours=12).total_seconds()
+    assert timedelta(days=6).total_seconds() < left <= timedelta(days=7).total_seconds()
     assert session.verify(token) == "user-123"
+
+
+# --- the same machine is not a second device --------------------------------
+
+def test_returning_on_the_same_device_is_not_a_second_device():
+    """
+    Closing a browser and logging in again is one device used twice. Telling
+    somebody they have just signed themselves out somewhere is both wrong and
+    alarming, so it must not happen.
+    """
+    laptop = "device-aaa"
+    assert session.displaced_devices("user-123", laptop) == 0
+
+    session.issue("user-123", device_id=laptop)
+    assert session.displaced_devices("user-123", laptop) == 0, \
+        "the same machine must not count as a device being displaced"
+
+
+def test_a_different_device_does_count():
+    session.issue("user-123", device_id="device-aaa")
+    assert session.displaced_devices("user-123", "device-bbb") == 1
+    # ...and it is still only ever one session afterwards.
+    session.issue("user-123", device_id="device-bbb")
+    assert len(session.active_for_user("user-123")) == 1
+
+
+def test_a_caller_with_no_device_marker_is_treated_as_a_new_one():
+    """A first visit, or cleared cookies: assume the worst and say so."""
+    session.issue("user-123", device_id="device-aaa")
+    assert session.displaced_devices("user-123", None) == 1
 
 def test_expiry_does_not_slide_forward_with_use():
     """Thirty days from the sign-in, not thirty days from the last request."""

@@ -23,6 +23,7 @@ Who can do what:
 import hashlib
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,7 +55,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/feedback", tags=["Clinician Feedback"])
 
 # Separate from the Kaggle dataset directory by construction.
-FEEDBACK_DIR = settings.BASE_DIR / "feedback_store"
+#
+# RAD_INTEL_FEEDBACK_DIR moves the whole store somewhere else, which is what
+# hosting needs: most small hosts give a container an ephemeral filesystem
+# that is wiped on every redeploy, so reviewed radiographs have to live on a
+# mounted volume -- a disk, a network share, or a cloud folder mounted into
+# the filesystem -- rather than next to the code. The path is resolved once,
+# here, so there is one answer to "where is the data" rather than several.
+FEEDBACK_DIR = Path(
+    os.environ.get("RAD_INTEL_FEEDBACK_DIR", "").strip()
+    or settings.BASE_DIR / "feedback_store"
+).expanduser().resolve()
 IMAGE_DIR = FEEDBACK_DIR / "images"
 EXPORT_DIR = FEEDBACK_DIR / "exports"
 WEIGHTS_DIR = settings.BASE_DIR / "weights"
@@ -82,6 +93,39 @@ job = TrainingJob(TRAIN_LOG)
 def _ensure_dirs() -> None:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _store_path(path: Path) -> str:
+    """
+    How an image's location is recorded.
+
+    Relative to the project when the store sits inside it, absolute when it
+    has been moved to a mounted volume. Resolving one of these back is
+    _resolve_image below, which is also where the containment check lives.
+    """
+    try:
+        return str(path.relative_to(settings.BASE_DIR))
+    except ValueError:
+        return str(path)
+
+
+def _resolve_image(stored: str | None) -> Path | None:
+    """
+    Turn a recorded path into a file inside the image store, or nothing.
+
+    Every path is resolved and then checked against the store, so a row whose
+    path was tampered with cannot reach a file elsewhere on the disk.
+    """
+    if not stored:
+        return None
+    candidate = Path(stored)
+    if not candidate.is_absolute():
+        candidate = settings.BASE_DIR / candidate
+    candidate = candidate.resolve()
+    root = IMAGE_DIR.resolve()
+    if root not in candidate.parents or not candidate.is_file():
+        return None
+    return candidate
 
 
 def _may_edit(record: dict, user: dict) -> bool:
@@ -198,7 +242,7 @@ async def submit_feedback(
         verdict=verdict,
         corrected_label=corrected_label,
         note=(note or "").strip()[:2000] or None,
-        image_path=str(stored.relative_to(settings.BASE_DIR)),
+        image_path=_store_path(stored),
         institution=user["institution"],
         owner_id=user["id"],
     )
@@ -324,9 +368,9 @@ async def delete_feedback(record_id: str, request: Request,
     removed_image = False
     if existing.get("image_sha256"):
         remaining = await db_manager.count_feedback_for_image(existing["image_sha256"])
-        if remaining == 0 and existing.get("image_path"):
-            path = (settings.BASE_DIR / existing["image_path"]).resolve()
-            if str(path).startswith(str(IMAGE_DIR.resolve())) and path.is_file():
+        if remaining == 0:
+            path = _resolve_image(existing.get("image_path"))
+            if path:
                 path.unlink()
                 removed_image = True
 
@@ -401,7 +445,7 @@ async def create_training_export(request: Request,
                     detail=f"{tag} records={updated}")
     return FeedbackExportResponse(
         export_tag=tag,
-        path=str(path.relative_to(settings.BASE_DIR)),
+        path=_store_path(path),
         record_count=updated,
         note=(
             "Export written. No training has been started and no checkpoint was modified. "
@@ -418,7 +462,7 @@ async def list_exports(_user: dict = Depends(require_clinician)):
     for p in sorted(EXPORT_DIR.glob("reviewed-export-*.jsonl"), reverse=True):
         items.append({
             "tag": p.stem,
-            "path": str(p.relative_to(settings.BASE_DIR)),
+            "path": _store_path(p),
             "records": sum(1 for line in p.open(encoding="utf-8") if line.strip()),
             "bytes": p.stat().st_size,
         })
@@ -723,8 +767,8 @@ async def feedback_image(record_id: str, _user: dict = Depends(require_clinician
     if not record or not record.get("image_path"):
         raise HTTPException(status_code=404, detail="No image for this review.")
 
-    path = (settings.BASE_DIR / record["image_path"]).resolve()
-    if not str(path).startswith(str(IMAGE_DIR.resolve())) or not path.is_file():
+    path = _resolve_image(record.get("image_path"))
+    if not path:
         raise HTTPException(status_code=404, detail="Image file is missing.")
 
     media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
@@ -742,7 +786,7 @@ async def storage_summary(_user: dict = Depends(require_clinician)):
     files = [f for f in IMAGE_DIR.iterdir() if f.is_file()]
     total = sum(f.stat().st_size for f in files)
     return {
-        "directory": str(IMAGE_DIR.relative_to(settings.BASE_DIR)),
+        "directory": _store_path(IMAGE_DIR),
         "image_count": len(files),
         "bytes": total,
         "human": f"{total / (1024 * 1024):.1f} MB",

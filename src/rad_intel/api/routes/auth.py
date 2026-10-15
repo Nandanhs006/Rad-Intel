@@ -49,12 +49,8 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 # One message for a wrong email, a wrong Rad-Intel ID, a disabled account and
 # an account that does not exist, so this endpoint cannot be used to find out
 # which addresses are enrolled.
-_NO_MATCH = (
-    "Those details do not match an active account. Check the email address and "
-    "Rad-Intel ID exactly as the study administrator gave them to you. If they "
-    "still do not work, contact the administrator — accounts are issued by hand."
-)
-_NO_MATCH_ADMIN = "Incorrect email or password."
+_NO_MATCH = "Invalid credentials."
+_NO_MATCH_ADMIN = "Invalid credentials."
 
 
 def _cookie_secure() -> bool:
@@ -161,15 +157,19 @@ async def login(req: VerifyCodeRequest, request: Request, response: Response):
                         ip=client_address(request), outcome="refused")
         raise HTTPException(status_code=401, detail=message)
 
+    device_id = (request.cookies.get(session.DEVICE_COOKIE_NAME)
+                 or session.new_device_id())
+
     def _open_session() -> tuple[str, int, str | None]:
-        # Read before issuing: issuing closes them, and the person signing in
-        # should be told they have just signed something else out rather than
-        # discovering it when their other machine stops working.
-        displaced = len(session.active_for_user(user["id"]))
+        # Read before issuing, because issuing closes them. Only sessions on
+        # a *different* device count: closing a browser and logging in again
+        # from the same machine is one device used twice, and reporting that
+        # as "you signed yourself out somewhere" is both wrong and alarming.
+        displaced = session.displaced_devices(user["id"], device_id)
         accounts.note_successful_login(user["id"])
         token = session.issue(user["id"], ip=client_address(request),
                               user_agent=request.headers.get("user-agent"),
-                              mode=mode or "clinician")
+                              mode=mode or "clinician", device_id=device_id)
         return token, displaced, session.expires_at(token)
 
     token, displaced, ends_at = await run_in_threadpool(_open_session)
@@ -181,6 +181,18 @@ async def login(req: VerifyCodeRequest, request: Request, response: Response):
         # for browsers that restore their previous tabs.
         httponly=True,       # not readable from JavaScript
         samesite="lax",      # not sent on cross-site requests
+        secure=_cookie_secure(),
+        path="/",
+    )
+    # Outlives the session cookie on purpose: it is how the next sign-in
+    # recognises this machine. It identifies a browser, not a person, and on
+    # its own opens nothing.
+    response.set_cookie(
+        key=session.DEVICE_COOKIE_NAME,
+        value=device_id,
+        max_age=session.DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
         secure=_cookie_secure(),
         path="/",
     )
@@ -201,6 +213,8 @@ async def logout(response: Response, request: Request,
     """End this session only. Other devices stay signed in."""
     await run_in_threadpool(session.destroy, token)
     response.delete_cookie(session.COOKIE_NAME, path="/")
+    # The device marker stays: it is what stops the next sign-in from this
+    # same machine being reported as a second device.
     if user:
         activity.record("logout", user=user, ip=client_address(request))
     return {"signed_out": True}
