@@ -830,18 +830,53 @@ async def test_the_version_panel_says_which_checkpoint_is_live():
 async def test_only_an_administrator_can_change_the_served_version():
     user = _make_clinician()
     async with _client() as client:
-        res = await client.post("/api/v1/feedback/models/activate",
-                                data={"file": "best_hybrid_model.pt"},
-                                cookies=_signed_in(user))
+        res = await client.post(
+            "/api/v1/feedback/models/activate",
+            data={"file": "best_hybrid_model.pt", "password": ADMIN_PASSWORD},
+            cookies=_signed_in(user))
     assert res.status_code == 403
+
+
+async def test_changing_what_everybody_is_served_needs_the_password(tmp_path,
+                                                                    monkeypatch):
+    """
+    It reaches further than a release does.
+
+    Releasing adds a version to the list for whoever goes looking. This
+    changes what every visitor gets without choosing anything, so it is not
+    the one that should be a single click on a page left open.
+    """
+    import torch
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+    torch.save({"model_type": "hybrid", "optimal_threshold": 0.56,
+                "model_state_dict": {}}, weights / "best_hybrid_v2_model.pt")
+    admin = _make_admin()
+
+    async with _client() as client:
+        wrong = await client.post(
+            "/api/v1/feedback/models/activate", cookies=_signed_in(admin),
+            data={"file": "best_hybrid_v2_model.pt", "password": "not-it"})
+        assert wrong.status_code == 403
+        assert "Nothing changed" in wrong.json()["detail"]
+
+        right = await client.post(
+            "/api/v1/feedback/models/activate", cookies=_signed_in(admin),
+            data={"file": "best_hybrid_v2_model.pt", "password": ADMIN_PASSWORD})
+    assert right.status_code == 200
+    assert right.json()["activated"] == "best_hybrid_v2_model.pt"
 
 
 async def test_activating_a_checkpoint_outside_the_weights_directory_is_refused():
     admin = _make_admin()
     async with _client() as client:
         for attempt in ("../rad_intel.db", "/etc/passwd", "nope.pt"):
-            res = await client.post("/api/v1/feedback/models/activate",
-                                    data={"file": attempt}, cookies=_signed_in(admin))
+            res = await client.post(
+                "/api/v1/feedback/models/activate",
+                data={"file": attempt, "password": ADMIN_PASSWORD},
+                cookies=_signed_in(admin))
             assert res.status_code == 404, attempt
 
 
@@ -1236,9 +1271,11 @@ async def test_the_community_model_cannot_become_the_default_by_activation(
     admin = _make_admin()
 
     async with _client() as client:
-        res = await client.post("/api/v1/feedback/models/activate",
-                                data={"file": "best_community_hybrid_v1_model.pt"},
-                                cookies=_signed_in(admin))
+        res = await client.post(
+            "/api/v1/feedback/models/activate",
+            data={"file": "best_community_hybrid_v1_model.pt",
+                  "password": ADMIN_PASSWORD},
+            cookies=_signed_in(admin))
     assert res.status_code == 400
     assert "not a version of the shared model" in res.json()["detail"]
     assert "chosen deliberately" in res.json()["detail"] \

@@ -1071,19 +1071,23 @@
     if (!button) return;
     const file = button.dataset.activate;
     const isBase = file === "best_hybrid_model.pt";
-    const confirmed = window.confirm(
+    // The password every time, as for a release. This one reaches further:
+    // releasing adds an option for people who go looking, this changes what
+    // everybody gets without choosing anything.
+    const password = await confirmWithPassword(
       isBase
         ? "Go back to serving the base checkpoint?\n\nThis is the version the project's " +
           "reported results describe."
         : `Serve ${file} to everybody?\n\nEvery prediction, here and on the Analyse ` +
-          `tab, will come from it. The project's reported figures describe the base ` +
-          `checkpoint, which stays on disk — you can switch back at any time.`
+          `tab, will come from it by default. The project's reported figures describe ` +
+          `the base checkpoint, which stays on disk — you can switch back at any time.`
     );
-    if (!confirmed) return;
+    if (password === null) return;
     busy(button, true);
     try {
       const body = new FormData();
       body.append("file", file);
+      body.append("password", password);
       const outcome = await api("/api/v1/feedback/models/activate", { method: "POST", body });
       show($("fb-result"), esc(outcome.detail), "ok");
       loadModelVersions();

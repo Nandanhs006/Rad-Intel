@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=24">
+  <link rel="stylesheet" href="/static/style.css?v=25">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -143,6 +143,18 @@
           <div class="results-empty-icon">🩺</div>
           <div class="results-empty-title">Awaiting Radiograph</div>
           <p class="results-empty-desc">Upload or select a sample Chest X-Ray on the left and click "Analyze Radiograph" to generate the diagnostic assessment and clinical report.</p>
+        </div>
+
+        <!-- When something went wrong, said where the answer would have been -->
+        <div id="results-problem" class="results-problem" hidden role="alert">
+          <div class="results-problem-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          </div>
+          <div class="results-problem-title" id="results-problem-title">Could not analyse this</div>
+          <p class="results-problem-text" id="results-problem-text"></p>
+          <button class="btn-secondary btn-sm" id="results-problem-dismiss" type="button">
+            Try again
+          </button>
         </div>
 
         <!-- Loading State with Progress Steps -->
@@ -1111,7 +1123,11 @@
           </p>
           <div class="notice notice-amber">
             <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
-            <span>The model chooser on the Analyse tab may also offer versions released
+            <span><strong>The chooser offers what this server actually holds.</strong>
+            The table above is the record of what was trained for the project; a
+            configuration whose weights were not put on this server is simply not
+            listed, so you may see fewer than five. The model chooser may also offer
+            versions released
             by the study administrator from radiographs contributed by participating
             clinicians <em>after</em> these results were measured. One kind is this
             project's own checkpoint fine-tuned on a batch of reviews; the other, named
@@ -1132,7 +1148,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=5"></script>
-  <script src="/static/extras.js?v=24"></script>
-  <script src="/static/workspace.js?v=24"></script>
+  <script src="/static/extras.js?v=25"></script>
+  <script src="/static/workspace.js?v=25"></script>
 </body>
 </html>

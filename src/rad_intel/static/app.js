@@ -24,6 +24,45 @@ document.addEventListener("DOMContentLoaded", () => {
   const loadingPanel = document.getElementById("loading-panel");
   const loadingStep = document.getElementById("loading-step");
   const resultsContent = document.getElementById("results-content");
+  const problemPanel = document.getElementById("results-problem");
+
+  /**
+   * Say what went wrong where the answer would have been.
+   *
+   * Not every refusal is a fault. A rate limit is the service working, and
+   * calling it "Analysis Error" in an alert box tells somebody they broke
+   * something when they did not -- so the heading follows the status and the
+   * server's own sentence is shown as written, since it is the one that says
+   * what to do next.
+   */
+  function showProblem(status, message) {
+    if (!problemPanel) {
+      alert(message);
+      return;
+    }
+    const titles = {
+      429: "Just a moment",
+      503: "That model is not available",
+      400: "That file could not be used",
+      413: "That file is too large",
+    };
+    document.getElementById("results-problem-title").textContent =
+      titles[status] || "Could not analyse this";
+    document.getElementById("results-problem-text").textContent = message;
+    loadingPanel.style.display = "none";
+    resultsContent.style.display = "none";
+    resultsEmpty.style.display = "none";
+    problemPanel.hidden = false;
+  }
+
+  function clearProblem() {
+    if (problemPanel) problemPanel.hidden = true;
+  }
+
+  document.getElementById("results-problem-dismiss")?.addEventListener("click", () => {
+    clearProblem();
+    resultsEmpty.style.display = "flex";
+  });
 
   const verdictBanner = document.getElementById("verdict-banner");
   const verdictIcon = document.getElementById("verdict-icon");
@@ -169,6 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Reset view to loading
     resultsEmpty.style.display = "none";
     resultsContent.style.display = "none";
+    clearProblem();
     loadingPanel.style.display = "block";
     btnAnalyze.disabled = true;
 
@@ -203,8 +243,15 @@ document.addEventListener("DOMContentLoaded", () => {
       clearInterval(loadingInterval);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Analysis request failed.");
+        let detail = "";
+        try {
+          detail = (await response.json()).detail || "";
+        } catch {
+          detail = "";
+        }
+        const problem = new Error(detail || "The analysis could not be completed.");
+        problem.status = response.status;
+        throw problem;
       }
 
       const data = await response.json();
@@ -212,10 +259,10 @@ document.addEventListener("DOMContentLoaded", () => {
       renderResults(data);
     } catch (err) {
       clearInterval(loadingInterval);
-      loadingPanel.style.display = "none";
-      resultsEmpty.style.display = "flex";
       btnAnalyze.disabled = false;
-      alert(`Analysis Error: ${err.message}`);
+      showProblem(err.status, err.status
+        ? err.message
+        : "Could not reach the server. Check your connection and try again.");
     }
   });
 
