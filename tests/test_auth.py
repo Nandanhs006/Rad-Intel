@@ -198,7 +198,7 @@ def test_a_code_verifies_once_and_then_is_spent():
     user = _clinician()
     code, _ = otp.issue_code(user["id"])
     assert otp.verify_code(user["id"], code)[0]
-    ok, message = otp.verify_code(user["id"], code)
+    ok, message, _ = otp.verify_code(user["id"], code)
     assert not ok and "request a new one" in message.lower()
 
 
@@ -216,7 +216,7 @@ def test_a_wrong_code_is_rejected_and_the_attempts_run_out():
     code, _ = otp.issue_code(user["id"])
     for _ in range(otp.MAX_ATTEMPTS):
         assert not otp.verify_code(user["id"], "wrong-code12")[0]
-    ok, message = otp.verify_code(user["id"], code)
+    ok, message, _ = otp.verify_code(user["id"], code)
     assert not ok, "the real code must stop working once the attempts are used up"
     assert "request a new" in message.lower()
 
@@ -227,7 +227,7 @@ def test_an_expired_code_is_rejected():
     import sqlite3
     with sqlite3.connect(otp.DB_PATH) as conn:
         conn.execute("UPDATE login_codes SET expires_at = '2020-01-01T00:00:00+00:00';")
-    ok, message = otp.verify_code(user["id"], code)
+    ok, message, _ = otp.verify_code(user["id"], code)
     assert not ok and "expired" in message.lower()
 
 
@@ -261,13 +261,13 @@ def test_no_code_is_ever_issued_twice_to_the_same_account(monkeypatch):
 def test_code_requests_are_rate_limited():
     user = _clinician()
     for _ in range(otp.MAX_REQUESTS_PER_WINDOW):
-        code, _ = otp.issue_code(user["id"], channel="sms")
+        code, _ = otp.issue_code(user["id"])
         assert code
         _past_cooldown()
-    code, message = otp.issue_code(user["id"], channel="sms")
+    code, message = otp.issue_code(user["id"])
     assert code is None
     assert "too many" in message.lower()
-    assert otp.seconds_until_next_allowed(user["id"], "sms") > 0
+    assert otp.seconds_until_next_allowed(user["id"]) > 0
 
 
 def test_codes_are_bound_to_one_account():
@@ -318,18 +318,24 @@ def test_an_idle_session_stays_open():
     assert session.verify(token) == "user-123"
 
 
-def test_a_session_lasts_thirty_days_from_the_sign_in():
+
+def test_a_session_ends_when_the_browser_does():
+    """
+    No Max-Age on the cookie is what actually ends it, which is the
+    browser's business. The server keeps a ceiling for the case the browser
+    does not honour -- one told to restore its tabs restores session cookies
+    with them -- and twelve hours is short enough to matter.
+    """
     import sqlite3
     from datetime import datetime, timedelta, timezone
 
-    assert session.SESSION_TTL_SECONDS == 30 * 24 * 60 * 60
+    assert session.SESSION_TTL_SECONDS == 12 * 60 * 60
     token = session.issue("user-123")
     with sqlite3.connect(session.DB_PATH) as conn:
         (expires,) = conn.execute("SELECT expires_at FROM sessions;").fetchone()
-    days = (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds()
-    assert timedelta(days=29).total_seconds() < days <= timedelta(days=30).total_seconds()
+    left = (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds()
+    assert timedelta(hours=11).total_seconds() < left <= timedelta(hours=12).total_seconds()
     assert session.verify(token) == "user-123"
-
 
 def test_expiry_does_not_slide_forward_with_use():
     """Thirty days from the sign-in, not thirty days from the last request."""
@@ -345,7 +351,7 @@ def test_expiry_does_not_slide_forward_with_use():
     assert before == after
 
 
-def test_a_session_past_thirty_days_is_gone():
+def test_a_session_past_the_ceiling_is_gone():
     import sqlite3
 
     token = session.issue("user-123")
@@ -553,10 +559,10 @@ def test_pressing_send_again_straight_away_does_not_burn_the_allowance():
     inbox rather than quoting a limit.
     """
     user = _clinician()
-    first, _ = otp.issue_code(user["id"], channel="email")
+    first, _ = otp.issue_code(user["id"])
     assert first
 
-    blocked, message = otp.issue_code(user["id"], channel="email")
+    blocked, message = otp.issue_code(user["id"])
     assert blocked is None
     assert "check your inbox" in message.lower()
     assert "spam" in message.lower()
@@ -568,35 +574,25 @@ def test_the_cooldown_lets_go_after_a_minute():
     import sqlite3
 
     user = _clinician()
-    otp.issue_code(user["id"], channel="email")
+    otp.issue_code(user["id"])
     with sqlite3.connect(otp.DB_PATH) as conn:
         conn.execute("UPDATE login_codes SET created_at = '2020-01-01T00:00:00+00:00';")
-    code, _ = otp.issue_code(user["id"], channel="email")
+    code, _ = otp.issue_code(user["id"])
     assert code, "once the cooldown has passed a new code must be issued"
 
 
-def test_email_gets_a_larger_allowance_than_sms():
-    """
-    The limit exists to stop somebody's phone being flooded and an SMS bill
-    run up. An emailed code costs nothing, so the same tight number only gets
-    in the way.
-    """
-    assert otp.allowance_for("email") > otp.allowance_for("sms")
-    assert otp.allowance_for(None) == otp.MAX_REQUESTS_PER_WINDOW
-
-
-def test_the_allowance_is_still_enforced_on_email():
+def test_the_allowance_is_still_enforced():
     import sqlite3
 
     user = _clinician()
-    for _ in range(otp.MAX_REQUESTS_PER_WINDOW_EMAIL):
-        code, message = otp.issue_code(user["id"], channel="email")
+    for _ in range(otp.MAX_REQUESTS_PER_WINDOW):
+        code, message = otp.issue_code(user["id"])
         assert code, message
         # Step past the cooldown without leaving the rate-limit window.
         with sqlite3.connect(otp.DB_PATH) as conn:
             conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds')"
                          " WHERE state = 'live';")
-    code, message = otp.issue_code(user["id"], channel="email")
+    code, message = otp.issue_code(user["id"])
     assert code is None
     assert "too many" in message.lower()
     assert "administrator can issue a code" in message.lower(), \
@@ -605,6 +601,6 @@ def test_the_allowance_is_still_enforced_on_email():
 
 def test_an_administrator_minted_code_ignores_both_limits():
     user = _clinician()
-    for _ in range(otp.MAX_REQUESTS_PER_WINDOW_EMAIL + 4):
+    for _ in range(otp.MAX_REQUESTS_PER_WINDOW + 4):
         code, message = otp.issue_code(user["id"], channel="console", rate_limited=False)
         assert code, message

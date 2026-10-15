@@ -6,9 +6,12 @@ or in the administrator console, which is what keeps the review workspace a
 named group rather than an open service.
 
 A clinician logs in with their email address, the Rad-Intel ID printed by
-`add`, and a one-time code sent to their registered phone. Hand the ID over in
-person or by a channel they already trust -- not in the same message as the
-link to the workspace, which would put both factors in one place.
+`add`, and a one-time code emailed to them. Hand the ID over in person or by
+a channel they already trust -- not in the same message as the link to the
+workspace, which would put both factors in one place.
+
+The phone number on a record is how the administrator reaches that clinician
+personally. Nothing is ever texted to it.
 
     python scripts/manage_clinicians.py add --email a@b.org --name "Dr A" \
         --institution "X Hospital" --phone "+91 98765 43210"
@@ -53,7 +56,8 @@ def _temp_password() -> str:
 def _require_phone(phone: str | None) -> str:
     digits = [c for c in (phone or "") if c.isdigit()]
     if len(digits) < 8:
-        sys.exit("A phone number with its country code is required: sign-in codes go to it.\n"
+        sys.exit("A phone number with its country code is required, so you can reach\n"
+                 "them personally to verify who they are. Codes go by email.\n"
                  "  e.g. --phone \"+91 98765 43210\"")
     return phone  # type: ignore[return-value]
 
@@ -79,11 +83,11 @@ def cmd_add(args: argparse.Namespace) -> None:
     if password:
         print(f"  password     : {password}  (administrator account; change it after signing in)")
     print("\nThey log in with their email address, that Rad-Intel ID, and a one-time")
-    print("code sent to the phone number above. Give them the ID by a channel they")
-    print("already trust, and not in the same message as the workspace link.")
-    if not notify.sms_configured():
-        print("\n  Note: no message provider is configured, so codes cannot be sent to a")
-        print("  phone yet. Run `manage_clinicians.py delivery` to see what is missing.")
+    print("code emailed to them. Give them the ID by a channel they already trust,")
+    print("and not in the same message as the workspace link.")
+    if not notify.email_configured():
+        print("\n  Note: no mail is configured, so no code can reach them yet.")
+        print("  Run `manage_clinicians.py delivery` to see what is missing.")
 
 
 def cmd_list(_args: argparse.Namespace) -> None:
@@ -149,7 +153,7 @@ def cmd_phone(args: argparse.Namespace) -> None:
     if not user:
         sys.exit(f"No account for {args.email}")
     accounts.update_clinician(user["id"], phone=phone)
-    print(f"Phone number updated for {user['email']}. Codes now go to {phone}.")
+    print(f"Contact number updated for {user['email']}: {phone}.")
 
 
 def cmd_password(args: argparse.Namespace) -> None:
@@ -237,9 +241,12 @@ def cmd_code(args: argparse.Namespace) -> None:
     if user["status"] != "active":
         sys.exit(f"{user['email']} is disabled. Enable the account first.")
 
+    mode = "admin" if (args.admin and user["role"] == "admin") else "clinician"
+    if args.admin and user["role"] != "admin":
+        sys.exit(f"{user['email']} is not an administrator.")
     code, message = otp.issue_code(user["id"], channel="console",
                                    destination_tail=user.get("phone_tail"),
-                                   rate_limited=False)
+                                   rate_limited=False, mode=mode)
     if not code:
         sys.exit(message)
 
@@ -247,7 +254,8 @@ def cmd_code(args: argparse.Namespace) -> None:
                     detail="minted with manage_clinicians.py on the server")
     activity.flush()
 
-    print(f"\nSign-in code for {user['full_name']} <{user['email']}>\n")
+    print(f"\nSign-in code for {user['full_name']} <{user['email']}>"
+          f"  ({mode} session)\n")
     print(f"    {code}\n")
     print(f"Valid for {otp.CODE_TTL_SECONDS // 60} minutes, one use only. Type it into")
     print("the workspace after pressing \"Send verification code\" — or just press that")
@@ -265,21 +273,18 @@ def cmd_delivery(_args: argparse.Namespace) -> None:
     print()
     if channel == "email":
         print("Sign-in codes go by EMAIL to each account's own address, and access")
-        print("requests are emailed to the administrator. Nothing needs an SMS")
-        print("provider, a DLT registration or a paid account.")
+        print("requests are emailed to the administrator. There is no SMS.")
         print("\nMail working is what logging in rests on. Check it from the console")
         print("with \"Send myself a test email\" after changing anything.")
-    elif channel == "sms":
-        print(f"Sign-in codes go by SMS through {status['sms_provider']}.")
     elif channel == "server-log":
-        print("Sign-in codes are written to THIS SERVER'S LOG and sent to nobody.")
-        print("Local test mode only. Nobody else can log in.")
+        print("Sign-in codes are written to THIS SERVER'S TERMINAL and sent to nobody.")
+        print("Useful for a demonstration, or for getting back in when mail has")
+        print("broken. Nobody without access to this terminal can log in.")
     else:
-        print("NOBODY CAN LOG IN. Nothing is configured to deliver a code.")
+        print("NOBODY CAN LOG IN. No mail is configured and no fallback is set.")
 
     if not status["email_configured"]:
-        print("\nEmail is not configured. In .env:")
-        print("    RAD_INTEL_OTP_CHANNEL=email")
+        print("\nIn .env:")
         print("    SMTP_HOST=smtp.gmail.com")
         print("    SMTP_PORT=587")
         print("    SMTP_USER=you@gmail.com")
@@ -287,20 +292,11 @@ def cmd_delivery(_args: argparse.Namespace) -> None:
         print("    SMTP_FROM=you@gmail.com")
         print("  The App Password is at myaccount.google.com/apppasswords and needs")
         print("  2-Step Verification switched on. It is NOT a backup code.")
-    else:
-        print("\nLocked out anyway? This prints a code and sends it nowhere:")
-        print("    python scripts/manage_clinicians.py code --email you@example.org")
-        print("  Then press \"I already have a code\" on the login form.")
+        print("\n  Or, to run without mail at all: RAD_INTEL_OTP_CHANNEL=log")
 
-    if not status["sms_configured"]:
-        print("\nSMS is optional and switched off. If you ever want it, set")
-        print("RAD_INTEL_OTP_CHANNEL=sms and one of:")
-        print("    FAST2SMS_API_KEY=...   # India. Fast2SMS will not let its free")
-        print("                           # credit be spent through the API until one")
-        print("                           # payment of 100 INR has been made.")
-        print("    TWILIO_ACCOUNT_SID/_AUTH_TOKEN/_FROM   # outside India; Twilio needs")
-        print("                           # DLT registration for Indian numbers.")
-        print("\n  Codes are never sent over WhatsApp.")
+    print("\nLocked out? This prints a code and sends it nowhere:")
+    print("    python scripts/manage_clinicians.py code --email you@example.org")
+    print("  Then press \"I already have a code\" on the login form.")
     print()
 
 
@@ -313,7 +309,8 @@ def main() -> None:
     a.add_argument("--email", required=True)
     a.add_argument("--name", required=True)
     a.add_argument("--institution", required=True)
-    a.add_argument("--phone", required=True, help="With country code, e.g. \"+91 98765 43210\"")
+    a.add_argument("--phone", required=True,
+                   help="To reach them personally, with country code. Codes go by email.")
     a.add_argument("--role", default="clinician", choices=["clinician", "admin"])
     a.add_argument("--password", help="Administrator accounts only; omit to generate one")
     a.add_argument("--note", help="Private note for the administrator")
@@ -334,7 +331,7 @@ def main() -> None:
     n.add_argument("--email", required=True)
     n.set_defaults(func=cmd_new_id)
 
-    ph = sub.add_parser("phone", help="Change the number codes are sent to")
+    ph = sub.add_parser("phone", help="Change the number you reach them on")
     ph.add_argument("--email", required=True)
     ph.add_argument("--phone", required=True)
     ph.set_defaults(func=cmd_phone)
@@ -360,6 +357,8 @@ def main() -> None:
     c = sub.add_parser("code", help="Print a sign-in code, bypassing SMS and email")
     c.add_argument("--email")
     c.add_argument("--id", help="Rad-Intel ID, in full")
+    c.add_argument("--admin", action="store_true",
+                   help="Open an administrator session rather than a clinician one")
     c.set_defaults(func=cmd_code)
 
     sub.add_parser("migrate", help="Issue IDs to accounts that predate them"

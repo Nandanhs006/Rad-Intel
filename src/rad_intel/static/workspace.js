@@ -104,8 +104,8 @@
     $("login-password").required = !clinician;
     $("login-heading").textContent = clinician ? "Log in" : "Administrator log in";
     $("login-blurb").textContent = clinician
-      ? "Your email address and the Rad-Intel ID the administrator gave you. A one-time code is then sent to you \u2014 the next screen says where."
-      : "Your email address and password. A one-time code is then sent to you, same as everybody else.";
+      ? "Your email address and the Rad-Intel ID the administrator gave you. A one-time code is then emailed to you."
+      : "Your email address and password. A one-time code is then emailed to you, same as everybody else. Logging in here is what gives you the console \u2014 your Rad-Intel ID gets you the clinician workspace only.";
     resetToStepOne();
   }
 
@@ -264,22 +264,24 @@
 
     $("session-name").textContent = me.full_name || me.email;
     $("session-site").textContent = me.institution || "";
-    $("session-role").hidden = me.role !== "admin";
     $("fb-site-label").textContent = me.institution || "your institution";
-    $("admin-console").hidden = me.role !== "admin";
+    // The console follows the session, not the account: an administrator who
+    // signed in with their Rad-Intel ID is here as a clinician and sees what
+    // a clinician sees. The server enforces the same rule independently.
+    $("admin-console").hidden = !me.is_admin_session;
+    $("session-role").hidden = !me.is_admin_session;
+    $("admin-hint").hidden = !(me.role === "admin" && !me.is_admin_session);
+    $("session-mode").hidden = !(me.role === "admin" && !me.is_admin_session);
     $("must-change").hidden = !me.must_change_password;
     $("displaced-notice").hidden = !me.displaced_other_device;
-    $("session-until").textContent = me.session_expires_at
-      ? `signed in until ${new Date(me.session_expires_at).toLocaleDateString(undefined,
-          { day: "numeric", month: "short", year: "numeric" })}`
-      : "";
+    $("session-until").textContent = "until you close this browser";
 
     renderMyDetails();
     refreshQueue();
     loadParticipants();
     loadModelVersions();
     loadStorage();
-    if (me.role === "admin") loadAdminConsole();
+    if (me.is_admin_session) loadAdminConsole();
     startTrainPolling();
   }
 
@@ -297,6 +299,8 @@
       ["Phone", me.phone || "not on file"],
       ["Rad-Intel ID", me.radintel_id || "—"],
       ["Role", me.role === "admin" ? "administrator" : "clinician"],
+      ["Logged in as", me.is_admin_session ? "administrator — console available"
+                                           : "clinician"],
     ];
     $("my-details").innerHTML = rows.map(([label, value]) =>
       `<div class="detail-row"><dt>${esc(label)}</dt>` +
@@ -785,7 +789,7 @@
           </div>` : ""}
           ${version.reviewed_cases ? `<div class="version-meta">from
             ${version.reviewed_cases} reviewed cases · ${stamp(version.created_at)}</div>` : ""}
-          ${me.role === "admin" && !version.is_live
+          ${me.is_admin_session && !version.is_live
             ? `<button class="btn-secondary btn-sm" data-activate="${esc(version.file)}">
                  Serve this version</button>`
             : ""}
@@ -1286,21 +1290,6 @@
       show(result, esc(readable(error)), "error");
     } finally {
       busy($("btn-test-email"), false);
-    }
-  });
-
-  $("btn-test-sms").addEventListener("click", async () => {
-    const result = $("test-email-result");
-    busy($("btn-test-sms"), true);
-    show(result, "Texting\u2026");
-    try {
-      const outcome = await api("/api/v1/admin/test-sms", { method: "POST" });
-      show(result, esc(outcome.detail) + " Check your phone.", "ok");
-    } catch (error) {
-      // The provider's own wording, which usually names the exact remedy.
-      show(result, esc(readable(error)), "error");
-    } finally {
-      busy($("btn-test-sms"), false);
     }
   });
 

@@ -60,18 +60,25 @@ def _client() -> httpx.AsyncClient:
 _tokens: dict[str, str] = {}
 
 
-def _signed_in(user: dict) -> dict[str, str]:
+def _signed_in(user: dict, mode: str | None = None) -> dict[str, str]:
     """
     A cookie jar for an account, bypassing the two-step sign-in.
 
-    Memoised per account. An account is signed in on one device at a time, so
-    issuing a second session would silently invalidate the first -- and a
-    test that calls this twice for the same person means "the same device
+    The default mode matches the door that account would really use: an
+    administrator signs in through the administrator form, everybody else
+    with a Rad-Intel ID. Pass `mode="clinician"` for an administrator who
+    came in the other way, which is a case worth testing.
+
+    Memoised per account and mode. An account is signed in on one device at a
+    time, so issuing a second session silently invalidates the first -- a
+    test calling this twice for the same person means "the same device
     again", not "a second one". Use session.issue directly for that.
     """
-    if user["id"] not in _tokens:
-        _tokens[user["id"]] = session.issue(user["id"])
-    return {session.COOKIE_NAME: _tokens[user["id"]]}
+    mode = mode or ("admin" if user["role"] == "admin" else "clinician")
+    key = f"{user['id']}:{mode}"
+    if key not in _tokens:
+        _tokens[key] = session.issue(user["id"], mode=mode)
+    return {session.COOKIE_NAME: _tokens[key]}
 
 
 def _make_clinician(email="a@hospital.org", name="Dr A", site="A Hospital"):
@@ -526,7 +533,7 @@ async def test_the_console_says_how_codes_and_email_are_delivered():
     async with _client() as client:
         res = await client.get("/api/v1/admin/overview", cookies=_signed_in(admin))
     body = res.json()
-    assert set(body["delivery"]) >= {"code_channel", "sms_configured", "email_configured"}
+    assert set(body["delivery"]) >= {"code_channel", "email_configured"}
     assert body["users"]["admins"] == 1
     assert "contact the administrator" in body["contact_note"]
 
@@ -581,8 +588,8 @@ async def test_the_whole_sign_in_works_with_the_real_code(monkeypatch):
     issued: list[str] = []
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name, email=None: (issued.append(code),
-                                              (True, "test", "sent"))[1],
+        lambda code, name, email=None: (issued.append(code),
+                                        (True, "test", "sent"))[1],
     )
     async with _client() as client:
         await client.post("/api/v1/auth/code", json={
@@ -597,37 +604,24 @@ async def test_the_whole_sign_in_works_with_the_real_code(monkeypatch):
         assert (await client.get("/api/v1/feedback")).status_code == 401
 
 
-async def test_the_session_cookie_outlives_the_browser(monkeypatch):
-    """
-    Thirty days on the cookie, so closing the browser does not log anybody
-    out and a code is needed about once a month.
-    """
+
+async def test_the_session_cookie_goes_when_the_browser_does(monkeypatch):
+    """No Max-Age and no Expires, so closing the browser ends the session."""
     user = _make_clinician()
-    monkeypatch.setattr(
-        "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name, email=None: (True, "test", "sent"),
-    )
-    monkeypatch.setattr(otp, "generate_code", lambda: "Known-Code1!")
     async with _client() as client:
-        await client.post("/api/v1/auth/code", json={
-            "email": user["email"], "radintel_id": user["radintel_id"],
-        })
-        res = await client.post("/api/v1/auth/login",
-                                json={"email": user["email"], "code": "Known-Code1!"})
+        res = await _log_in(client, user, monkeypatch)
     header = res.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header
-    assert f"max-age={session.SESSION_TTL_SECONDS}" in header
-    assert session.SESSION_TTL_SECONDS == 30 * 24 * 60 * 60
-
+    assert "max-age" not in header and "expires" not in header
 
 async def test_a_code_that_cannot_be_delivered_refuses_the_sign_in(monkeypatch):
     """Never fall back to showing the code: that is no second factor at all."""
     user = _make_clinician()
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name, email=None: (False, "none",
-                                               "Nothing is configured to send codes."),
+        lambda code, name, email=None: (False, "none",
+                                        "Nothing is configured to send codes."),
     )
     async with _client() as client:
         res = await client.post("/api/v1/auth/code", json={
@@ -916,87 +910,16 @@ async def test_only_an_administrator_can_test_or_resend_mail():
 
 # --- how a code is delivered -----------------------------------------------
 
-def test_a_code_is_never_sent_over_whatsapp():
-    """
-    A phone number here is for texting a code and for the administrator to
-    reach that clinician personally. A one-time code does not belong in a
-    chat account that may be open on a shared laptop, so there is no
-    WhatsApp route to misconfigure.
-    """
-    import inspect
-
-    from rad_intel.auth import notify
-
-    # The docstring explains the decision, so look at what the code does:
-    # no WhatsApp sender to configure and no "whatsapp:" recipient prefix.
-    code = "".join(line for line in inspect.getsource(notify).splitlines(keepends=True)
-                   if not line.lstrip().startswith(("*", "#")))
-    assert "TWILIO_WHATSAPP_FROM" not in code
-    assert "whatsapp:" not in code
-    assert "whatsapp" not in str(notify.delivery_status()).lower()
-
-
-def test_the_channel_falls_back_from_sms_to_email_to_nothing(monkeypatch):
-    from rad_intel.auth import notify
-
-    for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
-                 "FAST2SMS_API_KEY", "SMTP_HOST", "SMTP_FROM",
-                 "RAD_INTEL_OTP_ECHO", "RAD_INTEL_OTP_CHANNEL"):
-        monkeypatch.delenv(name, raising=False)
-    assert notify.channel_name() == "none"
-
-    monkeypatch.setenv("RAD_INTEL_OTP_ECHO", "1")
-    assert notify.channel_name() == "server-log"
-
-    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
-    monkeypatch.setenv("SMTP_FROM", "study@example.org")
-    assert notify.channel_name() == "email", "email beats writing to a log"
-
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-    assert notify.channel_name() == "sms", "SMS beats email"
-    assert notify.sms_provider() == "fast2sms"
-
-    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "email")
-    assert notify.channel_name() == "email", "the preference wins when both work"
-
-
-def test_fast2sms_is_preferred_over_twilio_for_an_indian_deployment(monkeypatch):
-    """
-    Twilio will not carry domestic Indian A2P SMS without DLT registration,
-    so when both are configured the one that actually delivers wins.
-    """
-    from rad_intel.auth import notify
-
-    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "sid")
-    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "token")
-    monkeypatch.setenv("TWILIO_FROM", "+10000000000")
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-    assert notify.sms_provider() == "fast2sms"
-    monkeypatch.delenv("FAST2SMS_API_KEY")
-    assert notify.sms_provider() == "twilio"
-
-
-def test_fast2sms_refuses_a_number_it_cannot_deliver_to(monkeypatch):
-    """Ten Indian digits, or a clear refusal -- never a silent failure."""
-    from rad_intel.auth import notify
-
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-    sent, detail = notify._fast2sms_send("+1 415 555 0123", "body")
-    assert not sent
-    assert "Indian numbers" in detail
-
-
 def test_an_emailed_code_does_not_reveal_the_whole_address(monkeypatch):
     from rad_intel.auth import notify
 
-    for name in ("TWILIO_ACCOUNT_SID", "FAST2SMS_API_KEY", "RAD_INTEL_OTP_CHANNEL"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("RAD_INTEL_OTP_CHANNEL", raising=False)
     monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
     monkeypatch.setenv("SMTP_FROM", "study@example.org")
     monkeypatch.setattr(notify, "send_email", lambda **kwargs: (True, "sent"))
 
     ok, channel, message = notify.send_verification_code(
-        None, "Known-Code1!", "Dr A", "asha.rao@hospital.org")
+        "Known-Code1!", "Dr A", "asha.rao@hospital.org")
     assert ok and channel == "email"
     assert "asha.rao" not in message, "the full address must not be echoed back"
     assert "as" in message and "@hospital.org" in message
@@ -1006,13 +929,10 @@ def test_a_code_is_never_in_the_message_shown_to_the_user(monkeypatch):
     from rad_intel.auth import notify
 
     monkeypatch.setenv("RAD_INTEL_OTP_ECHO", "1")
-    for name in ("TWILIO_ACCOUNT_SID", "FAST2SMS_API_KEY", "SMTP_HOST",
-                 "RAD_INTEL_OTP_CHANNEL"):
+    for name in ("SMTP_HOST", "RAD_INTEL_OTP_CHANNEL"):
         monkeypatch.delenv(name, raising=False)
-    for phone in (None, "+91 90000 00000"):
-        _, _, message = notify.send_verification_code(phone, "Secret-Code1", "Dr A",
-                                                      "a@h.org")
-        assert "Secret-Code1" not in message
+    _, _, message = notify.send_verification_code("Secret-Code1", "Dr A", "a@h.org")
+    assert "Secret-Code1" not in message
 
 
 # --- the email channel, over a real SMTP conversation -----------------------
@@ -1087,9 +1007,7 @@ def smtp_sink(monkeypatch):
     monkeypatch.delenv("SMTP_USER", raising=False)
     monkeypatch.delenv("SMTP_PASSWORD", raising=False)
     monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "email")
-    for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
-                 "FAST2SMS_API_KEY", "RAD_INTEL_OTP_ECHO"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("RAD_INTEL_OTP_ECHO", raising=False)
     yield sink
     sink.close()
 
@@ -1100,7 +1018,7 @@ def test_an_emailed_code_reaches_the_mailbox_and_not_the_browser(smtp_sink):
     from rad_intel.auth import notify
 
     ok, channel, shown = notify.send_verification_code(
-        "+91 90000 11111", "Kx7!mQ2@Rb9Z", "Dr Asha Rao", "asha.rao@kmc.test")
+        "Kx7!mQ2@Rb9Z", "Dr Asha Rao", "asha.rao@kmc.test")
     assert ok and channel == "email"
 
     for _ in range(40):
@@ -1133,99 +1051,19 @@ def test_a_password_is_never_sent_over_an_untrusted_plaintext_connection(smtp_si
     assert not smtp_sink.received, "nothing may be sent over the clear connection"
 
 
-# --- when the SMS provider refuses ------------------------------------------
-
-def test_a_provider_refusal_is_reported_in_its_own_words(monkeypatch):
-    """
-    Fast2SMS refuses for account-state reasons with specific remedies. Those
-    have to reach the administrator: "the provider refused the message" sends
-    them looking in the wrong place entirely.
-    """
-    import urllib.error
-
-    from rad_intel.auth import notify
-
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-
-    def refuse(*_args, **_kwargs):
-        raise urllib.error.HTTPError(
-            "https://www.fast2sms.com/dev/bulkV2", 400, "Bad Request", {},
-            __import__("io").BytesIO(
-                b'{"status_code":999,"message":"You need to complete one transaction '
-                b'of 100 INR or more before using API route."}'),
-        )
-
-    monkeypatch.setattr("urllib.request.urlopen", refuse)
-    sent, detail = notify._fast2sms_send("+91 98444 07409", "body")
-    assert not sent
-    assert "100 INR" in detail, "the remedy must survive into the message"
-
-
-def test_a_login_attempt_is_not_told_the_studys_billing_state(monkeypatch):
-    """
-    The same refusal, seen from the login form, must say only that it is not
-    the clinician's problem. What the study owes its SMS provider is the
-    administrator's business.
-    """
-    from rad_intel.auth import notify
-
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "sms")
-    monkeypatch.setattr(notify, "_send_sms",
-                        lambda phone, body: (False, "Fast2SMS refused it: complete one "
-                                                    "transaction of 100 INR"))
-    ok, channel, shown = notify.send_verification_code(
-        "+91 98444 07409", "Known-Code1", "Dr A", "a@h.org")
-    assert not ok and channel == "sms"
-    assert "100 INR" not in shown and "Fast2SMS" not in shown
-    assert "administrator" in shown
-
-
-async def test_the_console_can_test_sms_and_see_why_it_failed(monkeypatch):
-    admin = _make_admin()
-    monkeypatch.setattr("rad_intel.api.routes.admin.notify.send_test_sms",
-                        lambda phone, name: (False, "Fast2SMS refused it: complete "
-                                                    "one transaction of 100 INR"))
-    async with _client() as client:
-        res = await client.post("/api/v1/admin/test-sms", cookies=_signed_in(admin))
-    assert res.status_code == 502
-    assert "100 INR" in res.json()["detail"]
-
-
-async def test_only_an_administrator_can_send_a_test_sms():
-    user = _make_clinician()
-    async with _client() as client:
-        signed_out = await client.post("/api/v1/admin/test-sms")
-        as_clinician = await client.post("/api/v1/admin/test-sms", cookies=_signed_in(user))
-    assert signed_out.status_code == 401
-    assert as_clinician.status_code == 403
-
+# --- getting in when mail is not working ------------------------------------
 
 # --- getting back in when nothing can be delivered --------------------------
 
-def test_the_log_channel_can_be_chosen_outright(monkeypatch):
-    """
-    Deliberately choosing to print codes to the server's terminal has to beat
-    a configured provider, or an administrator whose provider is refusing has
-    no way to take the decision.
-    """
-    from rad_intel.auth import notify
-
-    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
-    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
-    monkeypatch.setenv("SMTP_FROM", "study@example.org")
-    assert notify.channel_name() == "sms"
-    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "log")
-    assert notify.channel_name() == "server-log"
-
-
 async def test_a_code_minted_on_the_console_logs_in(monkeypatch):
     """
-    The locked-out path: no SMS, no email, a code minted on the server with
+    The locked-out path: no mail working, a code minted on the server with
     manage_clinicians.py, and a session at the end of it.
     """
     admin = _make_admin()
-    code, _ = otp.issue_code(admin["id"], channel="console")
+    # Minted on the server through the administrator door, so the session it
+    # opens carries the console.
+    code, _ = otp.issue_code(admin["id"], channel="console", mode="admin")
 
     async with _client() as client:
         # No /auth/code call at all: delivery is the thing that is broken.
@@ -1237,7 +1075,7 @@ async def test_a_code_minted_on_the_console_logs_in(monkeypatch):
 
 async def test_a_console_code_still_obeys_every_other_rule():
     admin = _make_admin()
-    code, _ = otp.issue_code(admin["id"], channel="console")
+    code, _ = otp.issue_code(admin["id"], channel="console", mode="admin")
     async with _client() as client:
         first = await client.post("/api/v1/auth/login",
                                   json={"email": admin["email"], "code": code})
@@ -1263,12 +1101,29 @@ async def _log_in(client, user, monkeypatch, code="Known-Code1!"):
         conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds');")
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, c, name, email=None: (True, "test", "sent"))
+        lambda c, name, email=None: (True, "test", "sent"))
     monkeypatch.setattr(otp, "generate_code", lambda: code)
     await client.post("/api/v1/auth/code", json={
         "email": user["email"], "radintel_id": user["radintel_id"]})
     return await client.post("/api/v1/auth/login",
                              json={"email": user["email"], "code": code})
+
+
+async def _log_in_as_admin(client, admin, monkeypatch, password="a-long-enough-password",
+                           code="Admin-Code12"):
+    """The administrator door: email and password, then the code."""
+    import sqlite3
+
+    with sqlite3.connect(otp.DB_PATH) as conn:
+        conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds');")
+    monkeypatch.setattr(
+        "rad_intel.api.routes.auth.notify.send_verification_code",
+        lambda c, name, email=None: (True, "test", "sent"))
+    monkeypatch.setattr(otp, "generate_code", lambda: code)
+    await client.post("/api/v1/auth/admin/code",
+                      json={"email": admin["email"], "password": password})
+    return await client.post("/api/v1/auth/login",
+                             json={"email": admin["email"], "code": code})
 
 
 async def test_a_second_device_signs_the_first_one_out(monkeypatch):
@@ -1322,7 +1177,7 @@ async def test_a_session_says_when_it_will_ask_for_a_code_again(monkeypatch):
         me = await client.get("/api/v1/auth/me")
     body = me.json()
     assert body["authenticated"] is True
-    assert body["session_expires_at"], "the interface has to be able to say when"
+    assert body["session_expires_at"], "the server still keeps a ceiling"
 
 
 async def test_an_administrator_sees_one_device_per_account_and_its_expiry():
@@ -1361,3 +1216,71 @@ async def test_the_expiry_is_known_from_the_moment_of_signing_in(monkeypatch):
     async with _client() as client:
         res = await _log_in(client, user, monkeypatch)
     assert res.json()["session_expires_at"], "login must say when it runs out"
+
+
+# --- which door you came in by ----------------------------------------------
+
+async def test_an_administrator_using_the_clinician_door_gets_no_console():
+    """
+    A Rad-Intel ID is written down and handed over. It must not reach the
+    controls that read and delete everybody's data, even when the account it
+    belongs to is an administrator.
+    """
+    admin = _make_admin()
+    as_clinician = _signed_in(admin, mode="clinician")
+
+    async with _client() as client:
+        assert (await client.get("/api/v1/feedback", cookies=as_clinician)).status_code == 200
+        for path in ("/api/v1/admin/overview", "/api/v1/admin/users",
+                     "/api/v1/admin/activity", "/api/v1/admin/sessions"):
+            res = await client.get(path, cookies=as_clinician)
+            assert res.status_code == 403, path
+            assert "log back in through Administrator" in res.json()["detail"]
+
+
+async def test_the_same_account_through_the_administrator_door_gets_it():
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.get("/api/v1/admin/overview", cookies=_signed_in(admin))
+    assert res.status_code == 200
+
+
+async def test_the_session_says_which_door_was_used(monkeypatch):
+    admin = _make_admin()
+    async with _client() as clinician_door:
+        body = (await _log_in(clinician_door, admin, monkeypatch)).json()
+        assert body["session_mode"] == "clinician"
+        assert body["is_admin_session"] is False
+        assert body["role"] == "admin", "the account is still an administrator"
+
+    async with _client() as admin_door:
+        body = (await _log_in_as_admin(admin_door, admin, monkeypatch)).json()
+        assert body["session_mode"] == "admin"
+        assert body["is_admin_session"] is True
+
+
+async def test_a_clinician_session_cannot_change_the_administrator_password():
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post("/api/v1/auth/password",
+                                cookies=_signed_in(admin, mode="clinician"),
+                                json={"current_password": "a-long-enough-password",
+                                      "new_password": "an-even-longer-password"})
+    assert res.status_code == 403
+    assert accounts.identify_admin(admin["email"], "a-long-enough-password"), \
+        "the password must be unchanged"
+
+
+async def test_the_mode_cannot_be_claimed_at_the_second_step(monkeypatch):
+    """
+    The door is recorded when the code is issued, where the first factor was
+    actually checked, so submitting the code cannot upgrade the session.
+    """
+    admin = _make_admin()
+    async with _client() as client:
+        # Asked for through the clinician door...
+        await _log_in(client, admin, monkeypatch, code="Clinic-Code1")
+        # ...and no amount of asking at /login makes it an admin session.
+        me = (await client.get("/api/v1/auth/me")).json()
+        assert me["is_admin_session"] is False
+        assert (await client.get("/api/v1/admin/users")).status_code == 403

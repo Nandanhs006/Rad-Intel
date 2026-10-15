@@ -59,19 +59,14 @@ REQUEST_WINDOW_SECONDS = 15 * 60
 # reaching a limit meant for abuse.
 RESEND_COOLDOWN_SECONDS = 60
 
-# How many codes an account may ask for in a window. The limit exists to stop
-# the endpoint being used to flood somebody's phone and run up an SMS bill,
-# so it is tighter for SMS than for email, where a code costs nothing and the
-# only cost of a few extra is a cluttered inbox.
-MAX_REQUESTS_PER_WINDOW = 5
-MAX_REQUESTS_PER_WINDOW_EMAIL = 12
+# How many codes an account may ask for in a window. Loose, because a code
+# costs nothing to send and the only harm a run of them does is clutter an
+# inbox. It is still a limit: without one, an unknown Rad-Intel ID and twelve
+# characters of code are both things a script can sit and guess at.
+MAX_REQUESTS_PER_WINDOW = 12
 
 # How long issued-code hashes are kept, purely to guarantee no code is reused.
 HISTORY_RETENTION_DAYS = 365
-
-
-def allowance_for(channel: str | None) -> int:
-    return MAX_REQUESTS_PER_WINDOW_EMAIL if channel == "email" else MAX_REQUESTS_PER_WINDOW
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -83,7 +78,8 @@ CREATE TABLE IF NOT EXISTS login_codes (
     attempts INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'live',
     channel TEXT,
-    destination_tail TEXT
+    destination_tail TEXT,
+    mode TEXT NOT NULL DEFAULT 'clinician'
 );
 CREATE INDEX IF NOT EXISTS idx_login_codes_user ON login_codes(user_id);
 CREATE INDEX IF NOT EXISTS idx_login_codes_hash ON login_codes(code_hash);
@@ -95,9 +91,26 @@ def _connect():
     return store.transaction(DB_PATH)
 
 
+def _build(conn) -> None:
+    """
+    Create the tables, and add columns to a database made before them.
+
+    SQLite has no "ADD COLUMN IF NOT EXISTS", and CREATE TABLE IF NOT
+    EXISTS silently does nothing to a table that is already there, so a
+    new column has to be applied by comparing against PRAGMA table_info.
+    Without this an existing deployment keeps its old schema and fails on
+    the first insert.
+    """
+    conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(login_codes);")}
+    if "mode" not in existing:
+        conn.execute("ALTER TABLE login_codes ADD COLUMN mode TEXT NOT NULL"
+                     " DEFAULT 'clinician';")
+
+
 def init() -> None:
     """Build the tables, once per process: see auth/store.py."""
-    store.ensure_schema(DB_PATH, "login_codes", lambda conn: conn.executescript(SCHEMA))
+    store.ensure_schema(DB_PATH, "login_codes", _build)
 
 
 def _now() -> datetime:
@@ -144,7 +157,7 @@ def recent_request_count(user_id: str) -> int:
     return int(count)
 
 
-def seconds_until_next_allowed(user_id: str, channel: str | None = None) -> int:
+def seconds_until_next_allowed(user_id: str) -> int:
     """How long an account that has hit the limit must wait, in whole seconds."""
     init()
     cutoff = _now() - timedelta(seconds=REQUEST_WINDOW_SECONDS)
@@ -154,22 +167,28 @@ def seconds_until_next_allowed(user_id: str, channel: str | None = None) -> int:
             " AND datetime(created_at) > datetime(?) ORDER BY datetime(created_at);",
             (user_id, _iso(cutoff)),
         ).fetchall()
-    if len(rows) < allowance_for(channel):
+    if len(rows) < MAX_REQUESTS_PER_WINDOW:
         return 0
     oldest = _parse(rows[0]["created_at"])
     return max(1, int((oldest + timedelta(seconds=REQUEST_WINDOW_SECONDS) - _now())
                       .total_seconds()))
 
 
-def issue_code(user_id: str, channel: str = "sms",
+def issue_code(user_id: str, channel: str = "email",
                destination_tail: str | None = None,
-               rate_limited: bool = True) -> tuple[str | None, str]:
+               rate_limited: bool = True,
+               mode: str = "clinician") -> tuple[str | None, str]:
     """
     Mint a code for an account.
 
     Returns (code, message). The code is returned exactly once, to be handed
     straight to the delivery channel; it is never recoverable afterwards. On
     refusal the code is None and the message says why.
+
+    `mode` records which door the code was asked for -- "clinician" or
+    "admin" -- and comes back from verify_code. It is decided here, where the
+    first factor was actually checked, rather than being taken on trust from
+    whoever submits the code.
 
     `rate_limited` is False only for a code minted on the server's own
     console. The limit exists to stop the endpoint being used to flood
@@ -189,8 +208,8 @@ def issue_code(user_id: str, channel: str = "sms",
                 f"{wait} second{'' if wait == 1 else 's'}."
             )
 
-        if recent_request_count(user_id) >= allowance_for(channel):
-            wait = seconds_until_next_allowed(user_id, channel)
+        if recent_request_count(user_id) >= MAX_REQUESTS_PER_WINDOW:
+            wait = seconds_until_next_allowed(user_id)
             minutes = max(1, round(wait / 60))
             return None, (
                 f"Too many codes requested for this account. Wait about "
@@ -221,17 +240,22 @@ def issue_code(user_id: str, channel: str = "sms",
 
         conn.execute(
             "INSERT INTO login_codes (id, user_id, code_hash, created_at, expires_at,"
-            " attempts, state, channel, destination_tail)"
-            " VALUES (?, ?, ?, ?, ?, 0, 'live', ?, ?);",
+            " attempts, state, channel, destination_tail, mode)"
+            " VALUES (?, ?, ?, ?, ?, 0, 'live', ?, ?, ?);",
             (str(uuid.uuid4()), user_id, code_hash, _iso(now),
-             _iso(now + timedelta(seconds=CODE_TTL_SECONDS)), channel, destination_tail),
+             _iso(now + timedelta(seconds=CODE_TTL_SECONDS)), channel, destination_tail,
+             mode),
         )
     return code, "Verification code issued."
 
 
-def verify_code(user_id: str, code: str) -> tuple[bool, str]:
+def verify_code(user_id: str, code: str) -> tuple[bool, str, str | None]:
     """
     Check a code and consume it on success.
+
+    Returns (ok, message, mode). `mode` is the door the code was asked for,
+    so the session that follows can be opened with the privileges that door
+    actually grants.
 
     Deliberately explicit about *why* a code failed -- expired, used up,
     too many attempts -- because the person holding the phone is the one
@@ -241,7 +265,7 @@ def verify_code(user_id: str, code: str) -> tuple[bool, str]:
     init()
     submitted = (code or "").strip()
     if not submitted:
-        return False, "Enter the verification code sent to your phone."
+        return False, "Enter the verification code that was sent to you.", None
 
     with _connect() as conn:
         row = conn.execute(
@@ -251,17 +275,17 @@ def verify_code(user_id: str, code: str) -> tuple[bool, str]:
         ).fetchone()
 
         if not row:
-            return False, "No verification code is waiting. Request a new one."
+            return False, "No verification code is waiting. Request a new one.", None
 
         if _now() >= _parse(row["expires_at"]):
             conn.execute("UPDATE login_codes SET state = 'expired' WHERE id = ?;",
                          (row["id"],))
-            return False, "That code has expired. Request a new one."
+            return False, "That code has expired. Request a new one.", None
 
         if row["attempts"] >= MAX_ATTEMPTS:
             conn.execute("UPDATE login_codes SET state = 'locked' WHERE id = ?;",
                          (row["id"],))
-            return False, "Too many incorrect attempts. Request a new code."
+            return False, "Too many incorrect attempts. Request a new code.", None
 
         if not secrets.compare_digest(fast_hash(submitted), row["code_hash"]):
             attempts = row["attempts"] + 1
@@ -270,12 +294,12 @@ def verify_code(user_id: str, code: str) -> tuple[bool, str]:
                          (attempts, state, row["id"]))
             left = MAX_ATTEMPTS - attempts
             if left <= 0:
-                return False, "Too many incorrect attempts. Request a new code."
+                return False, "Too many incorrect attempts. Request a new code.", None
             return False, (f"Incorrect code. {left} attempt{'' if left == 1 else 's'} "
-                           f"left before it is cancelled.")
+                           f"left before it is cancelled."), None
 
         conn.execute("UPDATE login_codes SET state = 'used' WHERE id = ?;", (row["id"],))
-    return True, "Verified."
+    return True, "Verified.", row["mode"]
 
 
 def invalidate_outstanding(user_id: str) -> None:
