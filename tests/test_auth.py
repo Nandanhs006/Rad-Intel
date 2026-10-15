@@ -647,13 +647,22 @@ def test_the_email_states_the_real_lifetime(monkeypatch):
     monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
     monkeypatch.setenv("SMTP_FROM", "study@example.org")
     monkeypatch.delenv("RAD_INTEL_OTP_CHANNEL", raising=False)
-    monkeypatch.setattr(notify, "send_email",
-                        lambda subject, body, to=None: (sent.append(body), (True, "ok"))[1])
+    pages: list[str] = []
+
+    def capture(subject, body, to=None, html=None):
+        sent.append(body)
+        pages.append(html or "")
+        return True, "ok"
+
+    monkeypatch.setattr(notify, "send_email", capture)
 
     assert notify.send_verification_code("Known-Code1", "Dr A", "a@h.org")[0]
-    body = sent[0]
-    assert f"{otp.CODE_TTL_SECONDS // 60} minutes" in body
-    assert "One use only" in body
+    window = f"{otp.CODE_TTL_SECONDS // 60} minutes"
+    # Both renderings carry the real figure, because both are built from the
+    # same blocks. The HTML one is what almost everybody actually reads.
+    assert window in sent[0]
+    assert window in pages[0]
+    assert "one sign-in only" in sent[0]
 
 
 def test_thirty_minutes_is_what_a_code_actually_gets():

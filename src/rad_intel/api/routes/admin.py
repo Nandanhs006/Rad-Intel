@@ -452,12 +452,7 @@ async def send_test_email(request: Request, admin: dict = Depends(require_admin)
             detail=("No SMTP server is configured, so there is nothing to test. Set "
                     "SMTP_HOST, SMTP_FROM and the rest in .env, restart, and try again."),
         )
-    sent, detail = await run_in_threadpool(
-        notify.send_email,
-        "Rad-Intel: email delivery is working",
-        ("This is a test from the Rad-Intel administrator console.\n\n"
-         "If you are reading it, access requests will reach you at this address.\n"),
-    )
+    sent, detail = await run_in_threadpool(notify.send_test_email, admin["full_name"])
     activity.record("admin.test_email", user=admin, ip=client_address(request),
                     detail=detail, outcome="ok" if sent else "error")
     if not sent:
