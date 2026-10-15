@@ -1349,13 +1349,19 @@ async def test_a_test_email_is_sent_when_mail_works(monkeypatch):
     admin = _make_admin()
     sent: list[tuple] = []
     monkeypatch.setattr("rad_intel.api.routes.admin.notify.email_configured", lambda: True)
-    monkeypatch.setattr("rad_intel.api.routes.admin.notify.send_email",
-                        lambda subject, body, to=None: (sent.append((subject, body)),
-                                                        (True, "Emailed you."))[1])
+    monkeypatch.setattr("rad_intel.auth.notify.send_email",
+                        lambda subject, body, to=None, html=None: (
+                            sent.append((subject, body, html)), (True, "Emailed you."))[1])
     async with _client() as client:
         res = await client.post("/api/v1/admin/test-email", cookies=_signed_in(admin))
     assert res.status_code == 200
     assert len(sent) == 1
+    subject, body, html = sent[0]
+    assert "working" in subject
+    # A text part is always sent; the HTML one is an alternative, not a
+    # replacement, so a client that shows neither is not a thing.
+    assert body and html
+    assert "<!doctype html>" in html.lower()
 
 
 async def test_a_missed_request_can_be_emailed_later(monkeypatch):

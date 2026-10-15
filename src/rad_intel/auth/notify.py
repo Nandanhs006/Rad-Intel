@@ -28,6 +28,8 @@ import os
 import smtplib
 from email.message import EmailMessage
 
+from rad_intel.auth import mail
+
 logger = logging.getLogger(__name__)
 
 SMTP_TIMEOUT = 15
@@ -94,9 +96,6 @@ def send_verification_code(code: str, full_name: str,
 
     minutes = CODE_TTL_SECONDS // 60
     window = f"{minutes} minutes" if minutes < 120 else f"{minutes // 60} hours"
-    body = (f"Rad-Intel sign-in code for {full_name}: {code}\n"
-            f"Valid for {window}. One use only. If you did not ask for it, ignore "
-            f"this and tell the study administrator.")
 
     if channel == "email":
         if not email:
@@ -104,8 +103,27 @@ def send_verification_code(code: str, full_name: str,
                 "No email address is registered for this account. Contact the study "
                 "administrator."
             )
-        sent, detail = send_email(subject="Your Rad-Intel sign-in code",
-                                  body=body + "\n", to=email)
+        subject = "Your Rad-Intel sign-in code"
+        body, html = mail.render(
+            subject,
+            f"Valid for {window}. One use only.",
+            [
+                mail.heading(f"Sign-in code for {full_name}"),
+                mail.para("Type this into the page you are signing in from. It is the "
+                          "second half of your sign-in; the first half was your "
+                          "Rad-Intel ID or your password."),
+                mail.code(code, caption=f"Valid for {window}, and for one sign-in only."),
+                mail.callout(
+                    "Nobody from the study will ever ask you for this code — not by "
+                    "email, not on the phone, not over WhatsApp. If you did not just "
+                    "try to sign in, ignore this message and tell the study "
+                    "administrator, because somebody else has your Rad-Intel ID.",
+                    tone="red",
+                ),
+                mail.small("Asking for another code cancels this one."),
+            ],
+        )
+        sent, detail = send_email(subject=subject, body=body, to=email, html=html)
         if sent:
             local, _, domain = email.partition("@")
             masked = f"{local[:2]}{'*' * max(1, len(local) - 2)}@{domain}"
@@ -136,8 +154,16 @@ def send_verification_code(code: str, full_name: str,
 
 # --- email -----------------------------------------------------------------
 
-def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, str]:
-    """Send a plain-text email. Returns (sent, detail)."""
+def send_email(subject: str, body: str, to: str | None = None,
+               html: str | None = None) -> tuple[bool, str]:
+    """
+    Send an email. Returns (sent, detail).
+
+    `body` is the plain-text version and is always sent. `html` is an
+    alternative, not a replacement: a client that will not or cannot render
+    it falls back to the text, which says the same thing because both were
+    built from the same blocks in mail.py.
+    """
     recipient = (to or ADMIN_EMAIL).strip()
     if not email_configured():
         return False, "No SMTP server is configured, so no email was sent."
@@ -147,6 +173,8 @@ def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, st
     message["From"] = _env("SMTP_FROM")
     message["To"] = recipient
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
 
     host, port = _env("SMTP_HOST"), int(_env("SMTP_PORT") or 587)
     user, password = _env("SMTP_USER"), _env("SMTP_PASSWORD")
@@ -189,27 +217,84 @@ def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, st
         return False, f"Email could not be sent ({type(exc).__name__})."
 
 
+def send_test_email(full_name: str = "") -> tuple[bool, str]:
+    """
+    Prove that mail works, from the administrator console.
+
+    Worth its own message rather than a line of text: this is the one email
+    an administrator deliberately looks at, so it is also where they find out
+    whether their mail client renders what everybody else is going to get.
+    """
+    subject = "Rad-Intel: email delivery is working"
+    body, html = mail.render(
+        subject,
+        "Access requests and sign-in codes will reach this address.",
+        [
+            mail.heading("Mail is working"),
+            mail.para("You sent this to yourself from the Rad-Intel administrator "
+                      "console. Reading it means two things are true."),
+            mail.facts([
+                ("Access requests", f"will arrive at {ADMIN_EMAIL}"),
+                ("Sign-in codes", "can reach clinicians at their own addresses"),
+            ]),
+            mail.callout(
+                "Mail is the second factor. If it stops working, nobody can sign in "
+                "— including you. The way back in is the command line: "
+                "scripts/manage_clinicians.py code --email … --admin prints a code "
+                "that the “I already have a code” link accepts.",
+                tone="amber",
+            ),
+            mail.small("This is also what the branding looks like in your own mail "
+                       "client. What clinicians receive uses the same template."),
+        ],
+    )
+    return send_email(subject=subject, body=body, html=html)
+
+
 def send_access_request_email(full_name: str, email: str, institution: str,
                               phone: str | None, registration: str | None,
                               message: str | None, reference: str) -> tuple[bool, str]:
     """Tell the administrator that somebody has asked to join the study."""
-    body = (
-        "Somebody has requested access to the Rad-Intel clinician review workspace.\n\n"
-        f"  Name         : {full_name}\n"
-        f"  Institution  : {institution}\n"
-        f"  Email        : {email}\n"
-        f"  Phone        : {phone or 'not given'}\n"
-        f"  Registration : {registration or 'not given'}\n"
-        f"  Reference    : {reference}\n\n"
-        f"  Message      : {message or '(none)'}\n\n"
-        "Verify their registration independently before granting access. Nothing has\n"
-        "been granted: no account exists until you create one.\n\n"
-        "Approve from the administrator console in the workspace, or on the command line:\n\n"
-        f'  python scripts/manage_clinicians.py add --email "{email}" \\\n'
-        f'      --name "{full_name}" --institution "{institution}" --phone "{phone or ""}"\n\n'
-        "That prints the Rad-Intel ID to pass to them yourself.\n"
-    )
-    return send_email(
-        subject=f"Rad-Intel access request — {full_name} ({institution})",
-        body=body,
-    )
+    subject = f"Rad-Intel access request — {full_name} ({institution})"
+    blocks = [
+        mail.heading("Somebody has asked to join the study"),
+        mail.para("They filled in the request form on the public site. No account "
+                  "exists and nothing has been granted."),
+        mail.facts([
+            ("Name", full_name),
+            ("Institution", institution),
+            ("Email", email),
+            ("Phone", phone or "not given"),
+            ("Registration", registration or "not given"),
+            ("Reference", reference),
+        ]),
+    ]
+    if (message or "").strip():
+        blocks += [mail.heading("What they wrote"), mail.para(message.strip())]
+
+    blocks += [
+        mail.callout(
+            "Verify their medical registration yourself, against the register rather "
+            "than against anything in this message. Everything above was typed by "
+            "whoever filled in the form.",
+            tone="amber",
+        ),
+        mail.divider(),
+        mail.heading("To grant access"),
+        mail.para("Open the administrator console, find this request, and press “Use "
+                  "these details”. Or, from a terminal on the server:"),
+        mail.command(
+            f'python scripts/manage_clinicians.py add \\\n'
+            f'  --email "{email}" \\\n'
+            f'  --name "{full_name}" \\\n'
+            f'  --institution "{institution}" \\\n'
+            f'  --phone "{phone or ""}"'
+        ),
+        mail.small("Either way you are given a Rad-Intel ID to hand over. Send it to "
+                   "them separately from the link to the site — the ID and their "
+                   "mailbox are the two halves of their sign-in, and keeping them in "
+                   "different places is the whole point."),
+    ]
+    body, html = mail.render(
+        subject, f"{full_name} at {institution}. Nothing has been granted yet.", blocks)
+    return send_email(subject=subject, body=body, html=html)
