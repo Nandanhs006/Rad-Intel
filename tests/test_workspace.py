@@ -42,9 +42,13 @@ def isolated_state(monkeypatch, tmp_path):
     otp.init()
     activity.init()
     ratelimit.reset()
+    _tokens.clear()
     # A fresh job coordinator, so a test cannot inherit a lock from another.
     monkeypatch.setattr(feedback_routes, "job", TrainingJob(tmp_path / "training.log"))
     yield path
+    # Drain anything the background writer still holds, while this test's
+    # database is still the one it is bound to.
+    activity.flush(2.0)
     ratelimit.reset()
 
 
@@ -53,9 +57,21 @@ def _client() -> httpx.AsyncClient:
                              base_url="http://test")
 
 
+_tokens: dict[str, str] = {}
+
+
 def _signed_in(user: dict) -> dict[str, str]:
-    """A cookie jar for an account, bypassing the two-step sign-in."""
-    return {session.COOKIE_NAME: session.issue(user["id"])}
+    """
+    A cookie jar for an account, bypassing the two-step sign-in.
+
+    Memoised per account. An account is signed in on one device at a time, so
+    issuing a second session would silently invalidate the first -- and a
+    test that calls this twice for the same person means "the same device
+    again", not "a second one". Use session.issue directly for that.
+    """
+    if user["id"] not in _tokens:
+        _tokens[user["id"]] = session.issue(user["id"])
+    return {session.COOKIE_NAME: _tokens[user["id"]]}
 
 
 def _make_clinician(email="a@hospital.org", name="Dr A", site="A Hospital"):
@@ -581,8 +597,11 @@ async def test_the_whole_sign_in_works_with_the_real_code(monkeypatch):
         assert (await client.get("/api/v1/feedback")).status_code == 401
 
 
-async def test_the_session_cookie_expires_with_the_browser(monkeypatch):
-    """No Max-Age and no Expires, so closing the browser ends the session."""
+async def test_the_session_cookie_outlives_the_browser(monkeypatch):
+    """
+    Thirty days on the cookie, so closing the browser does not log anybody
+    out and a code is needed about once a month.
+    """
     user = _make_clinician()
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
@@ -598,7 +617,8 @@ async def test_the_session_cookie_expires_with_the_browser(monkeypatch):
     header = res.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header
-    assert "max-age" not in header and "expires" not in header
+    assert f"max-age={session.SESSION_TTL_SECONDS}" in header
+    assert session.SESSION_TTL_SECONDS == 30 * 24 * 60 * 60
 
 
 async def test_a_code_that_cannot_be_delivered_refuses_the_sign_in(monkeypatch):
@@ -1225,3 +1245,109 @@ async def test_a_console_code_still_obeys_every_other_rule():
                                    json={"email": admin["email"], "code": code})
     assert first.status_code == 200
     assert second.status_code == 401, "a console code is single use like any other"
+
+
+# --- one device, thirty days, through the HTTP surface ----------------------
+
+async def _log_in(client, user, monkeypatch, code="Known-Code1!"):
+    """Drive the real two-step sign-in with delivery stubbed out."""
+    monkeypatch.setattr(
+        "rad_intel.api.routes.auth.notify.send_verification_code",
+        lambda phone, c, name, email=None: (True, "test", "sent"))
+    monkeypatch.setattr(otp, "generate_code", lambda: code)
+    await client.post("/api/v1/auth/code", json={
+        "email": user["email"], "radintel_id": user["radintel_id"]})
+    return await client.post("/api/v1/auth/login",
+                             json={"email": user["email"], "code": code})
+
+
+async def test_a_second_device_signs_the_first_one_out(monkeypatch):
+    user = _make_clinician()
+
+    async with _client() as laptop, _client() as phone:
+        first = await _log_in(laptop, user, monkeypatch, "Laptop-Code1")
+        assert first.status_code == 200
+        assert first.json()["displaced_other_device"] is False
+        assert (await laptop.get("/api/v1/feedback")).status_code == 200
+
+        second = await _log_in(phone, user, monkeypatch, "Phone-Code12")
+        assert second.status_code == 200
+        assert second.json()["displaced_other_device"] is True, \
+            "the person signing in must be told they displaced a device"
+
+        assert (await phone.get("/api/v1/feedback")).status_code == 200
+        assert (await laptop.get("/api/v1/feedback")).status_code == 401, \
+            "the device that was already open must be signed out"
+
+
+async def test_the_displacement_is_written_to_the_activity_log(monkeypatch):
+    admin = _make_admin()
+    user = _make_clinician()
+    async with _client() as first, _client() as second:
+        await _log_in(first, user, monkeypatch, "Laptop-Code1")
+        await _log_in(second, user, monkeypatch, "Phone-Code12")
+    async with _client() as client:
+        log = await client.get("/api/v1/admin/activity", cookies=_signed_in(admin))
+    actions = [e["action"] for e in log.json()["entries"]]
+    assert "login.displaced_other_device" in actions
+
+
+async def test_logging_out_requires_a_fresh_code_to_come_back(monkeypatch):
+    user = _make_clinician()
+    async with _client() as client:
+        await _log_in(client, user, monkeypatch, "Known-Code1!")
+        assert (await client.get("/api/v1/feedback")).status_code == 200
+        await client.post("/api/v1/auth/logout")
+        assert (await client.get("/api/v1/feedback")).status_code == 401
+        # The code that opened the session is spent, so it cannot be reused.
+        again = await client.post("/api/v1/auth/login",
+                                  json={"email": user["email"], "code": "Known-Code1!"})
+        assert again.status_code == 401
+
+
+async def test_a_session_says_when_it_will_ask_for_a_code_again(monkeypatch):
+    user = _make_clinician()
+    async with _client() as client:
+        await _log_in(client, user, monkeypatch)
+        me = await client.get("/api/v1/auth/me")
+    body = me.json()
+    assert body["authenticated"] is True
+    assert body["session_expires_at"], "the interface has to be able to say when"
+
+
+async def test_an_administrator_sees_one_device_per_account_and_its_expiry():
+    admin = _make_admin()
+    user = _make_clinician()
+    _signed_in(user)
+    async with _client() as client:
+        res = await client.get("/api/v1/admin/sessions", cookies=_signed_in(admin))
+    rows = res.json()["sessions"]
+    assert len(rows) == 2, "one each, not one per browser they have ever used"
+    assert all(row["expires_at"] for row in rows)
+
+
+async def test_closing_a_session_forces_that_person_to_use_a_code_again():
+    admin = _make_admin()
+    user = _make_clinician()
+    victim = _signed_in(user)
+    async with _client() as client:
+        listing = await client.get("/api/v1/admin/sessions", cookies=_signed_in(admin))
+        row = next(r for r in listing.json()["sessions"] if r["user_id"] == user["id"])
+        closed = await client.delete(f"/api/v1/admin/sessions/{row['id']}",
+                                     cookies=_signed_in(admin))
+        assert closed.status_code == 200
+        assert (await client.get("/api/v1/feedback", cookies=victim)).status_code == 401
+    # The account itself is untouched: they can log in again with a new code.
+    assert accounts.get_by_id(user["id"])["status"] == "active"
+
+
+async def test_the_expiry_is_known_from_the_moment_of_signing_in(monkeypatch):
+    """
+    Not only from /me afterwards: the interface shows "signed in until …" as
+    soon as the workspace appears, and the first thing it has to work from is
+    the login response.
+    """
+    user = _make_clinician()
+    async with _client() as client:
+        res = await _log_in(client, user, monkeypatch)
+    assert res.json()["session_expires_at"], "login must say when it runs out"

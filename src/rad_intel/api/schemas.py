@@ -249,6 +249,12 @@ class AuthMeResponse(BaseModel):
     radintel_id: str | None = None
     phone: str | None = None
     must_change_password: bool = False
+    # True when this sign-in closed the account's session on another device.
+    displaced_other_device: bool = False
+    # When a fresh one-time code will next be needed.
+    session_expires_at: str | None = None
+    # True when this login closed a session the account had somewhere else.
+    replaced_other_device: bool = False
 
 
 class ChangePasswordRequest(BaseModel):

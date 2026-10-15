@@ -75,7 +75,12 @@ def init() -> None:
     store.ensure_schema(DB_PATH, "activity_log", lambda conn: conn.executescript(SCHEMA))
 
 
-_pending: "queue.Queue[tuple | None]" = queue.Queue(maxsize=10_000)
+# Each item carries the database it is bound for, captured when the entry was
+# made rather than read when it is written. The writer runs on its own thread
+# and can drain an entry some time later; a test that repoints this module at
+# a scratch database and then finishes would otherwise have its entries
+# written to the real one.
+_pending: "queue.Queue[tuple[object, tuple] | None]" = queue.Queue(maxsize=10_000)
 _writer: threading.Thread | None = None
 _writer_lock = threading.Lock()
 
@@ -83,13 +88,15 @@ _writer_lock = threading.Lock()
 def _drain() -> None:
     """Write queued entries until the process ends."""
     while True:
-        row = _pending.get()
+        item = _pending.get()
         try:
-            if row is None:
+            if item is None:
                 return
+            db_path, row = item
             try:
-                init()
-                with _connect() as conn:
+                store.ensure_schema(db_path, "activity_log",
+                                    lambda conn: conn.executescript(SCHEMA))
+                with store.transaction(db_path) as conn:
                     conn.execute(
                         "INSERT INTO activity_log (id, at, user_id, actor, role, action,"
                         " detail, ip, outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
@@ -136,7 +143,7 @@ def record(action: str, user: dict[str, Any] | None = None, detail: str | None =
         _ensure_writer()
         # Drop rather than block if the queue ever backs up: a request must
         # not wait on its own audit trail.
-        _pending.put_nowait(row)
+        _pending.put_nowait((DB_PATH, row))
     except Exception:  # pragma: no cover
         logger.warning("Activity entry dropped: the log queue is full or unavailable.")
 

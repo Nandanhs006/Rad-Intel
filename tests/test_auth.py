@@ -33,7 +33,8 @@ def isolated_db(monkeypatch):
     session.init()
     otp.init()
     activity.init()
-    return path
+    yield path
+    activity.flush(2.0)
 
 
 def _clinician(email="doc@hospital.org", phone="+91 98765 43210"):
@@ -288,12 +289,94 @@ def test_expired_session_is_rejected():
     assert session.verify(session.issue("user-123", ttl=-1)) is None
 
 
-def test_an_idle_session_closes_itself():
+def test_an_idle_session_stays_open():
+    """
+    No idle timeout: a clinician who reviews a handful of cases a week should
+    not have to find a code every time. The thirty-day ceiling bounds it.
+    """
     token = session.issue("user-123")
     import sqlite3
     with sqlite3.connect(session.DB_PATH) as conn:
         conn.execute("UPDATE sessions SET last_seen_at = '2020-01-01T00:00:00+00:00';")
+    assert session.verify(token) == "user-123"
+
+
+def test_a_session_lasts_thirty_days_from_the_sign_in():
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    assert session.SESSION_TTL_SECONDS == 30 * 24 * 60 * 60
+    token = session.issue("user-123")
+    with sqlite3.connect(session.DB_PATH) as conn:
+        (expires,) = conn.execute("SELECT expires_at FROM sessions;").fetchone()
+    days = (datetime.fromisoformat(expires) - datetime.now(timezone.utc)).total_seconds()
+    assert timedelta(days=29).total_seconds() < days <= timedelta(days=30).total_seconds()
+    assert session.verify(token) == "user-123"
+
+
+def test_expiry_does_not_slide_forward_with_use():
+    """Thirty days from the sign-in, not thirty days from the last request."""
+    import sqlite3
+
+    token = session.issue("user-123")
+    with sqlite3.connect(session.DB_PATH) as conn:
+        (before,) = conn.execute("SELECT expires_at FROM sessions;").fetchone()
+    for _ in range(3):
+        assert session.verify(token) == "user-123"
+    with sqlite3.connect(session.DB_PATH) as conn:
+        (after,) = conn.execute("SELECT expires_at FROM sessions;").fetchone()
+    assert before == after
+
+
+def test_a_session_past_thirty_days_is_gone():
+    import sqlite3
+
+    token = session.issue("user-123")
+    with sqlite3.connect(session.DB_PATH) as conn:
+        conn.execute("UPDATE sessions SET expires_at = '2020-01-01T00:00:00+00:00';")
     assert session.verify(token) is None
+    with sqlite3.connect(session.DB_PATH) as conn:
+        (left,) = conn.execute("SELECT COUNT(*) FROM sessions;").fetchone()
+    assert left == 0, "an expired session must not be left lying in the table"
+
+
+# --- one account, one device -----------------------------------------------
+
+def test_logging_in_elsewhere_closes_the_session_that_was_open():
+    laptop = session.issue("user-123")
+    assert session.verify(laptop) == "user-123"
+
+    phone = session.issue("user-123")
+    assert session.verify(phone) == "user-123"
+    assert session.verify(laptop) is None, "the old device must be signed out"
+    assert len(session.active_for_user("user-123")) == 1
+
+
+def test_one_account_being_displaced_does_not_touch_another():
+    theirs = session.issue("user-456")
+    session.issue("user-123")
+    session.issue("user-123")
+    assert session.verify(theirs) == "user-456"
+
+
+def test_what_was_open_can_be_read_before_it_is_displaced():
+    """
+    The sign-in route reads this first, so the person can be told they have
+    just signed something else out rather than finding out when their other
+    machine stops working.
+    """
+    assert session.active_for_user("user-123") == []
+    session.issue("user-123")
+    assert len(session.active_for_user("user-123")) == 1
+    session.issue("user-123")
+    assert len(session.active_for_user("user-123")) == 1
+
+
+def test_logging_out_means_a_new_code_is_needed():
+    token = session.issue("user-123")
+    session.destroy(token)
+    assert session.verify(token) is None
+    assert session.active_for_user("user-123") == []
 
 
 def test_using_a_session_keeps_it_alive():
@@ -303,19 +386,10 @@ def test_using_a_session_keeps_it_alive():
     assert session.list_active()[0]["last_seen_at"] >= before
 
 
-def test_signing_out_ends_only_that_session():
-    laptop = session.issue("user-123")
-    phone = session.issue("user-123")
-    session.destroy(laptop)
-    assert session.verify(laptop) is None
-    assert session.verify(phone) == "user-123"
-
-
-def test_revoking_an_account_closes_every_session_it_holds():
-    session.issue("user-123")
+def test_revoking_an_account_closes_its_session_and_nobody_elses():
     session.issue("user-123")
     other = session.issue("user-456")
-    assert session.destroy_all_for_user("user-123") == 2
+    assert session.destroy_all_for_user("user-123") == 1
     assert session.verify(other) == "user-456"
 
 
@@ -427,3 +501,27 @@ def test_logging_never_breaks_a_request(monkeypatch):
     """A broken log must not be able to fail the action it was recording."""
     monkeypatch.setattr(activity, "_connect", lambda: (_ for _ in ()).throw(RuntimeError()))
     activity.record("review.submitted", actor="someone@x.org")  # must not raise
+
+
+def test_an_entry_is_written_to_the_database_it_was_made_against(monkeypatch, tmp_path):
+    """
+    The writer runs on its own thread and may drain an entry after the test
+    that made it has finished and put DB_PATH back. Binding the destination
+    at the point the entry is made is what stops a test's rows landing in the
+    real log, which is exactly what happened before this.
+    """
+    scratch = tmp_path / "scratch.db"
+    store.forget()
+    monkeypatch.setattr(activity, "DB_PATH", scratch)
+    activity.init()
+    activity.record("review.submitted", actor="someone@scratch.test")
+
+    # Put the module back before the entry is allowed to be written, which is
+    # what pytest's teardown does.
+    monkeypatch.undo()
+    activity.flush()
+
+    import sqlite3
+    with sqlite3.connect(scratch) as conn:
+        actors = [r[0] for r in conn.execute("SELECT actor FROM activity_log;")]
+    assert actors == ["someone@scratch.test"], "the entry must follow its own database"

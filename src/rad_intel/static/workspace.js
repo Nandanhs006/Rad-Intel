@@ -268,6 +268,11 @@
     $("fb-site-label").textContent = me.institution || "your institution";
     $("admin-console").hidden = me.role !== "admin";
     $("must-change").hidden = !me.must_change_password;
+    $("displaced-notice").hidden = !me.displaced_other_device;
+    $("session-until").textContent = me.session_expires_at
+      ? `signed in until ${new Date(me.session_expires_at).toLocaleDateString(undefined,
+          { day: "numeric", month: "short", year: "numeric" })}`
+      : "";
 
     renderMyDetails();
     refreshQueue();
@@ -1327,7 +1332,8 @@
             <span class="roster-text">
               <strong>${esc(row.full_name)}${row.is_you ? " (you)" : ""}</strong>
               <small>${esc(row.institution || "")} · last seen ${stamp(row.last_seen_at)}
-              · ${esc(row.ip || "unknown address")}</small>
+              · ${esc(row.ip || "unknown address")}
+              ${row.expires_at ? `<br>needs a new code on ${stamp(row.expires_at)}` : ""}</small>
             </span>
             ${row.is_you ? "" :
               `<button class="btn-link btn-link-danger" data-session-close="${esc(row.id)}">Close</button>`}

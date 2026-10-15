@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <link rel="stylesheet" href="/static/style.css?v=11">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -324,6 +324,10 @@
               <li><strong>Your responsibility.</strong> Upload only images you are
                   authorised to share, de-identified, with whatever approval your
                   institution requires. Nothing here de-identifies an image for you.</li>
+              <li><strong>One device at a time.</strong> Logging in here logs you out
+                  wherever else you were. A session lasts 30 days and then asks for a
+                  fresh code, and it survives closing the browser — so lock your
+                  machine, because anyone who can use it can open your account.</li>
               <li><strong>What is logged.</strong> Logins, uploads, edits, deletions,
                   exports and training runs are recorded against your name, and the
                   administrator can read that log. It is what makes "everyone can see
@@ -496,8 +500,17 @@
             <span id="session-name">—</span>
             <span class="badge badge-neutral" id="session-site">—</span>
             <span class="badge badge-accent" id="session-role" hidden>administrator</span>
+            <span class="session-until" id="session-until"></span>
           </span>
           <button class="btn-link" id="btn-signout" type="button">Log out</button>
+        </div>
+
+        <div id="displaced-notice" class="notice notice-amber" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          <span>This account was already logged in on another device, and that one has
+          just been logged out. An account works on one device at a time. If that was
+          not you, tell the study administrator — somebody else has your Rad-Intel
+          ID.</span>
         </div>
 
         <div id="must-change" class="notice notice-red" hidden>
@@ -786,8 +799,8 @@
                 Open sessions <span class="count-pill" id="session-count">—</span>
               </h3>
               <p class="card-subtitle">
-                Who has the workspace open. Closing one logs that browser out without
-                disabling the account.
+                One device per account, 30 days each. Closing one forces that person to
+                enter a fresh code next time, without disabling their account.
               </p>
               <div class="scroll-box" id="admin-sessions"></div>
             </section>
@@ -922,7 +935,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=3"></script>
-  <script src="/static/extras.js?v=9"></script>
-  <script src="/static/workspace.js?v=9"></script>
+  <script src="/static/extras.js?v=11"></script>
+  <script src="/static/workspace.js?v=11"></script>
 </body>
 </html>
