@@ -915,8 +915,9 @@
       loadAdminRequests(),
       loadAdminSessions(),
       loadAdminActivity(),
-      loadReleasable(),
     ]);
+    // After the stat row exists, so the tile it fills in is there.
+    await loadReleasable();
     $("ap-name").value = me.full_name || "";
     $("ap-institution").value = me.institution || "";
     $("ap-email").value = me.email || "";
@@ -977,6 +978,20 @@
         </div>`;
       }).join("");
       showRows(panel, 3, ".version-row");
+
+      // Say how many are waiting, on the card and at the top of the console.
+      // A finished training run should be visible without scrolling to find
+      // it: that is the whole reason this panel exists.
+      const waiting = data.candidates.filter((c) => !c.is_released).length;
+      const badge = $("release-count");
+      badge.hidden = !waiting;
+      badge.textContent = waiting
+        ? `${waiting} ready to release` : "";
+      const tile = document.querySelector("[data-stat='releasable']");
+      if (tile) {
+        tile.querySelector(".stat-value").textContent = waiting;
+        tile.classList.toggle("is-waiting", waiting > 0);
+      }
     } catch (error) {
       if (error.status === 401) applySession(null);
     }
@@ -1036,12 +1051,14 @@
       const data = await api("/api/v1/admin/overview");
       $("admin-contact-note").textContent = data.contact_note;
       $("admin-stats").innerHTML = [
-        ["Clinicians", data.users.active, `${data.users.disabled} disabled`],
-        ["Requests waiting", data.access_requests_waiting, "verify before issuing"],
-        ["Open sessions", data.open_sessions, "logged in right now"],
-        ["Log entries", data.activity_entries, "kept for a year"],
-      ].map(([label, value, hint]) =>
-        `<div class="stat"><span class="stat-value">${value}</span>
+        ["Clinicians", data.users.active, `${data.users.disabled} disabled`, null],
+        ["Requests waiting", data.access_requests_waiting, "verify before issuing", null],
+        ["Models to release", "—", "from reviewed cases", "releasable"],
+        ["Open sessions", data.open_sessions, "logged in right now", null],
+        ["Log entries", data.activity_entries, "kept for a year", null],
+      ].map(([label, value, hint, key]) =>
+        `<div class="stat"${key ? ` data-stat="${key}"` : ""}>
+         <span class="stat-value">${value}</span>
          <span class="stat-label">${esc(label)}</span>
          <span class="stat-hint">${esc(hint)}</span></div>`
       ).join("");

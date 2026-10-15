@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=20">
+  <link rel="stylesheet" href="/static/style.css?v=21">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -721,6 +721,27 @@
           <div class="stat-row" id="admin-stats"></div>
           <div id="delivery-warning" class="notice notice-amber" hidden></div>
 
+          <section class="card card-feature" aria-label="Release a model">
+            <h3 class="card-title card-title-sm feature-title">
+              <span class="feature-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+              </span>
+              Release a model to the public
+              <span class="count-pill" id="release-count" hidden></span>
+            </h3>
+            <p class="card-subtitle">
+              A fine-tuning run writes a new version and changes nothing until you do
+              this. Releasing one puts it in the model list on the
+              <strong>Analyse X-ray</strong> tab, beside the models the project reports,
+              with the scores it was measured at. The model the site uses by default does
+              not change — people choose it deliberately. Your password is asked for
+              every time.
+            </p>
+            <div id="release-list" class="version-list"></div>
+            <div id="release-result" class="fb-result" hidden></div>
+          </section>
+
+
           <div class="app-grid">
             <section class="card" aria-label="Add a clinician">
               <h3 class="card-title card-title-sm">Add a clinician</h3>
@@ -867,19 +888,6 @@
             </section>
           </div>
 
-          <section class="card" aria-label="Release a model">
-            <h3 class="card-title card-title-sm">Release a model to the public</h3>
-            <p class="card-subtitle">
-              A fine-tuning run writes a new version and changes nothing. Releasing one
-              puts it in the model list on the <strong>Analyse X-ray</strong> tab, beside
-              the models the project reports, with the scores it was measured at. The
-              model the site uses by default does not change — people choose it
-              deliberately. Your password is asked for every time.
-            </p>
-            <div id="release-list" class="version-list"></div>
-            <div id="release-result" class="fb-result" hidden></div>
-          </section>
-
           <section class="card" aria-label="Activity log">
             <h3 class="card-title card-title-sm">
               Activity log <span class="count-pill" id="activity-count">—</span>
@@ -986,7 +994,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=5"></script>
-  <script src="/static/extras.js?v=20"></script>
-  <script src="/static/workspace.js?v=20"></script>
+  <script src="/static/extras.js?v=21"></script>
+  <script src="/static/workspace.js?v=21"></script>
 </body>
 </html>

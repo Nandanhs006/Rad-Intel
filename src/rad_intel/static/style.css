@@ -2656,3 +2656,58 @@ code.id-reveal {
   background: var(--border-light);
   border-radius: var(--radius-full);
 }
+
+/* ===================================================================
+   THE RELEASE CARD
+   Putting a model in front of the public is the one thing in the
+   console that reaches past the study, and it was seventh in a column
+   of identical white cards. It is the same components as the rest --
+   this only stops it reading as one more row of admin.
+   =================================================================== */
+
+.card-feature {
+  border: 1px solid var(--border-orange);
+  border-left: 4px solid var(--primary-orange);
+  background:
+    linear-gradient(180deg, var(--bg-orange-soft) 0%, var(--surface-raised) 88px);
+  box-shadow: var(--elev-2);
+}
+
+.feature-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.feature-ico {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--primary-orange);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(249, 115, 22, 0.3);
+}
+.feature-ico svg {
+  width: 16px; height: 16px;
+  stroke: currentColor; fill: none; stroke-width: 2.2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* The count of versions waiting, so a finished training run is visible
+   from the top of the console rather than found by scrolling. */
+#release-count {
+  background: var(--primary-orange);
+  border-color: var(--primary-orange);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* The same nudge on the stat tile that carries the number. */
+.stat.is-waiting {
+  border-color: var(--border-orange);
+  background: var(--bg-orange-soft);
+}
+.stat.is-waiting .stat-value { color: var(--primary-orange-active); }
