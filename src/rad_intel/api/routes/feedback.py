@@ -57,6 +57,7 @@ from rad_intel.auth.dependencies import (
     require_clinician,
 )
 from rad_intel.config import settings
+from rad_intel.storage import drive
 from rad_intel.storage.database import db_manager
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,44 @@ def _resolve_image(stored: str | None) -> Path | None:
     if root not in candidate.parents or not candidate.is_file():
         return None
     return candidate
+
+
+async def _image_for(record: dict) -> Path | None:
+    """
+    The radiograph for a review, fetching it back from Drive if need be.
+
+    The disk is a cache. A server that came up on an empty volume -- a
+    redeploy, a restore, a move to another host -- has the database but not
+    the pixels, and this is where they come back, once, the first time
+    somebody asks to see that case.
+    """
+    local = _resolve_image(record.get("image_path"))
+    if local:
+        return local
+
+    file_id = record.get("drive_file_id")
+    if not file_id or not drive.configured():
+        return None
+
+    # Where it should have been. Recomputed from the digest rather than taken
+    # from the stored path, so a row whose path was tampered with cannot make
+    # this write outside the store.
+    digest = record.get("image_sha256") or ""
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+    suffix = Path(record.get("image_path") or "").suffix.lower()
+    target = IMAGE_DIR / f"{digest}{'.png' if suffix == '.png' else '.jpg'}"
+
+    try:
+        got = await run_in_threadpool(drive.store.download, file_id, target)
+    except drive.DriveError as exc:
+        logger.warning("Could not fetch %s back from Drive: %s", record["id"][:8], exc)
+        return None
+    if not got:
+        logger.warning("Drive no longer has the radiograph for %s.", record["id"][:8])
+        return None
+    logger.info("Restored the radiograph for %s from Drive.", record["id"][:8])
+    return target if target.is_file() else None
 
 
 def _may_edit(record: dict, user: dict) -> bool:
@@ -258,6 +297,20 @@ async def submit_feedback(
     if not stored.exists():
         stored.write_bytes(image_bytes)
 
+    # The durable copy. A reviewed radiograph is the one thing in this study
+    # that cannot be made again, and a rented disk is not where it should
+    # only exist. Failing to reach Drive does not fail the review: the case
+    # is saved either way and the administrator can sweep up afterwards.
+    drive_file_id = None
+    if drive.configured():
+        try:
+            drive_file_id = await run_in_threadpool(
+                drive.store.upload, stored, stored.name,
+                "image/png" if suffix == ".png" else "image/jpeg",
+            )
+        except Exception as exc:
+            logger.warning("A reviewed radiograph could not be copied to Drive: %s", exc)
+
     record_id = await db_manager.save_feedback(
         reviewer=user["full_name"],
         model_version=target,
@@ -272,9 +325,11 @@ async def submit_feedback(
         image_path=_store_path(stored),
         institution=user["institution"],
         owner_id=user["id"],
+        drive_file_id=drive_file_id,
     )
     activity.record("review.submitted", user=user, ip=client_address(request),
-                    detail=f"{record_id[:8]} verdict={verdict}")
+                    detail=f"{record_id[:8]} verdict={verdict} "
+                           f"drive={'yes' if drive_file_id else 'no'}")
 
     return FeedbackSubmitResponse(
         id=record_id,
@@ -400,6 +455,16 @@ async def delete_feedback(record_id: str, request: Request,
             if path:
                 path.unlink()
                 removed_image = True
+            # And the durable copy, or deleting a case would leave the
+            # radiograph sitting in a Drive folder for ever -- which is not
+            # what anyone means by deleting it.
+            file_id = existing.get("drive_file_id")
+            if file_id and drive.configured():
+                try:
+                    await run_in_threadpool(drive.store.delete, file_id)
+                    removed_image = True
+                except Exception as exc:
+                    logger.warning("Could not remove %s from Drive: %s", file_id, exc)
 
     activity.record("review.deleted", user=user, ip=client_address(request),
                     detail=f"{record_id[:8]} image_removed={removed_image}")
@@ -1044,7 +1109,10 @@ async def build_bundle(request: Request, admin: dict = Depends(require_admin)):
     entries = []
     missing = 0
     for row in rows:
-        image = _resolve_image(row.get("image_path"))
+        # Through the Drive fallback, so a bundle built on a server whose
+        # disk was wiped still carries every radiograph rather than quietly
+        # training on the handful that happen to be local.
+        image = await _image_for(row)
         label = row.get("corrected_label") or row.get("predicted_label")
         if not image or label not in ("NORMAL", "PNEUMONIA"):
             missing += 1
@@ -1487,7 +1555,7 @@ async def feedback_image(record_id: str, _user: dict = Depends(require_clinician
     if not record or not record.get("image_path"):
         raise HTTPException(status_code=404, detail="No image for this review.")
 
-    path = _resolve_image(record.get("image_path"))
+    path = await _image_for(record)
     if not path:
         raise HTTPException(status_code=404, detail="Image file is missing.")
 
@@ -1497,6 +1565,89 @@ async def feedback_image(record_id: str, _user: dict = Depends(require_clinician
         # it, so it must not be left in a shared cache.
         "Cache-Control": "private, max-age=300",
     })
+
+
+@router.get("/drive")
+async def drive_status(_admin: dict = Depends(require_admin)):
+    """
+    Whether reviewed radiographs have a copy anywhere but this disk.
+
+    Administrator only: it names a folder in a personal Drive, and a
+    clinician has no business knowing where the administrator keeps things.
+    """
+    status = await run_in_threadpool(drive.store.check)
+    waiting = await db_manager.feedback_without_drive_copy(limit=1000)
+    return {
+        **status,
+        "awaiting_backup": len(waiting),
+        "scope_note": (
+            "Rad-Intel holds one Google permission: access to files it created "
+            "itself. It cannot read, list or even see anything else in that "
+            "Drive — your own documents, the trained checkpoints, any of it."
+        ),
+    }
+
+
+@router.post("/drive/backfill",
+             dependencies=[Depends(limit("drive-backfill", 12, 3600, "backups"))])
+async def backfill_drive(request: Request, admin: dict = Depends(require_admin)):
+    """
+    Copy to Drive every radiograph that is not there yet.
+
+    For two cases: radiographs reviewed before Drive was connected, and ones
+    whose upload failed at the time because Google was unreachable. Submitting
+    a review deliberately does not fail when Drive does, so this is where that
+    debt is paid off.
+    """
+    if not drive.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=("Google Drive is not set up on this server, so there is nowhere "
+                    "to copy anything to. Run scripts/connect_drive.py."),
+        )
+
+    waiting = await db_manager.feedback_without_drive_copy(limit=500)
+    done, failed, gone = 0, 0, 0
+    for row in waiting:
+        path = _resolve_image(row.get("image_path"))
+        if not path:
+            gone += 1
+            continue
+        try:
+            file_id = await run_in_threadpool(
+                drive.store.upload, path, path.name,
+                "image/png" if path.suffix.lower() == ".png" else "image/jpeg",
+            )
+        except Exception as exc:
+            logger.warning("Backfill failed for %s: %s", row["id"][:8], exc)
+            failed += 1
+            # One failure is usually all of them -- no credentials, no room.
+            # Stopping says so in one message instead of five hundred.
+            break
+        await db_manager.set_drive_file_id(row["id"], file_id)
+        done += 1
+
+    activity.record("drive.backfill", user=admin, ip=client_address(request),
+                    detail=f"copied={done} failed={failed} missing_locally={gone}",
+                    outcome="error" if failed else "ok")
+    remaining = len(await db_manager.feedback_without_drive_copy(limit=1000))
+    return {
+        "copied": done,
+        "failed": failed,
+        "missing_locally": gone,
+        "remaining": remaining,
+        "detail": (
+            (f"Copied {done} radiograph{'' if done == 1 else 's'} to Drive. "
+             if done else "Nothing was copied. ")
+            + (f"{gone} could not be found on this disk and are not in Drive either — "
+               f"those are gone. " if gone else "")
+            + (f"Stopped after a failure with {remaining} still to do; check the "
+               f"connection and the account's free space."
+               if failed else
+               ("Everything reviewed so far is now in Drive."
+                if not remaining else f"{remaining} still to do."))
+        ),
+    }
 
 
 @router.get("/storage")

@@ -804,6 +804,72 @@
     }
   });
 
+  // ============================================ where radiographs are kept
+
+  /**
+   * Whether the reviewed radiographs exist anywhere but this disk.
+   *
+   * Said plainly rather than left to be discovered: "on this server only"
+   * is a sentence about what happens when the server goes, and nobody finds
+   * that out at a good moment.
+   */
+  async function loadDrive() {
+    const panel = $("drive-status");
+    if (!panel || !me || !me.is_admin_session) return;
+    try {
+      const data = await api("/api/v1/feedback/drive");
+      const pill = $("drive-pill");
+      const open = $("drive-open");
+      const sweep = $("drive-backfill");
+
+      if (!data.configured) {
+        show(panel,
+          "<strong>On this server's disk only.</strong> " + esc(data.detail),
+          "error", { sticky: true });
+        pill.hidden = false;
+        pill.textContent = "not connected";
+        open.hidden = true;
+        sweep.hidden = true;
+      } else if (!data.working) {
+        show(panel, "<strong>Drive is connected but not answering.</strong> " +
+                    esc(data.detail), "error", { sticky: true });
+        pill.hidden = false;
+        pill.textContent = "needs attention";
+        open.hidden = true;
+        sweep.hidden = false;
+      } else {
+        show(panel, esc(data.detail), "ok", { sticky: true });
+        pill.hidden = false;
+        pill.textContent = data.awaiting_backup
+          ? `${data.awaiting_backup} not copied yet` : "all copied";
+        open.href = data.folder_url;
+        open.hidden = false;
+        // Only offered when there is something to do.
+        sweep.hidden = !data.awaiting_backup;
+      }
+      $("drive-scope").textContent = data.scope_note || "";
+    } catch (error) {
+      if (error.status === 401) applySession(null);
+    }
+  }
+
+  const driveSweep = $("drive-backfill");
+  if (driveSweep) {
+    driveSweep.addEventListener("click", async () => {
+      busy(driveSweep, true);
+      try {
+        const outcome = await api("/api/v1/feedback/drive/backfill", { method: "POST" });
+        show($("drive-result"), esc(outcome.detail),
+             outcome.failed ? "error" : "ok");
+      } catch (error) {
+        show($("drive-result"), esc(readable(error)), "error");
+      } finally {
+        busy(driveSweep, false);
+        loadDrive();
+      }
+    });
+  }
+
   // ==================================================== the community model
 
   const metricOf = (value, digits = 3) =>
@@ -1082,6 +1148,7 @@
     ]);
     // After the stat row exists, so the tile it fills in is there.
     await loadReleasable();
+    loadDrive();
     $("ap-name").value = me.full_name || "";
     $("ap-institution").value = me.institution || "";
     $("ap-email").value = me.email || "";

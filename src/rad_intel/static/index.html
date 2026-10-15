@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=23">
+  <link rel="stylesheet" href="/static/style.css?v=24">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -327,10 +327,13 @@
                   measured at, and the default model is not changed. Your radiographs are
                   never published; what can become public is a model whose weights were
                   shaped by them.</li>
-              <li><strong>What is stored.</strong> The radiograph you upload, its SHA-256
-                  hash, your name and institution, the model's prediction and probability,
-                  your verdict, and any note. The image is kept on this server because
-                  training needs the pixels.</li>
+              <li><strong>What is stored, and where.</strong> The radiograph you upload,
+                  its SHA-256 hash, your name and institution, the model's prediction and
+                  probability, your verdict, and any note. The image is kept because
+                  training needs the pixels — on this server, and copied to a private
+                  folder in the study administrator's Google Drive so it survives the
+                  server being rebuilt. It is not shared, not published, and not
+                  searchable; deleting your case deletes both copies.</li>
               <li><strong>Who can see it.</strong> Every other logged-in clinician in this
                   group, and the study administrator. It is not public and is not shared
                   outside the group — but it is <em>not</em> private to you.</li>
@@ -757,6 +760,29 @@
             <div id="release-result" class="fb-result" hidden></div>
           </section>
 
+          <section class="card" aria-label="Where radiographs are kept">
+            <h3 class="card-title card-title-sm">
+              Where reviewed radiographs are kept
+              <span class="count-pill" id="drive-pill" hidden></span>
+            </h3>
+            <p class="card-subtitle">
+              This server's disk is rented by the month and most hosts wipe it on every
+              redeploy. A reviewed radiograph is the one thing here that cannot be made
+              again, so each one is also copied into your Google Drive — and fetched back
+              from there if the disk ever comes up empty.
+            </p>
+            <div id="drive-status" class="fb-result" hidden></div>
+            <p class="muted small" id="drive-scope"></p>
+            <div class="fb-actions">
+              <button class="btn-secondary btn-sm" id="drive-backfill" type="button" hidden>
+                Copy what is missing
+              </button>
+              <a class="btn-secondary btn-sm" id="drive-open" target="_blank"
+                 rel="noopener noreferrer" hidden>Open the folder</a>
+            </div>
+            <div id="drive-result" class="fb-result" hidden></div>
+          </section>
+
           <section class="card" aria-label="The community model">
             <h3 class="card-title card-title-sm">The community model</h3>
             <p class="card-subtitle">
@@ -1106,7 +1132,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=5"></script>
-  <script src="/static/extras.js?v=23"></script>
-  <script src="/static/workspace.js?v=23"></script>
+  <script src="/static/extras.js?v=24"></script>
+  <script src="/static/workspace.js?v=24"></script>
 </body>
 </html>

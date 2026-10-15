@@ -155,6 +155,15 @@ SMTP_FROM             = poorabng@gmail.com
 GEMINI_API_KEY = <copy from your .env>
 ```
 
+**Google Drive** — where reviewed radiographs go so they outlive the server.
+See Step 4b below for how to get these three.
+
+```
+GOOGLE_DRIVE_CLIENT_ID     = <from Step 4b>
+GOOGLE_DRIVE_CLIENT_SECRET = <from Step 4b>
+GOOGLE_DRIVE_REFRESH_TOKEN = <from Step 4b>
+```
+
 **Leave these empty.** They are only for development:
 
 ```
@@ -163,6 +172,63 @@ RAD_INTEL_CORS_ORIGINS  (empty)
 RAD_INTEL_OTP_CHANNEL   (empty)
 RAD_INTEL_OTP_ECHO      (empty)
 ```
+
+---
+
+## Step 4b — Put the radiographs somewhere permanent
+
+**Skip this and the site still works.** Reviewed radiographs are kept on the
+server's disk. The problem is that the disk is rented by the month, most hosts
+wipe it on every redeploy, and a radiograph a clinician uploaded is the one
+thing here that **cannot be made again**. The model can be retrained. The
+database can be rebuilt. A lost radiograph is lost.
+
+So each one is also copied into **your** Google Drive, and fetched back from
+there if the server ever comes up with an empty disk.
+
+### What it can see
+
+One permission: `drive.file` — access to files the app created itself.
+
+That is not a promise to behave. Google's API **will not return** anything
+else. Your documents, your photos, the `.pt` checkpoints you keep in the same
+Drive: this connection cannot read them, cannot list them, cannot tell they
+exist. It makes one folder, *Rad-Intel reviewed radiographs*, and that folder
+is the entire world it has.
+
+### Setting it up, once
+
+1. **console.cloud.google.com** → new project, any name.
+2. **APIs & Services → Library** → search *Google Drive API* → **Enable**.
+3. **APIs & Services → OAuth consent screen**:
+   - User type **External**
+   - App name, your email, your email again → **Save**
+   - **Publish app** → Confirm.
+
+   > **Publishing matters.** An app left in *Testing* has its token expired by
+   > Google after **seven days**, so uploads start failing a week after you
+   > deploy. `drive.file` is not a sensitive scope, so publishing needs no
+   > review and no verification — it is one button.
+4. **Credentials → Create credentials → OAuth client ID → Desktop app.**
+   Copy the client ID and client secret.
+5. On your own machine:
+
+```bash
+python scripts/connect_drive.py --client-id YOUR_ID --client-secret YOUR_SECRET
+```
+
+A browser opens. Sign in as the account whose Drive should hold the
+radiographs, allow the one permission, and it prints three lines. Put them in
+the host's Variables, as in Step 4.
+
+**How to tell it worked:** the console gets a card, *Where reviewed radiographs
+are kept*, saying they are copied to your Drive, with a link to the folder.
+
+**If you connect it after people have already reviewed cases:** that card
+offers **Copy what is missing**. Press it once.
+
+**To disconnect:** myaccount.google.com/permissions. The files stay; they are
+yours.
 
 ---
 
@@ -337,4 +403,6 @@ anything is always the one your paper describes.
 - **There is no idle timeout.** An unlocked laptop is an open account until
   the browser closes.
 - **Back up `/data`.** It holds every account and every reviewed radiograph.
-  A monthly copy is enough at this scale.
+  A monthly copy is enough at this scale. With Step 4b done, the radiographs
+  are already safe in Drive — what a backup protects is the accounts and the
+  reviews themselves.
