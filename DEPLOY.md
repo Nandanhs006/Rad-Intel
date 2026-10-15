@@ -1,247 +1,256 @@
 # Putting Rad-Intel online
 
+You are hosting this yourself, on the spare MacBook, and reaching it through
+a free tunnel. No card, no monthly bill, no server to administer.
+
 Follow this top to bottom. Every step says what to do and how to tell it
 worked. Nothing here needs you to understand the code.
 
-Budget about **two hours** the first time, plus half an hour if you do
-Step 4b.
+Budget about **two hours** the first time.
 
 ---
 
-## Before you start, understand one thing
+## Why this way
 
-Your project is three pieces that must all end up on the server:
+The free tiers that could have carried this have mostly closed. Render's
+free plan gives 512 MB of memory and this needs about 870 MB. Fly.io and
+Koyeb stopped offering free plans to new accounts. Hugging Face now requires
+a paid plan for the kind of Space this would be. What is left is a machine
+you already own.
 
-| Piece | What it is | Size |
-|---|---|---|
-| **The code** | what you push to GitHub | small |
-| **The model files** | `weights/best_*_model.pt` | 136 MB each, **494 MB** for all five |
-| **The data** | `rad_intel.db` + `feedback_store/` | small, but must survive |
+That turns out to be a decent answer rather than a consolation. The disk is
+permanent, so nothing is wiped on a redeploy and there is no volume to
+configure. There is no monthly cost to forget about. And the model files
+never have to be uploaded anywhere — they are already on the machine.
 
-The code goes up with git. **The model files do not** — they are in
-`.gitignore`, because GitHub refuses files that big. If you forget them, your
-site will load perfectly and every single analysis will fail.
-
-Only `best_hybrid_model.pt` is required; the rest decide how many models
-people can choose between. Step 3 has the list.
-
-That is the one mistake everybody makes. Step 3 is how you avoid it.
-
----
-
-## Step 1 — Pick a host
-
-You need a host that gives you:
-
-- **2 GB of memory.** Measured on a running server: **871 MB** once started,
-  and it plateaus at about **1.17 GB** however many other models get tried,
-  because only one is held at a time. The explanation view lazily loads a
-  lung-segmentation model worth another 380 MB, so the realistic ceiling is
-  **~1.55 GB**. 1 GB is not enough. 512 MB will not start.
-- **a disk that keeps files between deploys** (called a *volume*)
-- **HTTPS** (every host below gives this free)
-
-Free tiers usually give 512 MB of memory and **no** permanent disk. Your app
-will crash on startup, or lose every uploaded radiograph on each redeploy.
-This needs a paid tier — roughly **₹400–900 a month**.
-
-Reasonable choices:
-
-- **Railway** — simplest. Connect GitHub, add a volume, done.
-- **Render** — similar, slightly more clicking.
-- **A small VPS** (DigitalOcean, Hetzner) — cheapest and most control, but
-  you install things yourself.
-
-The rest of this guide assumes Railway. Render is nearly identical.
+**The one real cost:** the site is up only while that MacBook is on, awake
+and online. For a study with a handful of clinicians, that is usually fine.
+It is not a service other people can depend on at three in the morning, and
+you should tell them so.
 
 ---
 
-## Step 2 — Push your code
+## What you need
+
+- The **spare Intel MacBook**, on its charger, on your wifi.
+- About **3 GB free disk**, and the project copied onto it.
+- A free **Tailscale** account — no card.
+
+### A word about 4 GB
+
+Measured: Rad-Intel sits at about **870 MB** once started. macOS itself wants
+roughly 2 GB. That leaves the machine working, with some swapping, and it
+will hold.
+
+Two things keep it there:
+
+- **Put only `best_hybrid_model.pt` on it.** Models without a checkpoint are
+  simply not offered, so the chooser shows one model and nothing ever gets
+  loaded and unloaded. Step 2 says where to put it.
+- **Leave `RAD_INTEL_MODEL_CACHE` empty.** The default already holds one
+  model at a time.
+
+Analyses will take a few seconds rather than under one, because the
+processor is old. That is the trade, and it is a fair one.
+
+---
+
+## Step 1 — Get the project onto that MacBook
+
+On the spare machine, install the tools, then the project:
 
 ```bash
-cd ~/Documents/GitHub/Rad-Intel
-git push origin poorab
+xcode-select --install
 ```
 
-On Railway: **New Project → Deploy from GitHub → pick Rad-Intel → branch
-`poorab`**.
-
-It will try to build and probably fail or crash. **That is expected.** It has
-no settings and no model yet. Carry on.
-
----
-
-## Step 3 — Add a disk, and put the model on it
-
-In Railway: your service → **Variables/Settings → Volumes → New Volume**.
-Mount it at:
-
-```
-/data
-```
-
-Give it **2 GB**.
-
-Now get the model files onto that disk. The file transfer is the one part of
-this that no host makes easy, so here are two ways that work.
-
-**Option A — through Google Drive (works on every host)**
-
-1. Upload the `.pt` files from your `weights/` folder to your Drive.
-2. For each: right-click → Share → **Anyone with the link** → **Copy link**.
-3. The link looks like
-   `https://drive.google.com/file/d/`**`1AbC...XyZ`**`/view` — the bold part
-   is the id.
-4. Open the server's shell (Railway: your service → the `⋮` menu →
-   **Shell**, or `railway run bash` from your own machine) and run:
+Install Python 3.12 or newer from [python.org](https://www.python.org/downloads/macos/)
+if `python3 --version` shows anything older. Then:
 
 ```bash
-pip install gdown
-mkdir -p /data/weights
-gdown 1AbC...XyZ -O /data/weights/best_hybrid_model.pt
+mkdir -p ~/Documents/GitHub && cd ~/Documents/GitHub
+git clone https://github.com/YOUR_USERNAME/Rad-Intel.git
+cd Rad-Intel
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-deploy.txt
 ```
 
-Repeat the `gdown` line for each model you want, changing the id and the
-filename. **The filename must match exactly** — the service finds models by
-name.
-
-5. **Set the Drive files back to Restricted** when the downloads are done.
-
-**Option B — Railway's own transfer**
-
-If `railway` is installed on your machine:
-
-```bash
-railway run bash -c "mkdir -p /data/weights"
-railway volume upload weights/best_hybrid_model.pt /data/weights/
-```
-
-Not every Railway plan has `volume upload`; if the command is unknown, use
-Option A.
+That last line takes ten to twenty minutes and downloads about a gigabyte.
+It installs the **CPU** build of PyTorch, which is the right one here and
+several gigabytes smaller than the default.
 
 **How to tell it worked**
 
 ```bash
-ls -lh /data/weights/
+.venv/bin/python -c "import torch; print(torch.__version__)"
 ```
 
-**Upload every model you want people to be able to choose.** A model with no
-checkpoint on the server is simply not offered in the list — better than
-offering it and erroring, but it does mean the chooser only shows what you
-uploaded.
+---
 
-| file | size | needed |
-|---|---|---|
-| `best_hybrid_model.pt` | 136 MB | **yes** — the default |
-| `best_hybrid_no_cbam_model.pt` | 136 MB | only to offer the ablation |
-| `best_swin_t_model.pt` | 105 MB | only to offer Swin-T |
-| `best_densenet121_model.pt` | 27 MB | only to offer DenseNet121 |
-| `best_resnet50_model.pt` | 90 MB | only to offer ResNet50 |
+## Step 2 — Put the model file in place
 
-All five is about **494 MB**, which is why the volume in Step 3 is 2 GB. Only
-the hybrid is **not** cheaper to run — see below — it just means fewer
-choices.
+The model is not in git — it is too big for GitHub. Copy
+`weights/best_hybrid_model.pt` across from your main machine: AirDrop, a USB
+stick, or your Google Drive. It goes in `~/Documents/GitHub/Rad-Intel/weights/`.
 
-> **Having them all costs disk, not memory.** A model loads when somebody
-> picks it, and the previous choice is unloaded to make room. Measured on a
-> running server: 871 MB at rest, plateauing at about 1.17 GB however many
-> times you switch. A switch adds 200–700 ms to that one request; the default
-> model is never unloaded, so nobody using it ever waits.
+**How to tell it worked**
+
+```bash
+ls -lh ~/Documents/GitHub/Rad-Intel/weights/
+```
+
+You want `best_hybrid_model.pt` at about **136M**.
+
+> You can copy the other four `.pt` files too, and the Analyse tab will then
+> offer those models as well. On 4 GB, start with just the one. You can
+> always add them later.
+
+---
+
+## Step 3 — Give it a public address
+
+[Tailscale](https://tailscale.com) will carry traffic from the internet to
+this machine without opening a single port on your router — which also means
+it works on a home connection that has no public address of its own.
+
+1. Make a free account at **tailscale.com** and install Tailscale on the
+   MacBook. Sign in.
+2. In the Tailscale admin console → **DNS**, note your tailnet name. It looks
+   like `tail1234.ts.net`.
+3. Still in the admin console → **Access controls**, make sure `funnel` is
+   enabled for your devices. On a new tailnet it usually already is.
+4. On the MacBook:
+
+```bash
+tailscale funnel --bg 8000
+```
+
+> **If `tailscale` is not found**, the Mac app keeps its command somewhere
+> the shell does not look. Add it once:
+>
+> ```bash
+> echo 'alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"' \
+>   >> ~/.zshrc
+> source ~/.zshrc
+> ```
+
+It prints your public address:
+
+```
+https://that-macbook.tail1234.ts.net
+```
+
+**That address is yours and it does not change.** Write it down — it is what
+you give clinicians.
+
+**How to tell it worked:** open that address on your *phone, with wifi off*.
+You should reach the site. (Nothing is running yet, so expect an error page —
+what matters is that it is *your* machine answering, not a timeout.)
+
+> Tailscale Funnel is free, needs no domain and no card. Two things to know:
+> it only carries ports 443, 8443 and 10000 on the public side, which is
+> handled for you, and its bandwidth is capped at a level that is generous
+> for this and not configurable.
 
 ---
 
 ## Step 4 — Fill in the settings
 
-Railway → your service → **Variables**. Add each of these.
-
-**Where your data lives** (so it survives a redeploy):
-
-```
-RAD_INTEL_FEEDBACK_DIR = /data/feedback_store
-DATABASE_URL           = sqlite+aiosqlite:////data/rad_intel.db
-MODEL_WEIGHTS_PATH     = /data/weights/best_hybrid_model.pt
-```
-
-**Security** — generate the key by running this on your own machine and
-pasting the result:
+Settings live in a file called `.env`, beside the code. Start from the
+example and edit it:
 
 ```bash
-python -c "import secrets; print(secrets.token_hex(32))"
+cd ~/Documents/GitHub/Rad-Intel
+cp .env.example .env
+nano .env
 ```
 
-```
-RAD_INTEL_SECRET_KEY    = <the long string you just generated>
-RAD_INTEL_COOKIE_SECURE = 1
-RAD_INTEL_TRUSTED_PROXY = 1
+`nano` saves with **Ctrl+O**, Enter, then **Ctrl+X**.
+
+**Where your data lives.** Leave `RAD_INTEL_FEEDBACK_DIR` and `DATABASE_URL`
+**empty**. On your own machine the defaults — a folder beside the code and
+`rad_intel.db` next to it — are exactly right, and nothing wipes them.
+
+**Security.** Generate a key:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-> `RAD_INTEL_TRUSTED_PROXY=1` matters on Railway, Render, Cloudflare or any
-> load balancer. Without it every request looks like it came from the proxy,
-> so **one person can use up everybody's rate limit** and the activity log
-> records the wrong address. Leave it empty only if people reach the machine
-> directly.
+and put it in, along with the two below:
 
-> Write that key down somewhere safe. If you lose it, every stored phone
+```
+RAD_INTEL_SECRET_KEY=<the long string you just generated>
+RAD_INTEL_COOKIE_SECURE=1
+RAD_INTEL_TRUSTED_PROXY=
+```
+
+> **Write that key down somewhere safe.** If you lose it, every stored phone
 > number becomes permanently unreadable.
 
-**Email** — copy these from your own `.env` file:
+> `RAD_INTEL_COOKIE_SECURE=1` is right even though this process speaks plain
+> HTTP: the address people actually use is HTTPS, and that is what the
+> browser decides on.
+
+> Leave `RAD_INTEL_TRUSTED_PROXY` **empty for now**. It decides whether the
+> `X-Forwarded-For` header is believed. Believe it when nothing sets it and
+> anybody can claim any address, so the rate limits stop meaning anything;
+> ignore it when a tunnel *does* set it and every visitor looks like the same
+> one person. Step 7 has a one-minute test that tells you which you have.
+
+**Email** — the same values you already use. For Gmail, `SMTP_PASSWORD` is a
+16-character App Password, not your account password:
 
 ```
-RAD_INTEL_ADMIN_EMAIL = poorabng@gmail.com
-SMTP_HOST             = smtp.gmail.com
-SMTP_PORT             = 587
-SMTP_USER             = poorabng@gmail.com
-SMTP_PASSWORD         = <your 16-character Gmail App Password>
-SMTP_FROM             = poorabng@gmail.com
+RAD_INTEL_ADMIN_EMAIL=poorabng@gmail.com
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=poorabng@gmail.com
+SMTP_PASSWORD=<your 16-character Gmail App Password>
+SMTP_FROM=poorabng@gmail.com
 ```
 
 **Reports:**
 
 ```
-GEMINI_API_KEY = <copy from your .env>
+GEMINI_API_KEY=<copy from your main machine's .env>
 ```
 
-**Google Drive** — where reviewed radiographs go so they outlive the server.
-See Step 4b below for how to get these three.
+**Google Drive** — where reviewed radiographs go so they outlive this
+machine. See Step 4b below for how to get these three.
 
 ```
-GOOGLE_DRIVE_CLIENT_ID     = <from Step 4b>
-GOOGLE_DRIVE_CLIENT_SECRET = <from Step 4b>
-GOOGLE_DRIVE_REFRESH_TOKEN = <from Step 4b>
+GOOGLE_DRIVE_CLIENT_ID=
+GOOGLE_DRIVE_CLIENT_SECRET=
+GOOGLE_DRIVE_REFRESH_TOKEN=
 ```
 
-**Optional, for a small box:**
+**Leave these empty.** They are for development only, and on a machine the
+public can reach they are actively harmful:
 
 ```
-RAD_INTEL_MODEL_CACHE = 2
+RAD_INTEL_ENABLE_DOCS=
+RAD_INTEL_CORS_ORIGINS=
+RAD_INTEL_OTP_CHANNEL=
+RAD_INTEL_OTP_ECHO=
+RAD_INTEL_MODEL_CACHE=
 ```
 
-How many models stay in memory at once. **Leave it empty** unless you have a
-reason: the default is one, meaning the default model plus whichever somebody
-has chosen, which is what keeps a 2 GB box comfortable however many
-checkpoints you uploaded.
-
-Raise it to 2 or 3 if several people compare different models at the same
-time and keep waiting for reloads — each extra model held costs 30–600 MB.
-
-**Leave these empty.** They are only for development:
-
-```
-RAD_INTEL_ENABLE_DOCS   (empty)
-RAD_INTEL_CORS_ORIGINS  (empty)
-RAD_INTEL_OTP_CHANNEL   (empty)
-RAD_INTEL_OTP_ECHO      (empty)
-```
+> `.env` is in `.gitignore`, so none of this is ever pushed to GitHub. Keep
+> it that way.
 
 ---
 
 ## Step 4b — Put the radiographs somewhere permanent
 
-**Skip this and the site still works.** Reviewed radiographs are kept on the
-server's disk. The problem is that the disk is rented by the month, most hosts
-wipe it on every redeploy, and a radiograph a clinician uploaded is the one
-thing here that **cannot be made again**. The model can be retrained. The
-database can be rebuilt. A lost radiograph is lost.
+**Skip this and the site still works. Do not skip it.** Reviewed radiographs
+are kept on this MacBook's disk. The disk is permanent — but the MacBook is
+not. It can be dropped, stolen, or simply stop one morning, and a radiograph
+a clinician uploaded is the one thing here that **cannot be made again**. The
+model can be retrained. The database can be rebuilt. A lost radiograph is
+lost.
+
+Self-hosting makes this step *more* important than it would be on a rented
+server, not less: there is no datacentre keeping a copy for you.
 
 So each one is also copied into **your** Google Drive, and fetched back from
 there if the server ever comes up with an empty disk.
@@ -271,15 +280,19 @@ is the entire world it has.
    > review and no verification — it is one button.
 4. **Credentials → Create credentials → OAuth client ID → Desktop app.**
    Copy the client ID and client secret.
-5. On your own machine:
+5. On the MacBook, in the project folder:
 
 ```bash
-python scripts/connect_drive.py --client-id YOUR_ID --client-secret YOUR_SECRET
+.venv/bin/python scripts/connect_drive.py --client-id YOUR_ID --client-secret YOUR_SECRET
 ```
 
-A browser opens. Sign in as the account whose Drive should hold the
-radiographs, allow the one permission, and it prints three lines. Put them in
-the host's Variables, as in Step 4.
+A browser opens on that machine. Sign in as the account whose Drive should
+hold the radiographs, allow the one permission, and it prints three lines.
+Paste them into `.env`, as in Step 4, and restart:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.radintel.server
+```
 
 **How to tell it worked:** the console gets a card, *Where reviewed radiographs
 are kept*, saying they are copied to your Drive, with a link to the folder.
@@ -292,41 +305,70 @@ yours.
 
 ---
 
-## Step 5 — Tell it how to start
+## Step 5 — Make it start by itself, and stay up
 
-Railway → **Settings → Build Command**:
+Two things have to be true: it starts again after a reboot or a power cut,
+and the MacBook does not fall asleep underneath it.
 
-```
-pip install -r requirements-deploy.txt
-```
+Both are handled by a small service. Install it:
 
-That one line saves two to three gigabytes. By default pip installs the
-**CUDA** build of PyTorch — NVIDIA libraries that will never run on a host
-with no graphics card, but still have to be downloaded, stored and shipped on
-every deploy. `requirements-deploy.txt` points it at the CPU wheels instead.
-The site behaves identically.
-
-Railway → **Settings → Start Command**:
-
-```
-uvicorn rad_intel.api.main:app --host 0.0.0.0 --port $PORT --workers 1
+```bash
+cd ~/Documents/GitHub/Rad-Intel
+sed "s|YOUR_USERNAME|$USER|g" deploy/com.radintel.server.plist \
+  > ~/Library/LaunchAgents/com.radintel.server.plist
+launchctl load -w ~/Library/LaunchAgents/com.radintel.server.plist
 ```
 
-`--workers 1` matters. The limits that stop people hammering the site are
-counted inside one process; two processes means two separate budgets.
+It runs `deploy/run-rad-intel.sh`, which reads your `.env`, starts the server
+on port 8000, and wraps it in `caffeinate` so macOS will not sleep while it
+is running. If it ever stops, launchd starts it again.
 
-Redeploy. Watch the logs. **The first start takes a minute or two** while the
-model loads — that is normal, not a hang.
+After editing `.env`, restart it with:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.radintel.server
+```
+
+**One worker, deliberately.** The rate limits and the one-training-run-at-a-
+time lock are counted inside a single process. Two workers would be two
+separate sets of both, and every limit would be twice as generous as it
+reads.
+
+Now set the machine itself:
+
+- **System Settings → Lock Screen** → *Turn display off on power adapter when
+  inactive*: set it to a short time. The screen may sleep; the machine must
+  not.
+- **System Settings → Energy** → turn **on** *Start up automatically after a
+  power failure*, and **off** any "put hard disks to sleep".
+- Leave it **plugged in**, and leave the **lid open**. A closed lid sleeps a
+  MacBook unless a display is attached, and a sleeping MacBook serves nothing.
+
+**How to tell it worked**
+
+```bash
+curl -s localhost:8000/api/v1/health
+tail -f ~/Library/Logs/rad-intel.log
+```
+
+The first start takes a minute or two while the model loads. That is normal,
+not a hang.
+
+To stop it:
+
+```bash
+launchctl unload -w ~/Library/LaunchAgents/com.radintel.server.plist
+```
 
 ---
 
 ## Step 6 — Make yourself the administrator on the server
 
-Your admin account exists in your laptop's database, not the server's. Open
-the server shell and create it there:
+Your admin account exists in your main machine's database, not this one's.
+On the MacBook:
 
 ```bash
-python scripts/manage_clinicians.py add \
+.venv/bin/python scripts/manage_clinicians.py add \
   --email poorabng@gmail.com \
   --name "Poorab N G" \
   --institution "Malnad College of Engineering" \
@@ -337,11 +379,11 @@ python scripts/manage_clinicians.py add \
 It prints a password and a Rad-Intel ID. **Copy both** — you sign in with
 the password through the **Administrator** door, which the next step checks.
 
-If anything goes wrong and you cannot log in, this always works from the
-server shell:
+If anything goes wrong and you cannot log in, this always works on the
+MacBook itself:
 
 ```bash
-python scripts/manage_clinicians.py code --email poorabng@gmail.com --admin
+.venv/bin/python scripts/manage_clinicians.py code --email poorabng@gmail.com --admin
 ```
 
 It prints a code. On the login page press **"I already have a code"**, paste
@@ -351,10 +393,10 @@ it in. No email needed.
 
 ## Step 7 — Check it actually works
 
-**First, one command.** On the server shell:
+**First, one command.** On the MacBook:
 
 ```bash
-python scripts/preflight.py
+.venv/bin/python scripts/preflight.py
 ```
 
 It goes through everything that can quietly be wrong at the same time — the
@@ -382,8 +424,8 @@ this — the first field is the one that matters:
 CXR → Analyze Radiograph**. You should get a verdict, a heat map and a
 written report.
 
-> If you get *"Model has no trained checkpoint"* — the file from Step 3 is
-> missing or in the wrong place. Go back and check `ls -lh /data/weights/`.
+> If you get *"Model has no trained checkpoint"* — the file from Step 2 is
+> missing or misnamed. Check `ls -lh ~/Documents/GitHub/Rad-Intel/weights/`.
 
 **3. Can you log in?** **Clinician Feedback → Administrator →** your email and
 password → a code arrives in your Gmail → paste it in.
@@ -396,6 +438,25 @@ email**. It should say it was sent.
 
 **5. Is it private?** Visit `your-url/docs` — you should get **404**. If you
 see a page of API documentation, `RAD_INTEL_ENABLE_DOCS` is set; empty it.
+
+**6. Does it see who is calling?** This is the `RAD_INTEL_TRUSTED_PROXY`
+question from Step 4, and one minute settles it.
+
+On your **phone, with wifi off**, open the site and sign in. Then on the
+MacBook, in the console: **Administrator → Activity**. Find that sign-in and
+look at the address beside it.
+
+- It shows **your phone's address** (something public, not starting `127.`) —
+  the tunnel is passing the caller through. Set `RAD_INTEL_TRUSTED_PROXY=1`
+  in `.env` and restart.
+- It shows **`127.0.0.1`** — the tunnel is not passing it through. Leave
+  `RAD_INTEL_TRUSTED_PROXY` empty.
+
+Getting this wrong is quiet rather than loud, which is why it is worth the
+minute: set it when nothing sets the header and anyone can claim any address,
+so the rate limits stop meaning anything. Leave it unset when the header *is*
+set, and every visitor counts as the same person, so one of them can lock out
+all the others.
 
 ---
 
@@ -503,10 +564,29 @@ anything is always the one your paper describes.
   a time — logging in somewhere else logs out the old one.
 - **There is no idle timeout.** An unlocked laptop is an open account until
   the browser closes.
-- **Run preflight after any settings change.** `python scripts/preflight.py`.
+- **The MacBook is on your home network.** Tailscale exposes one port and
+  nothing else — no router change, no open ports — so the rest of the machine
+  stays unreachable. Keep macOS's firewall on anyway, and do not use that
+  machine for anything else.
+- **Run preflight after any settings change.** `.venv/bin/python scripts/preflight.py`.
   It is the quickest way to find out that something you changed last week
   broke sign-in for everybody.
-- **Back up `/data`.** It holds every account and every reviewed radiograph.
-  A monthly copy is enough at this scale. With Step 4b done, the radiographs
-  are already safe in Drive — what a backup protects is the accounts and the
-  reviews themselves.
+- **Back up the project folder.** `rad_intel.db` holds every account and
+  every review; `.radintel_key` is what makes the stored phone numbers
+  readable. With Step 4b done the radiographs themselves are already safe in
+  Drive, so this is a small copy. Once a month onto a USB stick or your main
+  machine is enough at this scale:
+
+  ```bash
+  cd ~/Documents/GitHub/Rad-Intel
+  zip -r ~/Desktop/rad-intel-backup-$(date +%Y%m%d).zip \
+    rad_intel.db .radintel_key .env feedback_store
+  ```
+
+- **The site is up only while that MacBook is.** Power cut, closed lid,
+  someone unplugging it, your internet dropping — any of those and the
+  address stops answering until it is back. Say so to the clinicians rather
+  than letting them discover it.
+- **Check on it now and then.** `tail ~/Library/Logs/rad-intel.log` and the
+  Activity log in the console will both tell you whether anything has been
+  happening.
