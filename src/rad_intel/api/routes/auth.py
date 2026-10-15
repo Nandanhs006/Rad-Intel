@@ -82,7 +82,8 @@ async def _issue_and_send(user: dict, request: Request) -> CodeRequestResponse:
         raise HTTPException(status_code=429, detail=message)
 
     delivered, channel, detail = await run_in_threadpool(
-        notify.send_verification_code, user.get("phone"), code, user["full_name"]
+        notify.send_verification_code, user.get("phone"), code, user["full_name"],
+        user["email"],
     )
     if not delivered:
         # Do not leave a live code behind that nobody received.

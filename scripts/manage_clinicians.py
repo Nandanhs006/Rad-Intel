@@ -214,28 +214,54 @@ def cmd_migrate(_args: argparse.Namespace) -> None:
 
 def cmd_delivery(_args: argparse.Namespace) -> None:
     status = notify.delivery_status()
-    print("\nDelivery configuration\n" + "-" * 60)
+    print("\nHow sign-in codes and emails are delivered\n" + "-" * 62)
     for key, value in status.items():
         print(f"  {key:<22}: {value}")
+
+    channel = status["code_channel"]
     print()
-    if not status["sms_configured"]:
-        print("One-time codes cannot be sent to a phone. Set, in .env:")
-        print("    TWILIO_ACCOUNT_SID=...")
-        print("    TWILIO_AUTH_TOKEN=...")
-        print("    TWILIO_FROM=+1...            # SMS sender")
-        print("    TWILIO_WHATSAPP_FROM=whatsapp:+14155238886   # for WhatsApp instead")
-        print("\nOr, to try the workspace on this machine with no provider at all:")
-        print("    RAD_INTEL_OTP_ECHO=1        # writes codes to the server log only")
-        print("  That is a local test mode. Remove it before anyone else uses the site.\n")
+    if channel == "sms":
+        print(f"Sign-in codes go by SMS through {status['sms_provider']}.")
+    elif channel == "email":
+        print("Sign-in codes go by EMAIL to each account's own address.")
+        print("That is a real second factor and needs no telecom registration.")
+        print("Set an SMS provider below, plus RAD_INTEL_OTP_CHANNEL=sms, to change it.")
+    elif channel == "server-log":
+        print("Sign-in codes are written to THIS SERVER'S LOG and sent to nobody.")
+        print("Local test mode only. Nobody else can log in.")
+    else:
+        print("NOBODY CAN LOG IN. Nothing is configured to deliver a code.")
+        print("The quickest fix is email: fill in the SMTP block below.")
+
     if not status["email_configured"]:
-        print(f"Access requests cannot be emailed to {status['admin_email']}. Set, in .env:")
+        print(f"\nEmail is not configured — access requests are not reaching "
+              f"{status['admin_email']}, and codes cannot be emailed either.")
+        print("  In .env:")
         print("    SMTP_HOST=smtp.gmail.com")
         print("    SMTP_PORT=587")
         print("    SMTP_USER=you@gmail.com")
-        print("    SMTP_PASSWORD=...           # a Gmail app password, not your login")
+        print("    SMTP_PASSWORD=...     # a 16-character Gmail App Password")
         print("    SMTP_FROM=you@gmail.com")
-        print("\nRequests are recorded either way and are listed by the `requests` "
-              "command and in the console.\n")
+        print("  The App Password is at myaccount.google.com/apppasswords and needs")
+        print("  2-Step Verification switched on. It is NOT a backup code.")
+
+    if not status["sms_configured"]:
+        print("\nNo SMS provider. Two options, and the right one depends on the country:")
+        print("\n  India — use Fast2SMS. Twilio will not carry domestic Indian A2P SMS")
+        print("  without DLT registration under TRAI's rules, which is weeks of")
+        print("  paperwork. Fast2SMS gives free starting credit and a route that works")
+        print("  without it.")
+        print("    FAST2SMS_API_KEY=...        # Dev API section of the Fast2SMS account")
+        print("    FAST2SMS_ROUTE=q            # optional; 'q' is the default")
+        print("    RAD_INTEL_OTP_CHANNEL=sms")
+        print("\n  Outside India — Twilio.")
+        print("    TWILIO_ACCOUNT_SID=...")
+        print("    TWILIO_AUTH_TOKEN=...")
+        print("    TWILIO_FROM=+1...")
+        print("    RAD_INTEL_OTP_CHANNEL=sms")
+        print("\n  Codes are never sent over WhatsApp. A phone number is for texting a")
+        print("  code and for the administrator to reach that clinician personally.")
+    print()
 
 
 def main() -> None:

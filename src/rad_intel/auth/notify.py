@@ -1,24 +1,31 @@
 """
 Delivery of verification codes and administrator notifications.
 
-Two channels, both optional, both configured only through the environment:
+Codes go by **SMS or email**, never over WhatsApp. The phone number on a
+clinician's record has two separate jobs: it is where their sign-in code is
+texted, and it is how the administrator reaches them personally — which is
+what the "WhatsApp preferred" note on the request form is about. Pushing a
+one-time code through a chat account somebody may be signed into on a shared
+laptop is a different thing entirely, so that route does not exist here.
 
-* **A phone**, for one-time sign-in codes. WhatsApp when a WhatsApp sender is
-  configured, otherwise SMS. Twilio's REST API is called directly over
-  urllib rather than through their SDK, so this adds no dependency.
-* **Email**, for telling the administrator that somebody has asked for access.
-  Plain SMTP over STARTTLS.
+Three channels, resolved in this order:
 
-Both fail closed. If a code cannot be delivered, the sign-in is refused and
-the code is cancelled -- never shown in the response, never written to a log,
-never handed to the browser. A system that falls back to showing the code
-on screen when its SMS provider is down has a second factor in name only.
+* **SMS**, when a provider is configured. Twilio for numbers outside India;
+  Fast2SMS for Indian ones, because India's TCCCPR rules put domestic
+  application-to-person SMS behind DLT registration and Twilio will not carry
+  it without that paperwork.
+* **Email**, when SMTP is configured and SMS is not. A code sent to the
+  address on the account is still a second factor — the first factor is the
+  Rad-Intel ID, which is a different secret held in a different place — and
+  it costs nothing and needs no regulatory registration. This is the
+  reasonable default for a study.
+* **The server's own log**, only when RAD_INTEL_OTP_ECHO is set by hand, so
+  the workspace can be demonstrated on a laptop with nothing configured.
 
-The one exception is deliberate and has to be switched on by hand:
-RAD_INTEL_OTP_ECHO=1 writes the code to the *server's own* log, so the
-workspace can be demonstrated on a laptop with no SMS account. It is off
-unless set, it is loud about itself, and it never puts the code anywhere the
-network can see.
+Everything fails closed. If a code cannot be delivered the sign-in is refused:
+the code is cancelled, never returned in the response and never shown on
+screen. A system that displays the code when its provider is down has a
+second factor in name only.
 """
 from __future__ import annotations
 
@@ -43,11 +50,19 @@ def _env(name: str) -> str:
     return os.environ.get(name, "").strip()
 
 
-# --- capability reporting --------------------------------------------------
+# --- what is configured ----------------------------------------------------
+
+def twilio_configured() -> bool:
+    return bool(_env("TWILIO_ACCOUNT_SID") and _env("TWILIO_AUTH_TOKEN")
+                and _env("TWILIO_FROM"))
+
+
+def fast2sms_configured() -> bool:
+    return bool(_env("FAST2SMS_API_KEY"))
+
 
 def sms_configured() -> bool:
-    return bool(_env("TWILIO_ACCOUNT_SID") and _env("TWILIO_AUTH_TOKEN")
-                and (_env("TWILIO_FROM") or _env("TWILIO_WHATSAPP_FROM")))
+    return twilio_configured() or fast2sms_configured()
 
 
 def email_configured() -> bool:
@@ -60,17 +75,36 @@ def echo_enabled() -> bool:
 
 
 def channel_name() -> str:
-    if _env("TWILIO_WHATSAPP_FROM"):
-        return "whatsapp"
-    if _env("TWILIO_FROM"):
+    """
+    Which channel a code would go out on right now.
+
+    RAD_INTEL_OTP_CHANNEL pins it to "sms" or "email" when both are available;
+    otherwise the best configured option wins.
+    """
+    preference = _env("RAD_INTEL_OTP_CHANNEL").lower()
+    if preference == "sms" and sms_configured():
         return "sms"
+    if preference == "email" and email_configured():
+        return "email"
+    if sms_configured():
+        return "sms"
+    if email_configured():
+        return "email"
     return "server-log" if echo_enabled() else "none"
+
+
+def sms_provider() -> str:
+    """Fast2SMS is preferred when both are set: it is the one that works in India."""
+    if fast2sms_configured():
+        return "fast2sms"
+    return "twilio" if twilio_configured() else "none"
 
 
 def delivery_status() -> dict[str, object]:
     """A summary for the administrator's console. Contains no credentials."""
     return {
         "code_channel": channel_name(),
+        "sms_provider": sms_provider(),
         "sms_configured": sms_configured(),
         "email_configured": email_configured(),
         "echo_to_server_log": echo_enabled(),
@@ -78,18 +112,15 @@ def delivery_status() -> dict[str, object]:
     }
 
 
-# --- phone ----------------------------------------------------------------
+# --- SMS -------------------------------------------------------------------
 
 def _twilio_send(to: str, body: str) -> tuple[bool, str]:
+    """Twilio. Fine outside India; needs DLT registration for Indian numbers."""
     sid, token = _env("TWILIO_ACCOUNT_SID"), _env("TWILIO_AUTH_TOKEN")
-    whatsapp_from, sms_from = _env("TWILIO_WHATSAPP_FROM"), _env("TWILIO_FROM")
+    payload = urllib.parse.urlencode(
+        {"To": to, "From": _env("TWILIO_FROM"), "Body": body}
+    ).encode()
 
-    if whatsapp_from:
-        sender, recipient = whatsapp_from, to if to.startswith("whatsapp:") else f"whatsapp:{to}"
-    else:
-        sender, recipient = sms_from, to
-
-    payload = urllib.parse.urlencode({"To": recipient, "From": sender, "Body": body}).encode()
     request = urllib.request.Request(
         f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
         data=payload, method="POST",
@@ -101,60 +132,137 @@ def _twilio_send(to: str, body: str) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
             if 200 <= response.status < 300:
-                return True, f"Sent via {'WhatsApp' if whatsapp_from else 'SMS'}."
-            return False, f"Message provider returned HTTP {response.status}."
+                return True, "Sent by SMS."
+            return False, f"The SMS provider returned HTTP {response.status}."
     except urllib.error.HTTPError as exc:
         # The provider's body can name the account; keep it out of the log.
-        logger.error("Verification code delivery rejected with HTTP %s.", exc.code)
-        return False, f"Message provider rejected the request (HTTP {exc.code})."
+        logger.error("Twilio rejected a verification code with HTTP %s.", exc.code)
+        return False, f"The SMS provider rejected the request (HTTP {exc.code})."
     except Exception as exc:
-        logger.error("Verification code delivery failed: %s", type(exc).__name__)
-        return False, "Could not reach the message provider."
+        logger.error("Twilio could not be reached: %s", type(exc).__name__)
+        return False, "Could not reach the SMS provider."
 
 
-def send_verification_code(phone: str | None, code: str, full_name: str) -> tuple[bool, str, str]:
+def _fast2sms_send(to: str, body: str) -> tuple[bool, str]:
+    """
+    Fast2SMS. Indian numbers only, given as ten digits with no country code.
+
+    The Quick route carries arbitrary text, which this needs: the dedicated
+    OTP route uses a fixed numeric template and would not carry a twelve
+    character code with letters and symbols in it.
+    """
+    digits = "".join(ch for ch in to if ch.isdigit())
+    if digits.startswith("91") and len(digits) == 12:
+        digits = digits[2:]
+    if len(digits) != 10:
+        return False, ("Fast2SMS only sends to Indian numbers, as ten digits. "
+                       f"The number on this account is not one of those.")
+
+    payload = urllib.parse.urlencode({
+        "route": _env("FAST2SMS_ROUTE") or "q",
+        "message": body,
+        "language": "english",
+        "flash": "0",
+        "numbers": digits,
+    }).encode()
+
+    request = urllib.request.Request("https://www.fast2sms.com/dev/bulkV2",
+                                     data=payload, method="POST")
+    request.add_header("authorization", _env("FAST2SMS_API_KEY"))
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+            raw = response.read().decode("utf-8", "replace")
+            if 200 <= response.status < 300 and '"return":true' in raw.replace(" ", ""):
+                return True, "Sent by SMS."
+            logger.error("Fast2SMS refused a verification code: %s", raw[:200])
+            return False, "The SMS provider refused the message."
+    except urllib.error.HTTPError as exc:
+        logger.error("Fast2SMS rejected a verification code with HTTP %s.", exc.code)
+        return False, f"The SMS provider rejected the request (HTTP {exc.code})."
+    except Exception as exc:
+        logger.error("Fast2SMS could not be reached: %s", type(exc).__name__)
+        return False, "Could not reach the SMS provider."
+
+
+def _send_sms(to: str, body: str) -> tuple[bool, str]:
+    provider = sms_provider()
+    if provider == "fast2sms":
+        return _fast2sms_send(to, body)
+    if provider == "twilio":
+        return _twilio_send(to, body)
+    return False, "No SMS provider is configured."
+
+
+# --- verification codes ----------------------------------------------------
+
+def _code_body(code: str, full_name: str) -> str:
+    return (f"Rad-Intel sign-in code for {full_name}: {code}\n"
+            f"Valid for 10 minutes. One use only. If you did not ask for it, ignore "
+            f"this and tell the study administrator.")
+
+
+def send_verification_code(phone: str | None, code: str, full_name: str,
+                           email: str | None = None) -> tuple[bool, str, str]:
     """
     Deliver a sign-in code. Returns (delivered, channel, message for the user).
 
     The returned message is shown to whoever is signing in, so it says where
-    the code went -- never what it is.
+    the code went — never what it is.
     """
-    if not phone:
-        return False, "none", (
-            "No phone number is registered for this account, so a verification code "
-            "cannot be sent. Contact the study administrator."
-        )
+    channel = channel_name()
+    body = _code_body(code, full_name)
 
-    body = (f"Rad-Intel sign-in code for {full_name}: {code}\n"
-            f"Valid for 10 minutes. One use only. If you did not request it, ignore "
-            f"this message and tell the study administrator.")
-
-    if sms_configured():
-        ok, detail = _twilio_send(phone, body)
-        channel = channel_name()
-        if ok:
+    if channel == "sms":
+        if not phone:
+            return False, "sms", (
+                "No phone number is registered for this account, so a code cannot be "
+                "texted to you. Contact the study administrator."
+            )
+        sent, detail = _send_sms(phone, body)
+        if sent:
             tail = "".join(ch for ch in phone if ch.isdigit())[-4:]
-            return True, channel, f"Verification code sent to the number ending {tail}."
-        return False, channel, f"The code could not be delivered. {detail}"
+            return True, "sms", f"Code texted to the number ending {tail}."
+        return False, "sms", f"The code could not be sent. {detail}"
 
-    if echo_enabled():
+    if channel == "email":
+        if not email:
+            return False, "email", (
+                "No email address is registered for this account. Contact the study "
+                "administrator."
+            )
+        sent, detail = send_email(
+            subject="Your Rad-Intel sign-in code",
+            body=body + ("\n\nThis code was emailed because the study is not using SMS "
+                         "for sign-in codes. It is still single use and still expires "
+                         "in ten minutes.\n"),
+            to=email,
+        )
+        if sent:
+            local, _, domain = email.partition("@")
+            masked = f"{local[:2]}{'*' * max(1, len(local) - 2)}@{domain}"
+            return True, "email", f"Code emailed to {masked}. Check your spam folder too."
+        return False, "email", f"The code could not be sent. {detail}"
+
+    if channel == "server-log":
         logger.warning(
             "RAD_INTEL_OTP_ECHO is on. Sign-in code for %s: %s  "
-            "(no message provider configured; this appears in the server log only)",
+            "(nothing is configured to deliver it; this is the server log only)",
             full_name, code,
         )
         return True, "server-log", (
-            "No message provider is configured, so the code was written to the server "
-            "log instead of being sent to your phone. This is a local test mode."
+            "Nothing is configured to send codes, so it was written to the server log "
+            "instead. This is a local test mode."
         )
 
     return False, "none", (
-        "Verification codes cannot be sent: this server has no message provider "
-        "configured. Contact the study administrator."
+        "Verification codes cannot be sent: this server has no SMS provider and no "
+        "email configured. Contact the study administrator."
     )
 
 
-# --- email ----------------------------------------------------------------
+# --- email -----------------------------------------------------------------
 
 def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, str]:
     """Send a plain-text email. Returns (sent, detail)."""
@@ -171,6 +279,13 @@ def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, st
     host, port = _env("SMTP_HOST"), int(_env("SMTP_PORT") or 587)
     user, password = _env("SMTP_USER"), _env("SMTP_PASSWORD")
 
+    # A password and, on the email channel, a one-time code both travel in
+    # this connection, so neither may cross a network in the clear. STARTTLS
+    # is used whenever the server offers it and required whenever anything
+    # secret is at stake; the one exception is an unauthenticated relay on
+    # this same machine, where there is no network to listen on.
+    local_relay = host in ("localhost", "127.0.0.1", "::1")
+
     try:
         if port == 465:
             server = smtplib.SMTP_SSL(host, port, timeout=HTTP_TIMEOUT)
@@ -178,13 +293,27 @@ def send_email(subject: str, body: str, to: str | None = None) -> tuple[bool, st
             server = smtplib.SMTP(host, port, timeout=HTTP_TIMEOUT)
         with server:
             if port != 465:
-                server.starttls()
+                server.ehlo_or_helo_if_needed()
+                if server.has_extn("starttls"):
+                    server.starttls()
+                    server.ehlo()
+                elif user or password or not local_relay:
+                    return False, (
+                        f"{host} does not offer STARTTLS, so the connection would be "
+                        f"in the clear. Refusing to send a password or a sign-in code "
+                        f"over it. Use port 587 or 465 on a server that supports TLS."
+                    )
             if user and password:
                 server.login(user, password)
             server.send_message(message)
         return True, f"Emailed {recipient}."
+    except smtplib.SMTPAuthenticationError:
+        logger.error("SMTP rejected the credentials.")
+        return False, ("The mail server rejected the username or password. For Gmail "
+                       "this must be a 16-character App Password, not your account "
+                       "password and not a backup code.")
     except Exception as exc:
-        logger.error("Could not send email to the administrator: %s", type(exc).__name__)
+        logger.error("Could not send email: %s", type(exc).__name__)
         return False, f"Email could not be sent ({type(exc).__name__})."
 
 

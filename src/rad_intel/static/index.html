@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/style.css?v=6">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -360,7 +360,7 @@
             <h3 class="auth-heading" id="login-heading">Log in</h3>
             <p class="muted small" id="login-blurb">
               Your email address and the Rad-Intel ID the administrator gave you. A
-              one-time code is then sent to your registered phone.
+              one-time code is then sent to you — the next screen says where.
             </p>
 
             <div class="form-row">
@@ -455,8 +455,10 @@
                 <input type="tel" id="req-phone" class="input" maxlength="24" required
                        placeholder="+91 98765 43210">
                 <span class="field-hint">
-                  With the country code. If your account is approved, this is where your
-                  login codes are sent — so give a number you keep with you.
+                  With the country code. This is how the administrator reaches you
+                  personally — WhatsApp is easiest — and, if the study is using SMS for
+                  sign-in, where your login codes are texted. Give a number you keep
+                  with you. Codes are never sent over WhatsApp.
                 </span>
               </div>
               <div class="form-row">
@@ -912,7 +914,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=3"></script>
-  <script src="/static/extras.js?v=5"></script>
-  <script src="/static/workspace.js?v=5"></script>
+  <script src="/static/extras.js?v=6"></script>
+  <script src="/static/workspace.js?v=6"></script>
 </body>
 </html>

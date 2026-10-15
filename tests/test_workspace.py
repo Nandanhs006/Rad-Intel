@@ -565,7 +565,8 @@ async def test_the_whole_sign_in_works_with_the_real_code(monkeypatch):
     issued: list[str] = []
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name: (issued.append(code), (True, "test", "sent"))[1],
+        lambda phone, code, name, email=None: (issued.append(code),
+                                              (True, "test", "sent"))[1],
     )
     async with _client() as client:
         await client.post("/api/v1/auth/code", json={
@@ -585,7 +586,7 @@ async def test_the_session_cookie_expires_with_the_browser(monkeypatch):
     user = _make_clinician()
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name: (True, "test", "sent"),
+        lambda phone, code, name, email=None: (True, "test", "sent"),
     )
     monkeypatch.setattr(otp, "generate_code", lambda: "Known-Code1!")
     async with _client() as client:
@@ -605,7 +606,8 @@ async def test_a_code_that_cannot_be_delivered_refuses_the_sign_in(monkeypatch):
     user = _make_clinician()
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
-        lambda phone, code, name: (False, "none", "No message provider is configured."),
+        lambda phone, code, name, email=None: (False, "none",
+                                               "Nothing is configured to send codes."),
     )
     async with _client() as client:
         res = await client.post("/api/v1/auth/code", json={
@@ -613,7 +615,7 @@ async def test_a_code_that_cannot_be_delivered_refuses_the_sign_in(monkeypatch):
         })
     assert res.status_code == 503
     assert "code" not in res.json()
-    assert "provider" in res.json()["detail"]
+    assert "configured" in res.json()["detail"]
 
 
 async def test_a_failed_sign_in_says_the_same_thing_for_every_cause():
@@ -890,3 +892,222 @@ async def test_only_an_administrator_can_test_or_resend_mail():
             as_clinician = await client.request(method, path, cookies=_signed_in(user))
             assert signed_out.status_code == 401, path
             assert as_clinician.status_code == 403, path
+
+
+# --- how a code is delivered -----------------------------------------------
+
+def test_a_code_is_never_sent_over_whatsapp():
+    """
+    A phone number here is for texting a code and for the administrator to
+    reach that clinician personally. A one-time code does not belong in a
+    chat account that may be open on a shared laptop, so there is no
+    WhatsApp route to misconfigure.
+    """
+    import inspect
+
+    from rad_intel.auth import notify
+
+    # The docstring explains the decision, so look at what the code does:
+    # no WhatsApp sender to configure and no "whatsapp:" recipient prefix.
+    code = "".join(line for line in inspect.getsource(notify).splitlines(keepends=True)
+                   if not line.lstrip().startswith(("*", "#")))
+    assert "TWILIO_WHATSAPP_FROM" not in code
+    assert "whatsapp:" not in code
+    assert "whatsapp" not in str(notify.delivery_status()).lower()
+
+
+def test_the_channel_falls_back_from_sms_to_email_to_nothing(monkeypatch):
+    from rad_intel.auth import notify
+
+    for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
+                 "FAST2SMS_API_KEY", "SMTP_HOST", "SMTP_FROM",
+                 "RAD_INTEL_OTP_ECHO", "RAD_INTEL_OTP_CHANNEL"):
+        monkeypatch.delenv(name, raising=False)
+    assert notify.channel_name() == "none"
+
+    monkeypatch.setenv("RAD_INTEL_OTP_ECHO", "1")
+    assert notify.channel_name() == "server-log"
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SMTP_FROM", "study@example.org")
+    assert notify.channel_name() == "email", "email beats writing to a log"
+
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+    assert notify.channel_name() == "sms", "SMS beats email"
+    assert notify.sms_provider() == "fast2sms"
+
+    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "email")
+    assert notify.channel_name() == "email", "the preference wins when both work"
+
+
+def test_fast2sms_is_preferred_over_twilio_for_an_indian_deployment(monkeypatch):
+    """
+    Twilio will not carry domestic Indian A2P SMS without DLT registration,
+    so when both are configured the one that actually delivers wins.
+    """
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "sid")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "token")
+    monkeypatch.setenv("TWILIO_FROM", "+10000000000")
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+    assert notify.sms_provider() == "fast2sms"
+    monkeypatch.delenv("FAST2SMS_API_KEY")
+    assert notify.sms_provider() == "twilio"
+
+
+def test_fast2sms_refuses_a_number_it_cannot_deliver_to(monkeypatch):
+    """Ten Indian digits, or a clear refusal -- never a silent failure."""
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+    sent, detail = notify._fast2sms_send("+1 415 555 0123", "body")
+    assert not sent
+    assert "Indian numbers" in detail
+
+
+def test_an_emailed_code_does_not_reveal_the_whole_address(monkeypatch):
+    from rad_intel.auth import notify
+
+    for name in ("TWILIO_ACCOUNT_SID", "FAST2SMS_API_KEY", "RAD_INTEL_OTP_CHANNEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SMTP_FROM", "study@example.org")
+    monkeypatch.setattr(notify, "send_email", lambda **kwargs: (True, "sent"))
+
+    ok, channel, message = notify.send_verification_code(
+        None, "Known-Code1!", "Dr A", "asha.rao@hospital.org")
+    assert ok and channel == "email"
+    assert "asha.rao" not in message, "the full address must not be echoed back"
+    assert "as" in message and "@hospital.org" in message
+
+
+def test_a_code_is_never_in_the_message_shown_to_the_user(monkeypatch):
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("RAD_INTEL_OTP_ECHO", "1")
+    for name in ("TWILIO_ACCOUNT_SID", "FAST2SMS_API_KEY", "SMTP_HOST",
+                 "RAD_INTEL_OTP_CHANNEL"):
+        monkeypatch.delenv(name, raising=False)
+    for phone in (None, "+91 90000 00000"):
+        _, _, message = notify.send_verification_code(phone, "Secret-Code1", "Dr A",
+                                                      "a@h.org")
+        assert "Secret-Code1" not in message
+
+
+# --- the email channel, over a real SMTP conversation -----------------------
+
+class _SMTPSink:
+    """
+    A throwaway SMTP server, enough to accept one message.
+
+    Worth the lines: stubbing send_email proves the routing but not the
+    sending, and the first version of this caught a real bug -- STARTTLS was
+    demanded unconditionally, so any server that did not advertise it failed.
+    """
+
+    def __init__(self, offer_starttls: bool = False):
+        import socket
+        import threading
+
+        self.received: list[str] = []
+        self._sock = socket.socket()
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(1)
+        self.port = self._sock.getsockname()[1]
+        self._offer_starttls = offer_starttls
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        try:
+            conn, _ = self._sock.accept()
+        except OSError:
+            return
+        stream = conn.makefile("rwb")
+        conn.sendall(b"220 localhost ESMTP\r\n")
+        in_data, body = False, []
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace")
+            if in_data:
+                if text.strip() == ".":
+                    in_data = False
+                    self.received.append("".join(body))
+                    conn.sendall(b"250 OK\r\n")
+                else:
+                    body.append(text)
+                continue
+            verb = text.split()[0].upper() if text.split() else ""
+            if verb == "EHLO":
+                extra = b"250-STARTTLS\r\n" if self._offer_starttls else b""
+                conn.sendall(b"250-localhost\r\n" + extra + b"250 HELP\r\n")
+            elif verb == "DATA":
+                in_data = True
+                conn.sendall(b"354 End with .\r\n")
+            elif verb == "QUIT":
+                conn.sendall(b"221 Bye\r\n")
+                break
+            else:
+                conn.sendall(b"250 OK\r\n")
+        conn.close()
+
+    def close(self) -> None:
+        self._sock.close()
+
+
+@pytest.fixture
+def smtp_sink(monkeypatch):
+    sink = _SMTPSink()
+    monkeypatch.setenv("SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("SMTP_PORT", str(sink.port))
+    monkeypatch.setenv("SMTP_FROM", "study@example.org")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "email")
+    for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
+                 "FAST2SMS_API_KEY", "RAD_INTEL_OTP_ECHO"):
+        monkeypatch.delenv(name, raising=False)
+    yield sink
+    sink.close()
+
+
+def test_an_emailed_code_reaches_the_mailbox_and_not_the_browser(smtp_sink):
+    import time
+
+    from rad_intel.auth import notify
+
+    ok, channel, shown = notify.send_verification_code(
+        "+91 90000 11111", "Kx7!mQ2@Rb9Z", "Dr Asha Rao", "asha.rao@kmc.test")
+    assert ok and channel == "email"
+
+    for _ in range(40):
+        if smtp_sink.received:
+            break
+        time.sleep(0.05)
+    assert smtp_sink.received, "nothing reached the mail server"
+    delivered = smtp_sink.received[0]
+
+    assert "Kx7!mQ2@Rb9Z" in delivered, "the code must reach the mailbox"
+    assert "asha.rao@kmc.test" in delivered
+    assert "Kx7!mQ2@Rb9Z" not in shown, "the code must never go back to the browser"
+    assert "asha.rao" not in shown, "the full address must not be echoed back"
+
+
+def test_a_password_is_never_sent_over_an_untrusted_plaintext_connection(smtp_sink,
+                                                                         monkeypatch):
+    """
+    The sink offers no STARTTLS. Without credentials that is an acceptable
+    local relay; with them the connection would carry a password in the
+    clear, so it must be refused rather than downgraded.
+    """
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("SMTP_USER", "study@example.org")
+    monkeypatch.setenv("SMTP_PASSWORD", "hunter2-but-longer")
+    sent, detail = notify.send_email("subject", "body", "someone@example.org")
+    assert not sent
+    assert "STARTTLS" in detail
+    assert not smtp_sink.received, "nothing may be sent over the clear connection"

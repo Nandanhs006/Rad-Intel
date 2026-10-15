@@ -240,6 +240,17 @@ and nothing to phish out of them with a password form. The code is twelve
 characters, single-use, expires in ten minutes, is never issued twice to the
 same person, and is stored only as a hash.
 
+The code goes **by SMS when an SMS provider is configured, otherwise by
+email**. It is never sent over WhatsApp — a phone number on a record is for
+texting a code and for the administrator to reach that clinician personally,
+and a one-time code does not belong in a chat account that may be open on a
+shared laptop.
+
+In India, domestic application-to-person SMS sits behind DLT registration
+under TRAI's TCCCPR rules, and Twilio will not carry it without that
+paperwork, so `FAST2SMS_API_KEY` is the practical route there. Email codes
+need no registration at all and are the sensible default for a study.
+
 If a code cannot be delivered the sign-in is refused. It is never shown on
 screen: a system that falls back to displaying the code when its provider is
 down has a second factor in name only.
@@ -358,13 +369,16 @@ list with comments.
 RAD_INTEL_SECRET_KEY=        # signs sessions, encrypts phone numbers
 RAD_INTEL_COOKIE_SECURE=     # 1 behind HTTPS
 
-# one-time codes: WhatsApp when a WhatsApp sender is set, otherwise SMS
-TWILIO_ACCOUNT_SID=
+# one-time codes. SMS when a provider is set, otherwise email, otherwise
+# (with the echo below) the server's own log. Never WhatsApp.
+RAD_INTEL_OTP_CHANNEL=       # pin to "sms" or "email"
+FAST2SMS_API_KEY=            # India: Twilio needs DLT, Fast2SMS does not
+FAST2SMS_ROUTE=q
+TWILIO_ACCOUNT_SID=          # outside India
 TWILIO_AUTH_TOKEN=
 TWILIO_FROM=
-TWILIO_WHATSAPP_FROM=
 
-# LOCAL TESTING ONLY: with no provider, write codes to the server's own log
+# LOCAL TESTING ONLY: with nothing else set, write codes to the server's log
 RAD_INTEL_OTP_ECHO=
 
 # where access requests are emailed
