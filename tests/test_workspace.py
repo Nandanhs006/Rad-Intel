@@ -13,6 +13,7 @@ rules the workspace is *for*, at the level a browser sees them:
 * The administrator console is closed to clinicians.
 """
 
+import json
 import pathlib
 import tempfile
 
@@ -45,6 +46,14 @@ def isolated_state(monkeypatch, tmp_path):
     _tokens.clear()
     # A fresh job coordinator, so a test cannot inherit a lock from another.
     monkeypatch.setattr(feedback_routes, "job", TrainingJob(tmp_path / "training.log"))
+    # And a scratch feedback store. Without this, a test that writes a
+    # manifest, an image or a bundle writes it into the real one.
+    scratch_store = tmp_path / "feedback_store"
+    monkeypatch.setattr(feedback_routes, "FEEDBACK_DIR", scratch_store)
+    monkeypatch.setattr(feedback_routes, "IMAGE_DIR", scratch_store / "images")
+    monkeypatch.setattr(feedback_routes, "EXPORT_DIR", scratch_store / "exports")
+    monkeypatch.setattr(feedback_routes, "BUNDLE_DIR", scratch_store / "bundles")
+    monkeypatch.setattr(feedback_routes, "TRAIN_LOG", tmp_path / "training.log")
     yield path
     # Drain anything the background writer still holds, while this test's
     # database is still the one it is bound to.
@@ -85,9 +94,12 @@ def _make_clinician(email="a@hospital.org", name="Dr A", site="A Hospital"):
     return accounts.create_clinician(email, name, site, phone="+91 90000 00001")
 
 
-def _make_admin():
-    return accounts.create_clinician("boss@study.org", "Study Admin", "MCE",
-                                     password="a-long-enough-password", role="admin",
+ADMIN_PASSWORD = "a-long-enough-password"
+
+
+def _make_admin(email="boss@study.org", name="Study Admin"):
+    return accounts.create_clinician(email, name, "MCE",
+                                     password=ADMIN_PASSWORD, role="admin",
                                      phone="+91 98440 00000")
 
 
@@ -107,6 +119,26 @@ async def _queue_case(reviewer: dict, sha="a" * 64, verdict="correct"):
     )
 
 
+async def _queue_case_with_image(reviewer: dict, sha: str, label="PNEUMONIA"):
+    """A review whose radiograph is really on disk, so it can be bundled."""
+    feedback_routes.IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    path = feedback_routes.IMAGE_DIR / f"{sha}.jpg"
+    path.write_bytes(b"\xff\xd8\xff\xd9")
+    return await db_manager.save_feedback(
+        reviewer=reviewer["full_name"],
+        model_version="hybrid",
+        preprocessing_version="clahe2.0-8x8_pil-bilinear-224_imagenet-norm",
+        image_sha256=sha,
+        predicted_label=label,
+        predicted_probability=0.9,
+        threshold=0.5574,
+        verdict="correct",
+        institution=reviewer["institution"],
+        owner_id=reviewer["id"],
+        image_path=feedback_routes._store_path(path),
+    )
+
+
 # --- the gate --------------------------------------------------------------
 
 WORKSPACE_ENDPOINTS = [
@@ -121,6 +153,10 @@ WORKSPACE_ENDPOINTS = [
     ("post", "/api/v1/feedback/export"),
     ("post", "/api/v1/feedback/train"),
     ("post", "/api/v1/feedback/train/cancel"),
+    ("get", "/api/v1/feedback/community"),
+    ("post", "/api/v1/feedback/bundle"),
+    ("get", "/api/v1/feedback/bundle/anything.zip"),
+    ("post", "/api/v1/feedback/community/upload"),
     ("post", "/api/v1/feedback/submit"),
     ("patch", "/api/v1/feedback/any-id"),
     ("delete", "/api/v1/feedback/any-id"),
@@ -321,21 +357,58 @@ async def test_a_clinician_sees_their_own_details_and_nobody_elses():
 
 # --- the training run ------------------------------------------------------
 
-async def test_only_one_run_at_a_time_and_it_names_its_holder(tmp_path):
-    first = _make_clinician()
-    second = _make_clinician("b@clinic.org", "Dr B", "B Clinic")
-    feedback_routes.job.claim(first, tmp_path / "m.jsonl", cases=8, epochs=3)
+async def test_only_one_run_at_a_time_and_everyone_can_see_who_holds_it(tmp_path):
+    admin = _make_admin()
+    watcher = _make_clinician()
+    feedback_routes.job.claim(admin, tmp_path / "m.jsonl", cases=8, epochs=3)
 
     async with _client() as client:
         blocked = await client.post("/api/v1/feedback/train",
-                                    data={"epochs": "3"}, cookies=_signed_in(second))
+                                    data={"epochs": "3"}, cookies=_signed_in(admin))
         status = await client.get("/api/v1/feedback/train/status",
-                                  cookies=_signed_in(second))
+                                  cookies=_signed_in(watcher))
     assert blocked.status_code == 409
-    assert "Dr A" in blocked.json()["detail"]
-    assert status.json()["holder_name"] == "Dr A"
-    assert status.json()["is_holder"] is False
+    assert "Study Admin" in blocked.json()["detail"]
+    body = status.json()
+    assert body["holder_name"] == "Study Admin"
+    assert body["is_holder"] is False
+    assert body["can_cancel"] is False
+    assert body["can_train"] is False, "a clinician is not offered a training run"
+
+
+async def test_a_clinician_cannot_start_or_cancel_a_run():
+    """Training is hours of machine time and freezes everybody's exports."""
+    user = _make_clinician()
+    async with _client() as client:
+        start = await client.post("/api/v1/feedback/train", data={"epochs": "3"},
+                                  cookies=_signed_in(user))
+        stop = await client.post("/api/v1/feedback/train/cancel",
+                                 cookies=_signed_in(user))
+    assert start.status_code == 403
+    assert stop.status_code == 403
+
+
+async def test_an_administrator_at_the_clinician_door_cannot_start_a_run():
+    """The door decides, not the role. Same rule as the rest of the console."""
+    admin = _make_admin()
+    async with _client() as client:
+        jar = _signed_in(admin, mode="clinician")
+        start = await client.post("/api/v1/feedback/train", data={"epochs": "3"},
+                                  cookies=jar)
+        status = await client.get("/api/v1/feedback/train/status", cookies=jar)
+    assert start.status_code == 403
+    assert status.json()["can_train"] is False
     assert status.json()["can_cancel"] is False
+
+
+async def test_a_clinician_still_writes_the_export():
+    """Their save point. Taking training away does not take this away."""
+    user = _make_clinician()
+    await _queue_case(user)
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/export", cookies=_signed_in(user))
+    assert res.status_code == 200
+    assert res.json()["record_count"] == 1
 
 
 async def test_a_run_in_progress_blocks_an_export_but_not_an_upload(tmp_path):
@@ -371,9 +444,9 @@ async def test_only_the_holder_or_an_administrator_can_cancel(tmp_path):
 
 
 async def test_cancelling_with_no_run_in_progress_is_a_conflict():
-    user = _make_clinician()
+    admin = _make_admin()
     async with _client() as client:
-        res = await client.post("/api/v1/feedback/train/cancel", cookies=_signed_in(user))
+        res = await client.post("/api/v1/feedback/train/cancel", cookies=_signed_in(admin))
     assert res.status_code == 409
 
 
@@ -405,31 +478,28 @@ async def test_an_abandoned_run_is_cancelled_with_a_reason(tmp_path):
 
 
 async def test_a_training_request_needs_a_sensible_epoch_count():
-    user = _make_clinician()
+    admin = _make_admin()
     async with _client() as client:
         res = await client.post("/api/v1/feedback/train", data={"epochs": "500"},
-                                cookies=_signed_in(user))
+                                cookies=_signed_in(admin))
     assert res.status_code == 400
     assert "1 and 20" in res.json()["detail"]
 
 
 async def test_training_on_a_handful_of_cases_is_refused_in_plain_language():
-    """The message is read by a clinician, so it says why, not which check failed."""
-    user = _make_clinician()
+    """The message is read by a person, so it says why, not which check failed."""
+    admin = _make_admin()
     export_dir = feedback_routes.EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
     manifest = export_dir / "reviewed-export-99999999T000000Z.jsonl"
     manifest.write_text('{"image_path": "x", "label": "NORMAL"}\n', encoding="utf-8")
-    try:
-        async with _client() as client:
-            res = await client.post("/api/v1/feedback/train", data={"epochs": "3"},
-                                    cookies=_signed_in(user))
-        assert res.status_code == 400
-        detail = res.json()["detail"]
-        assert "Only 1 reviewed radiograph" in detail
-        assert "normal and pneumonia" in detail
-    finally:
-        manifest.unlink()
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/train", data={"epochs": "3"},
+                                cookies=_signed_in(admin))
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert "Only 1 reviewed radiograph" in detail
+    assert "normal and pneumonia" in detail
 
 
 # --- the administrator console ---------------------------------------------
@@ -772,6 +842,249 @@ async def test_activating_a_checkpoint_outside_the_weights_directory_is_refused(
             res = await client.post("/api/v1/feedback/models/activate",
                                     data={"file": attempt}, cookies=_signed_in(admin))
             assert res.status_code == 404, attempt
+
+
+# --- the community model ---------------------------------------------------
+#
+# A second lineage, trained from scratch on the public dataset plus every
+# reviewed case, off this server, and released by name. The rules that matter
+# are: a clinician can see it but not build it, the checkpoint the paper
+# reports is never in its way, and nothing that cannot be verified gets in.
+
+async def test_a_clinician_sees_the_community_model_but_cannot_build_one():
+    user = _make_clinician()
+    async with _client() as client:
+        jar = _signed_in(user)
+        read = await client.get("/api/v1/feedback/community", cookies=jar)
+        build = await client.post("/api/v1/feedback/bundle", cookies=jar)
+        upload = await client.post("/api/v1/feedback/community/upload", cookies=jar)
+    assert read.status_code == 200
+    assert read.json()["name"] == "community_hybrid"
+    assert build.status_code == 403
+    assert upload.status_code == 403
+
+
+async def test_a_bundle_carries_every_reviewed_case_and_freezes_the_pending_ones():
+    import zipfile
+
+    admin = _make_admin()
+    doctor = _make_clinician()
+    await _queue_case_with_image(doctor, "a" * 64, label="PNEUMONIA")
+    await _queue_case_with_image(doctor, "b" * 64, label="PNEUMONIA")
+    await _queue_case_with_image(doctor, "c" * 64, label="NORMAL")
+    await _queue_case_with_image(doctor, "d" * 64, label="NORMAL")
+
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/bundle", cookies=_signed_in(admin))
+        assert res.status_code == 200, res.text
+        body = res.json()
+        got = await client.get(body["download"], cookies=_signed_in(admin))
+
+    assert body["cases"] == 4
+    assert body["normal"] == 2 and body["pneumonia"] == 2
+    assert body["newly_frozen"] == 4, "pending cases are frozen, as an export does"
+    assert got.status_code == 200
+    assert got.headers["content-type"] == "application/zip"
+
+    bundle_path = feedback_routes.BUNDLE_DIR / body["file"]
+    with zipfile.ZipFile(bundle_path) as archive:
+        names = set(archive.namelist())
+        manifest = archive.read("manifest.jsonl").decode("utf-8").strip().splitlines()
+    assert "manifest.jsonl" in names and "README.txt" in names
+    assert len(manifest) == 4
+    assert sum(1 for n in names if n.startswith("images/")) == 4
+    # Paths inside the bundle, not paths on the server: the notebook that
+    # reads this has never seen the server's filesystem.
+    assert all(json.loads(line)["image_path"].startswith("images/")
+               for line in manifest)
+
+    # And the cases are now frozen, so the bundle keeps matching them.
+    async with _client() as client:
+        listing = await client.get("/api/v1/feedback", cookies=_signed_in(doctor))
+    assert all(item["status"] == "exported" for item in listing.json()["items"])
+
+
+async def test_a_bundle_of_one_class_or_a_handful_is_refused():
+    admin = _make_admin()
+    doctor = _make_clinician()
+    for n, sha in enumerate("abcd"):
+        await _queue_case_with_image(doctor, sha * 64, label="PNEUMONIA")
+
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/bundle", cookies=_signed_in(admin))
+    assert res.status_code == 400
+    assert "same label" in res.json()["detail"]
+
+
+async def test_a_bundle_cannot_be_fetched_by_guessing_a_path():
+    admin = _make_admin()
+    async with _client() as client:
+        for attempt in ("../../rad_intel.db", "nope.zip", "..%2Fmanifest.jsonl"):
+            res = await client.get(f"/api/v1/feedback/bundle/{attempt}",
+                                   cookies=_signed_in(admin))
+            assert res.status_code == 404, attempt
+
+
+async def test_uploading_a_community_model_needs_the_password_again():
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/upload",
+            data={"password": "not-the-password"},
+            files={"file": ("m.pt", b"nonsense", "application/octet-stream")},
+            cookies=_signed_in(admin),
+        )
+    assert res.status_code == 403
+    assert "Nothing was uploaded" in res.json()["detail"]
+
+
+async def test_an_uploaded_checkpoint_that_cannot_be_verified_is_refused(tmp_path,
+                                                                         monkeypatch):
+    """
+    Four ways a file can fail, and each says which one in plain language.
+
+    A model nobody can judge is worse than no model: it returns confident
+    numbers either way.
+    """
+    import torch
+
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", tmp_path / "weights")
+    (tmp_path / "weights").mkdir()
+    admin = _make_admin()
+
+    good_metrics = {"accuracy": 0.95, "auroc": 0.98,
+                    "sensitivity": 0.97, "specificity": 0.92}
+    cases = {
+        "not a checkpoint at all": (b"nonsense", "could not be read"),
+        "no weights in it": (
+            {"model_type": "hybrid", "optimal_threshold": 0.5,
+             "metrics": good_metrics},
+            "no model_state_dict"),
+        "the wrong architecture": (
+            {"model_type": "resnet50", "optimal_threshold": 0.5,
+             "model_state_dict": {"a": torch.zeros(1)}, "metrics": good_metrics},
+            "only a hybrid checkpoint"),
+        "no operating threshold": (
+            {"model_type": "hybrid",
+             "model_state_dict": {"a": torch.zeros(1)}, "metrics": good_metrics},
+            "no operating threshold"),
+        "no scores": (
+            {"model_type": "hybrid", "optimal_threshold": 0.5,
+             "model_state_dict": {"a": torch.zeros(1)}, "metrics": {}},
+            "reports no accuracy"),
+    }
+
+    async with _client() as client:
+        for label, (payload, expected) in cases.items():
+            path = tmp_path / "upload.pt"
+            if isinstance(payload, bytes):
+                path.write_bytes(payload)
+            else:
+                torch.save(payload, path)
+            res = await client.post(
+                "/api/v1/feedback/community/upload",
+                data={"password": ADMIN_PASSWORD},
+                files={"file": ("m.pt", path.read_bytes(), "application/octet-stream")},
+                cookies=_signed_in(admin),
+            )
+            assert res.status_code == 400, f"{label}: {res.text}"
+            assert expected in res.json()["detail"], f"{label}: {res.json()['detail']}"
+
+    assert not list((tmp_path / "weights").glob("*.pt")), "nothing was written"
+
+
+async def test_an_accepted_checkpoint_lands_as_a_new_version_and_is_not_released(
+        tmp_path, monkeypatch):
+    import torch
+
+    from rad_intel.models import registry
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+    monkeypatch.setattr(registry, "WEIGHTS_DIR", weights)
+    monkeypatch.setattr(registry, "REGISTRY_PATH", weights / "released_models.json")
+    admin = _make_admin()
+
+    blob = {
+        "model_type": "hybrid",
+        "optimal_threshold": 0.5574,
+        "model_state_dict": {"classifier.weight": torch.zeros(2, 4)},
+        "metrics": {"accuracy": 0.9231, "auroc": 0.9712,
+                    "sensitivity": 0.9641, "specificity": 0.8547},
+        "provenance": {"reviewed_cases": 42},
+    }
+    staged = tmp_path / "community.pt"
+    torch.save(blob, staged)
+
+    async with _client() as client:
+        first = await client.post(
+            "/api/v1/feedback/community/upload",
+            data={"password": ADMIN_PASSWORD},
+            files={"file": ("m.pt", staged.read_bytes(), "application/octet-stream")},
+            cookies=_signed_in(admin),
+        )
+        assert first.status_code == 200, first.text
+        second = await client.post(
+            "/api/v1/feedback/community/upload",
+            data={"password": ADMIN_PASSWORD},
+            files={"file": ("m.pt", staged.read_bytes(), "application/octet-stream")},
+            cookies=_signed_in(admin),
+        )
+        listed = await client.get("/api/v1/feedback/community", cookies=_signed_in(admin))
+
+    assert first.json()["file"] == "best_community_hybrid_v1_model.pt"
+    assert first.json()["name"] == "community_hybrid_v1"
+    # A second upload never overwrites the first. Every version stays.
+    assert second.json()["file"] == "best_community_hybrid_v2_model.pt"
+    assert (weights / "best_community_hybrid_v1_model.pt").is_file()
+
+    body = listed.json()
+    assert [v["name"] for v in body["versions"]] == ["community_hybrid_v2",
+                                                     "community_hybrid_v1"]
+    assert all(v["is_released"] is False for v in body["versions"]), \
+        "uploading releases nothing"
+    assert body["versions"][0]["metrics"]["accuracy"] == 0.9231
+
+
+async def test_the_community_model_cannot_become_the_default_by_activation(
+        tmp_path, monkeypatch):
+    """
+    It reaches people one way: released by name and chosen deliberately.
+
+    A community checkpoint holds a hybrid inside, so the model_type check
+    would wave it through and it would quietly become what everybody gets.
+    """
+    import torch
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+    torch.save({"model_type": "hybrid", "optimal_threshold": 0.5,
+                "model_state_dict": {}},
+               weights / "best_community_hybrid_v1_model.pt")
+    admin = _make_admin()
+
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/models/activate",
+                                data={"file": "best_community_hybrid_v1_model.pt"},
+                                cookies=_signed_in(admin))
+    assert res.status_code == 400
+    assert "not a version of the shared model" in res.json()["detail"]
+    assert "chosen deliberately" in res.json()["detail"] \
+        or "choose it" in res.json()["detail"]
+
+
+async def test_building_a_bundle_waits_for_a_run_to_finish(tmp_path):
+    admin = _make_admin()
+    doctor = _make_clinician()
+    await _queue_case_with_image(doctor, "a" * 64)
+    feedback_routes.job.claim(admin, tmp_path / "m.jsonl", cases=8, epochs=3)
+
+    async with _client() as client:
+        res = await client.post("/api/v1/feedback/bundle", cookies=_signed_in(admin))
+    assert res.status_code == 409
+    assert "run is in progress" in res.json()["detail"]
 
 
 # --- several people at once ------------------------------------------------
@@ -1633,6 +1946,105 @@ async def test_only_an_administrator_session_can_release(fake_checkpoint):
     assert anon.status_code == 401
     assert clinician.status_code == 403
     assert wrong_door.status_code == 403
+
+
+async def test_releasing_a_community_version_offers_it_under_its_own_name(
+        tmp_path, monkeypatch):
+    """
+    The lineage names the release; the checkpoint names the network.
+
+    "community_hybrid" is not an architecture, so if the filename were the
+    only source of that answer, serving the release would try to build a
+    network that does not exist.
+    """
+    import torch
+
+    from rad_intel.models import registry
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    path = weights / "best_community_hybrid_v1_model.pt"
+    torch.save({
+        "model_type": "hybrid",
+        "optimal_threshold": 0.5574,
+        "model_state_dict": {},
+        "metrics": {"accuracy": 0.9183, "auroc": 0.9668, "precision": 0.93,
+                    "sensitivity": 0.94, "specificity": 0.88, "f1": 0.935},
+        "provenance": {"reviewed_cases": 118, "lineage": "community_hybrid"},
+    }, path)
+    monkeypatch.setattr(registry, "WEIGHTS_DIR", weights)
+    monkeypatch.setattr(registry, "REGISTRY_PATH", weights / "released_models.json")
+    monkeypatch.setattr("rad_intel.api.routes.feedback.WEIGHTS_DIR", weights)
+
+    admin = _make_admin()
+    async with _client() as client:
+        offered = await client.get("/api/v1/admin/models/releasable",
+                                   cookies=_signed_in(admin))
+        res = await client.post("/api/v1/admin/models/release",
+                                cookies=_signed_in(admin),
+                                json={"file": path.name, "password": ADMIN_PASSWORD})
+        listing = await client.get("/api/v1/models")
+
+    candidate = offered.json()["candidates"][0]
+    assert candidate["name"] == "community_hybrid_v1"
+    assert candidate["lineage"] == "community_hybrid"
+    assert candidate["architecture"] == "hybrid"
+    assert candidate["metrics"]["accuracy"] == 0.9183
+
+    assert res.status_code == 200, res.text
+    assert res.json()["released"] == "community_hybrid_v1"
+    assert registry.released()["community_hybrid_v1"]["architecture"] == "hybrid"
+
+    offered_names = {m["name"]: m for m in listing.json()["available_models"]}
+    assert "community_hybrid_v1" in offered_names
+    entry = offered_names["community_hybrid_v1"]
+    assert entry["is_released"] is True
+    assert entry["is_hybrid"] is True, "it is the fusion architecture inside"
+    assert "reviewed" in entry["description"]
+    # And the default is untouched: people choose this, they are not given it.
+    assert listing.json()["active_model"] == "hybrid"
+
+
+async def test_weights_that_do_not_fit_the_architecture_are_refused(tmp_path,
+                                                                    monkeypatch):
+    """
+    Checked against the base checkpoint's own layers and shapes.
+
+    Loading a mismatched state dict is not an error -- it is silently ignored
+    layer by layer, and what is left is an untrained network that still
+    returns confident-looking probabilities.
+    """
+    import torch
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+    torch.save({"model_type": "hybrid", "optimal_threshold": 0.5,
+                "model_state_dict": {"classifier.weight": torch.zeros(2, 64),
+                                     "classifier.bias": torch.zeros(2)}},
+               weights / "best_hybrid_model.pt")
+
+    wrong = tmp_path / "wrong.pt"
+    torch.save({
+        "model_type": "hybrid",
+        "optimal_threshold": 0.5,
+        "model_state_dict": {"classifier.weight": torch.zeros(2, 8),
+                             "classifier.bias": torch.zeros(2)},
+        "metrics": {"accuracy": 0.99, "auroc": 0.99,
+                    "sensitivity": 0.99, "specificity": 0.99},
+    }, wrong)
+
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/upload",
+            data={"password": ADMIN_PASSWORD},
+            files={"file": ("m.pt", wrong.read_bytes(), "application/octet-stream")},
+            cookies=_signed_in(admin),
+        )
+    assert res.status_code == 400
+    assert "do not fit" in res.json()["detail"]
+    assert not list(weights.glob("best_community_*.pt"))
 
 
 async def test_an_unknown_model_name_is_refused_clearly(dummy_cxr_bytes):

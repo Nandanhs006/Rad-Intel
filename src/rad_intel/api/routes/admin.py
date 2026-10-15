@@ -34,6 +34,7 @@ from rad_intel.api.schemas import (
     ModelReleaseRequest,
 )
 from rad_intel.models import registry
+from rad_intel.models.factory import known_architectures
 from rad_intel.auth import accounts, activity, notify, session
 from rad_intel.auth.dependencies import require_admin
 
@@ -340,14 +341,18 @@ async def releasable_models(admin: dict = Depends(require_admin)):
     rows = []
     for item in registry.candidates():
         meta = await run_in_threadpool(_checkpoint_meta, WEIGHTS_DIR / item["file"])
-        after = meta.get("metrics_after") or {}
+        # A community checkpoint is trained from scratch and so has nothing to
+        # compare "before" against; it reports its own scores under "metrics".
+        after = meta.get("metrics_after") or meta.get("metrics") or {}
         provenance = meta.get("provenance") or {}
         rows.append({
             **item,
+            "architecture": meta.get("model_type"),
             "metrics": {k: v for k, v in after.items() if isinstance(v, (int, float))},
             "reviewed_cases": provenance.get("reviewed_cases"),
             "created_at": provenance.get("created_at"),
             "base_checkpoint": provenance.get("base_checkpoint"),
+            "trained_images": provenance.get("trained_images"),
         })
     return {"candidates": rows, "released": registry.released()}
 
@@ -373,7 +378,8 @@ async def release_model(req: ModelReleaseRequest, request: Request,
     from rad_intel.api.routes.feedback import WEIGHTS_DIR, _checkpoint_meta
 
     meta = await run_in_threadpool(_checkpoint_meta, WEIGHTS_DIR / Path(req.file).name)
-    metrics = {k: v for k, v in (meta.get("metrics_after") or {}).items()
+    metrics = {k: v for k, v in (meta.get("metrics_after")
+                                 or meta.get("metrics") or {}).items()
                if isinstance(v, (int, float))}
     if not metrics:
         raise HTTPException(
@@ -383,9 +389,21 @@ async def release_model(req: ModelReleaseRequest, request: Request,
                     "than not releasing one."),
         )
 
+    # Which network the weights are, taken from the checkpoint rather than
+    # from its filename. A community version is named for its lineage and is
+    # a hybrid inside, and serving has to build the right network to load it.
+    architecture = meta.get("model_type")
+    if architecture not in known_architectures():
+        raise HTTPException(
+            status_code=400,
+            detail=(f"That checkpoint says it holds a '{architecture}' model, which is "
+                    f"not an architecture this service can build. Nothing was released."),
+        )
+
     try:
         entry = registry.release(req.file, released_by=admin["email"],
-                                 metrics=metrics, note=req.note)
+                                 metrics=metrics, note=req.note,
+                                 architecture=architecture)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

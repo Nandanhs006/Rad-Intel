@@ -16,12 +16,21 @@ while it is held:
   that touches the manifest the run already has;
 * everybody can see that a run is going and who is holding it.
 
-It can be cancelled by its holder or by the administrator, and it cancels
-itself if the holder stops reporting in. The last part is what "a network
+Starting and cancelling a run belong to the administrator. Clinicians upload,
+correct and export; a run costs hours of machine time and freezes everybody's
+exports, so it is not something to hand out. They can still see that a run is
+going and who is holding it, because it is their cases being trained on.
+
+It cancels itself if the holder stops reporting in. That is what "a network
 problem should not leave a run orphaned" actually means in a system where
-training happens on the server: the clinician's connection cannot interrupt
-the computation, but if their browser has gone away there is nobody watching
-the result, and a run nobody is watching should not keep the queue locked.
+training happens on the server: the holder's connection cannot interrupt the
+computation, but if their browser has gone away there is nobody watching the
+result, and a run nobody is watching should not keep the queue locked.
+
+None of this touches what the public tool serves. Training runs in its own
+process while the web server keeps answering from the model it already has
+loaded, so a run in progress is invisible to visitors except as slightly
+slower predictions while the processor is busy.
 """
 from __future__ import annotations
 
@@ -38,8 +47,15 @@ logger = logging.getLogger(__name__)
 
 # How long the holder's browser may go quiet before the run is abandoned. The
 # interface polls every few seconds, so this is many missed polls, not one.
-HEARTBEAT_GRACE_SECONDS = 180
-_WATCHDOG_INTERVAL = 15
+#
+# Thirty minutes, not three. Three was right when any clinician could start a
+# run and the browser that did was the only thing watching it; now only the
+# administrator can, and an administrator who switches tab, sleeps a laptop or
+# loses wifi for a few minutes should not come back to a cancelled run and a
+# wasted hour of compute. The watchdog still exists, because a run nobody is
+# ever coming back to should not hold the queue for ever.
+HEARTBEAT_GRACE_SECONDS = 30 * 60
+_WATCHDOG_INTERVAL = 30
 
 
 class TrainingJob:

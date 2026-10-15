@@ -108,11 +108,21 @@ async def list_models(manager: ModelManager = Depends(get_model_manager)):
     for name, entry in sorted(released().items()):
         metrics = {k: float(v) for k, v in (entry.get("metrics") or {}).items()
                    if isinstance(v, (int, float))}
+        lineage = entry.get("lineage") or entry["architecture"]
+        # Two lineages reach the public list and they are not the same claim.
+        # The community model is the fusion architecture trained from scratch
+        # on the Kaggle data together with every reviewed case; a fine-tuned
+        # version is the reported checkpoint nudged by one batch of reviews.
+        default_description = (
+            "The fusion architecture, retrained from scratch on the public dataset "
+            "together with every case clinicians have reviewed."
+            if lineage.startswith("community")
+            else f"Released version of the {entry['architecture']} model, "
+                 f"fine-tuned on clinician-reviewed cases."
+        )
         models_meta.append(ModelInfo(
             name=name,
-            description=(entry.get("note")
-                         or f"Released version of the {entry['architecture']} model, "
-                            f"fine-tuned on clinician-reviewed cases."),
+            description=entry.get("note") or default_description,
             is_hybrid=entry["architecture"].startswith("hybrid"),
             is_ablation=False,
             parameters_count=sum(p.numel() for p in manager.get_model(name).parameters()),

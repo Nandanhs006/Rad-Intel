@@ -316,7 +316,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     const chosen = select.value || "hybrid";
     select.innerHTML = data.available_models.map((m) => {
       const name = NAMES[m.name] || m.name;
-      const released = m.is_released ? " · released from reviewed cases" : "";
+      // Two kinds reach this list and they are not the same claim: one was
+      // retrained from nothing on everything, the other was nudged from the
+      // project's own checkpoint by a batch of reviews.
+      const released = m.is_released
+        ? (m.name.startsWith("community")
+            ? " · retrained on the public dataset plus reviewed cases"
+            : " · fine-tuned on reviewed cases")
+        : "";
       const label = m.label ? ` — ${m.label}` : "";
       return `<option value="${esc(m.name)}">${esc(name + label + released)}</option>`;
     }).join("");
@@ -326,9 +333,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     const hint = document.getElementById("model-hint");
     if (hint && released.length) {
       hint.textContent = `${released.length} version` +
-        `${released.length === 1 ? "" : "s"} released from clinician-reviewed cases ` +
+        `${released.length === 1 ? "" : "s"} built with clinician-reviewed cases ` +
         `${released.length === 1 ? "is" : "are"} available here, shown with the scores ` +
-        `measured on the same held-out set as the rest.`;
+        `measured on the same held-out set as the rest. The default is unchanged — ` +
+        `these are only ever something you pick.`;
     }
   } catch {
     /* Leave the list as the page shipped it: the tool still works. */
