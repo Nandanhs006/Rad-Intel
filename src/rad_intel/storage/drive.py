@@ -233,9 +233,11 @@ class DriveStore:
         """A summary for the administrator's console. Carries no credentials."""
         if not configured():
             return {"configured": False,
-                    "detail": ("Reviewed radiographs are kept on this server's disk "
-                               "only. If the disk is wiped they are gone. Run "
-                               "scripts/connect_drive.py to put them in Drive as well.")}
+                    "detail": ("If this disk is wiped — which most hosts do on every "
+                               "redeploy — they are gone, and a radiograph somebody "
+                               "uploaded cannot be made again. Run "
+                               "scripts/connect_drive.py to copy them to your Drive "
+                               "as well; see Step 4b in DEPLOY.md.")}
         try:
             folder = self.folder_id()
         except DriveError as exc:
