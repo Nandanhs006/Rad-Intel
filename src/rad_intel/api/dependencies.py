@@ -4,8 +4,10 @@ FastAPI dependency injection and singleton model management.
 
 import json
 import logging
+import os
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 import torch
@@ -26,6 +28,24 @@ logger = logging.getLogger(__name__)
 # byte-identical on disk and reverting cannot fail halfway through a copy.
 ACTIVE_POINTER = settings.BASE_DIR / "weights" / "active_models.json"
 
+# How many models may be held in memory at once, besides the default.
+#
+# Each one is between 30 MB and 600 MB of weights, and a loaded model was
+# never dropped: anybody could click down the model list on the Analyse tab
+# and load every architecture plus every released version. Measured, that is
+# 1.2 GB for the five built-in ones, and the lung-segmentation model the
+# explanation path loads lazily adds 380 MB on top -- enough to be killed on
+# the 2 GB box this is meant to run on, by a visitor doing nothing wrong.
+#
+# Three is room for the default plus two people comparing, which is what the
+# chooser is actually for. Raise it with RAD_INTEL_MODEL_CACHE on a bigger
+# machine.
+def _cache_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("RAD_INTEL_MODEL_CACHE", "").strip() or 3))
+    except ValueError:
+        return 3
+
 
 def _read_pointer() -> dict[str, str]:
     if not ACTIVE_POINTER.exists():
@@ -43,7 +63,9 @@ class ModelManager:
 
     def __init__(self):
         self.device = settings.torch_device
-        self._models: dict[str, torch.nn.Module] = {}
+        # Ordered by when each was last used, so the one evicted is the one
+        # nobody has asked for in longest.
+        self._models: OrderedDict[str, torch.nn.Module] = OrderedDict()
         # Per-model operating point recovered from the checkpoint. Training
         # selects this on validation data and stores it as "optimal_threshold";
         # serving must apply the same value or the deployed decision boundary
@@ -224,7 +246,35 @@ class ModelManager:
                             self._thresholds[target_name] = float(thr)
                 except Exception:
                     pass
+            self._evict_down_to_limit(keep=target_name)
+
+        # Asked for again, so it goes to the back of the queue to be dropped.
+        self._models.move_to_end(target_name)
         return self._models[target_name]
+
+    def _evict_down_to_limit(self, keep: str) -> None:
+        """
+        Drop the least recently used models until the cache is small enough.
+
+        The default model is never dropped: it is what the great majority of
+        requests want, and reloading it costs a second and a half on every
+        one of them. Neither is the one being returned right now.
+        """
+        limit = _cache_limit()
+        with self._load_lock:
+            protected = {keep, self.active_model_name}
+            while len(self._models) > limit:
+                for name in list(self._models):
+                    if name not in protected:
+                        self._models.pop(name, None)
+                        self._thresholds.pop(name, None)
+                        self._trained.pop(name, None)
+                        logger.info("Unloaded %s to stay inside the model cache "
+                                    "limit of %d.", name, limit)
+                        break
+                else:
+                    # Everything left is protected; nothing more can go.
+                    return
 
     def predict(
         self, tensor: torch.Tensor, model_name: str | None = None
