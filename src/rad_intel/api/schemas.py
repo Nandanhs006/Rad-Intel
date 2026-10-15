@@ -318,3 +318,14 @@ class ModelReleaseRequest(BaseModel):
     file: str
     password: str
     note: str | None = None
+
+
+class CommunityFetchRequest(BaseModel):
+    """
+    Fetching a community model from a share link, instead of uploading it.
+
+    The password is here for the same reason it is on a release: this writes
+    a file that can then be put in front of the public.
+    """
+    url: str = Field(..., min_length=12, max_length=2000)
+    password: str

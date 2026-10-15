@@ -157,6 +157,7 @@ WORKSPACE_ENDPOINTS = [
     ("post", "/api/v1/feedback/bundle"),
     ("get", "/api/v1/feedback/bundle/anything.zip"),
     ("post", "/api/v1/feedback/community/upload"),
+    ("post", "/api/v1/feedback/community/fetch"),
     ("post", "/api/v1/feedback/submit"),
     ("patch", "/api/v1/feedback/any-id"),
     ("delete", "/api/v1/feedback/any-id"),
@@ -858,10 +859,179 @@ async def test_a_clinician_sees_the_community_model_but_cannot_build_one():
         read = await client.get("/api/v1/feedback/community", cookies=jar)
         build = await client.post("/api/v1/feedback/bundle", cookies=jar)
         upload = await client.post("/api/v1/feedback/community/upload", cookies=jar)
+        fetch = await client.post("/api/v1/feedback/community/fetch", cookies=jar,
+                                  json={"url": "https://drive.google.com/file/d/x" * 2,
+                                        "password": "whatever"})
     assert read.status_code == 200
     assert read.json()["name"] == "community_hybrid"
     assert build.status_code == 403
     assert upload.status_code == 403
+    assert fetch.status_code == 403
+
+
+async def test_a_link_the_server_will_not_fetch_from_is_refused(tmp_path, monkeypatch):
+    """
+    An allowlist, not "any https address".
+
+    A server that fetches whatever address it is handed is a way to reach
+    things only it can reach: a cloud provider's metadata service, something
+    on the same private network. None of these can be.
+    """
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", tmp_path / "weights")
+    (tmp_path / "weights").mkdir()
+    admin = _make_admin()
+
+    refused = [
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "https://169.254.169.254/latest/meta-data/",
+        "https://127.0.0.1:8000/api/v1/admin/users",
+        "https://localhost/rad_intel.db",
+        "file:///etc/passwd",
+        "https://drive.google.com.example.net/evil.pt",
+        "https://example.com/model.pt",
+    ]
+    async with _client() as client:
+        for url in refused:
+            res = await client.post("/api/v1/feedback/community/fetch",
+                                    cookies=_signed_in(admin),
+                                    json={"url": url, "password": ADMIN_PASSWORD})
+            assert res.status_code == 400, f"{url} -> {res.status_code}"
+            assert "not one this server will fetch from" in res.json()["detail"], url
+
+    assert not list((tmp_path / "weights").glob("*.pt"))
+
+
+async def test_fetching_needs_the_password_too(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", tmp_path / "weights")
+    (tmp_path / "weights").mkdir()
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/fetch", cookies=_signed_in(admin),
+            json={"url": "https://drive.google.com/file/d/abcdefghijkl/view",
+                  "password": "not-the-password"})
+    assert res.status_code == 403
+    assert "Nothing was fetched" in res.json()["detail"]
+
+
+def _mock_fetch(monkeypatch, handler):
+    """Point the fetcher's HTTP client at a handler instead of the network."""
+    import httpx
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(
+        **{**kw, "transport": httpx.MockTransport(handler)}))
+
+
+async def test_a_fetched_checkpoint_goes_through_the_same_checks(tmp_path, monkeypatch):
+    import httpx
+    import torch
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+
+    staged = tmp_path / "c.pt"
+    torch.save({
+        "model_type": "hybrid",
+        "optimal_threshold": 0.5574,
+        "model_state_dict": {"classifier.weight": torch.zeros(2, 4)},
+        "metrics": {"accuracy": 0.9183, "auroc": 0.9668,
+                    "sensitivity": 0.94, "specificity": 0.88},
+        "provenance": {"reviewed_cases": 118},
+    }, staged)
+    payload = staged.read_bytes()
+
+    asked: list[str] = []
+
+    def handler(request):
+        asked.append(str(request.url))
+        # One redirect first, to an address that is also allowed.
+        if "usercontent" in str(request.url):
+            return httpx.Response(302, headers={
+                "location": "https://cdn-lfs.huggingface.co/x/model.pt"})
+        return httpx.Response(200, content=payload)
+
+    _mock_fetch(monkeypatch, handler)
+    admin = _make_admin()
+
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/fetch", cookies=_signed_in(admin),
+            json={"url": "https://drive.google.com/file/d/1A2b3C4d5E6f/view",
+                  "password": ADMIN_PASSWORD})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["file"] == "best_community_hybrid_v1_model.pt"
+    assert body["name"] == "community_hybrid_v1"
+    assert body["source"] == "link"
+    assert body["metrics"]["accuracy"] == 0.9183
+    assert (weights / "best_community_hybrid_v1_model.pt").is_file()
+    # The viewer link was rewritten before anything was fetched.
+    assert asked[0].startswith("https://drive.usercontent.google.com/download")
+
+
+async def test_a_redirect_off_the_allowlist_stops_the_fetch(tmp_path, monkeypatch):
+    """An allowed address must not be able to hand the request on to a private one."""
+    import httpx
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+
+    _mock_fetch(monkeypatch, lambda request: httpx.Response(
+        302, headers={"location": "https://169.254.169.254/latest/meta-data/"}))
+    admin = _make_admin()
+
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/fetch", cookies=_signed_in(admin),
+            json={"url": "https://drive.google.com/file/d/1A2b3C4d5E6f/view",
+                  "password": ADMIN_PASSWORD})
+    assert res.status_code == 400
+    assert "not one this server will fetch from" in res.json()["detail"]
+    assert not list(weights.glob("*.pt"))
+
+
+async def test_a_sharing_page_instead_of_a_file_says_so(tmp_path, monkeypatch):
+    """The commonest mistake: the link is still Restricted."""
+    import httpx
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    monkeypatch.setattr(feedback_routes, "WEIGHTS_DIR", weights)
+
+    _mock_fetch(monkeypatch, lambda request: httpx.Response(
+        200, content=b"<html>You need access</html>"))
+    admin = _make_admin()
+
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/feedback/community/fetch", cookies=_signed_in(admin),
+            json={"url": "https://drive.google.com/file/d/1A2b3C4d5E6f/view",
+                  "password": ADMIN_PASSWORD})
+    assert res.status_code == 400
+    assert "anyone with the link" in res.json()["detail"]
+
+
+def test_a_share_link_becomes_a_link_to_the_file_itself():
+    """
+    A Drive link opens a viewer, and a file this size meets the
+    "can't scan it" page rather than the bytes.
+    """
+    direct = feedback_routes._direct_link(
+        "https://drive.google.com/file/d/1A2b3C4d5E6f7G8h/view?usp=sharing")
+    assert direct.startswith("https://drive.usercontent.google.com/download")
+    assert "id=1A2b3C4d5E6f7G8h" in direct
+    assert "confirm=t" in direct
+    assert feedback_routes._allowed_host(direct)
+
+    assert feedback_routes._direct_link(
+        "https://www.dropbox.com/s/abc/model.pt?dl=0").endswith("?dl=1")
+    # Anything already direct is left exactly as it is.
+    plain = "https://huggingface.co/someone/repo/resolve/main/model.pt"
+    assert feedback_routes._direct_link(plain) == plain
 
 
 async def test_a_bundle_carries_every_reviewed_case_and_freezes_the_pending_ones():

@@ -51,15 +51,39 @@
     body: JSON.stringify(payload),
   });
 
-  function show(node, message, kind = "info") {
+  // How long a passing message stays. Long enough to read twice, short
+  // enough that an error from ten minutes ago is not still sitting on the
+  // page looking like it just happened.
+  const MESSAGE_SECONDS = 10;
+
+  /**
+   * Put a message in a result panel.
+   *
+   * It clears itself, because most of these are the outcome of a thing you
+   * just did and mean nothing a minute later -- a stale "No pending reviews
+   * to export." under the prediction form reads as a fresh complaint about
+   * whatever you are doing now.
+   *
+   * `sticky` keeps one up: either it carries something you have to read or
+   * copy, like a new Rad-Intel ID, or it says work is still going and will
+   * be replaced by its own result.
+   */
+  function show(node, message, kind = "info", { sticky = false } = {}) {
     if (!node) return;
+    clearTimeout(node._dismiss);
     node.hidden = false;
     node.className = `fb-result fb-${kind}`;
     node.innerHTML = message;
+    if (!sticky) {
+      node._dismiss = setTimeout(() => { node.hidden = true; },
+                                 MESSAGE_SECONDS * 1000);
+    }
   }
 
   function hide(node) {
-    if (node) node.hidden = true;
+    if (!node) return;
+    clearTimeout(node._dismiss);
+    node.hidden = true;
   }
 
   const stamp = (iso) =>
@@ -374,7 +398,7 @@
     }
 
     busy($("fb-run"), true);
-    show(result, "Running the shared model…");
+    show(result, "Running the shared model…", "info", { sticky: true });
     try {
       const form = new FormData();
       form.append("file", file);
@@ -382,7 +406,8 @@
       const percent = (prediction.probabilities.PNEUMONIA * 100).toFixed(1);
       show(result,
         `<strong>${esc(prediction.prediction_class)}</strong> · ` +
-        `P(pneumonia) = ${percent}% · model <code>${esc(prediction.model_name)}</code>`);
+        `P(pneumonia) = ${percent}% · model <code>${esc(prediction.model_name)}</code>`,
+        "info", { sticky: true });
       $("fb-review").hidden = false;
     } catch (error) {
       show(result, esc(readable(error)), "error");
@@ -687,13 +712,14 @@
    */
   function applyTrainState(state) {
     const banner = $("train-banner");
-    const start = $("fb-train");
     const cancel = $("fb-train-cancel");
 
-    // Starting a run is the administrator's. A clinician still sees the
-    // banner and the log -- it is their cases being trained on -- but gets a
-    // sentence about what to do instead of a button that would be refused.
-    $("train-controls").hidden = !state.can_train;
+    // There is no "start a run" button on the page any more: the community
+    // model is trained off this server, and the quick fine-tune that used to
+    // live here only ever confused the two. The controls that remain are for
+    // stopping a run somebody started from the command line, so they appear
+    // only when there is one and only for the administrator.
+    $("train-controls").hidden = !(state.running && state.can_cancel);
     $("train-clinician-note").hidden = !!state.can_train;
 
     if (state.running) {
@@ -705,22 +731,15 @@
       banner.hidden = false;
       $("train-banner-text").innerHTML =
         `<strong>${esc(who)}${esc(site)}</strong> — started ${stamp(state.started_at)}, ` +
-        `${state.cases} cases, ${state.epochs} epochs. Exporting and training are held ` +
-        `until it finishes. You can carry on uploading and correcting cases, and the ` +
-        `public tool is unaffected.`;
-      start.disabled = true;
-      start.classList.add("is-loading");
-      start.textContent = state.is_holder ? "Your run is in progress…"
-                                          : `Held — ${state.holder_name} is training`;
+        `${state.cases} cases, ${state.epochs} epochs. Exporting is held until it ` +
+        `finishes. You can carry on uploading and correcting cases, and the public ` +
+        `tool is unaffected.`;
       // Export freezes records; a run is reading the ones it already froze.
       // So it waits, for everybody, including whoever started the run.
       $("fb-export").disabled = true;
       cancel.hidden = !state.can_cancel;
     } else {
       banner.hidden = true;
-      start.disabled = false;
-      start.classList.remove("is-loading");
-      start.textContent = "Start fine-tuning run";
       $("fb-export").disabled = false;
       cancel.hidden = true;
     }
@@ -733,9 +752,9 @@
                `The export is still there, so the run can be retried.`);
     } else if (!state.running && state.produced_checkpoint) {
       writeLog(`${state.log || ""}\n--- finished ---\nNew version: ` +
-               `${state.produced_checkpoint}\nIt is not being served yet. Read the ` +
-               `before-and-after comparison above; an administrator activates a ` +
-               `version from "The shared model" panel.`);
+               `${state.produced_checkpoint}\nIt is not being served and nobody can ` +
+               `choose it. Read its scores, then release it from the administrator ` +
+               `console if it earns it.`);
       loadModelVersions();
       loadCommunity();
     }
@@ -768,32 +787,6 @@
     if (me) {
       startTrainPolling();
       if (onFeedbackTab) refreshQueue();
-    }
-  });
-
-  $("fb-train").addEventListener("click", async () => {
-    const confirmed = window.confirm(
-      "Start a fine-tuning run on the latest export?\n\n" +
-      "It creates a NEW version of the shared model. The current one keeps being " +
-      "served until an administrator activates the new one.\n\n" +
-      "It takes several minutes. Leave this tab open: if the browser that started a " +
-      "run stops reporting in for half an hour, the run cancels itself.\n\n" +
-      "Nobody using the site is interrupted — training runs in its own process."
-    );
-    if (!confirmed) return;
-
-    busy($("fb-train"), true);
-    writeLog("Starting…");
-    try {
-      const started = await api("/api/v1/feedback/train",
-                                { method: "POST", body: new FormData() });
-      writeLog(`Started on ${started.manifest} — ${started.cases} cases, ` +
-               `${started.epochs} epochs.\n${started.note}\n\nWaiting for output…`);
-      startTrainPolling();
-    } catch (error) {
-      writeLog(readable(error));
-      busy($("fb-train"), false);
-      pollTrainState();
     }
   });
 
@@ -917,31 +910,50 @@
   if (uploadForm) {
     uploadForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const link = $("cm-link").value.trim();
       const chosen = $("cm-file").files[0];
-      if (!chosen) return;
+      const password = $("cm-password").value;
+      const result = $("cm-upload-result");
 
-      const body = new FormData();
-      body.append("file", chosen);
-      body.append("password", $("cm-password").value);
+      if (!link && !chosen) {
+        return show(result, "Paste a share link, or choose the file.", "error");
+      }
+      if (link && chosen) {
+        return show(result,
+          "Give one or the other, not both — a link or the file itself.", "error");
+      }
 
       busy($("cm-upload"), true);
-      show($("cm-upload-result"),
-        `Uploading ${esc(chosen.name)} — ${(chosen.size / (1024 * 1024)).toFixed(0)} MB. ` +
-        `This takes a while and the page must stay open.`, "info");
       try {
-        const result = await api("/api/v1/feedback/community/upload",
-                                 { method: "POST", body });
-        const m = result.metrics || {};
-        show($("cm-upload-result"),
-          `<strong>${esc(result.name)}</strong> stored. ` +
+        let outcome;
+        if (link) {
+          show(result, "Fetching it from that link. A 136 MB file takes a minute or " +
+                       "two; the page must stay open.", "info", { sticky: true });
+          outcome = await api("/api/v1/feedback/community/fetch",
+                              asJson({ url: link, password }));
+        } else {
+          show(result,
+            `Uploading ${esc(chosen.name)} — ${(chosen.size / (1024 * 1024)).toFixed(0)} MB ` +
+            `from this browser. This takes a while and the page must stay open.`,
+            "info", { sticky: true });
+          const body = new FormData();
+          body.append("file", chosen);
+          body.append("password", password);
+          outcome = await api("/api/v1/feedback/community/upload",
+                              { method: "POST", body });
+        }
+
+        const m = outcome.metrics || {};
+        show(result,
+          `<strong>${esc(outcome.name)}</strong> stored. ` +
           `acc ${metricOf(m.accuracy)} · AUROC ${metricOf(m.auroc ?? m.auc_roc)} · ` +
           `sens ${metricOf(m.sensitivity)} · spec ${metricOf(m.specificity)}<br>` +
-          esc(result.detail), "ok");
+          esc(outcome.detail), "ok", { sticky: true });
         uploadForm.reset();
         loadCommunity();
         loadReleasable();
       } catch (error) {
-        show($("cm-upload-result"), esc(readable(error)), "error");
+        show(result, esc(readable(error)), "error");
       } finally {
         busy($("cm-upload"), false);
         // The password is not left sitting in the form after the attempt,
@@ -1304,7 +1316,7 @@
       show(result,
         `<strong>${esc(created.user.full_name)}</strong> can now log in.<br><br>` +
         `Rad-Intel ID: <code class="id-reveal">${esc(created.radintel_id)}</code><br><br>` +
-        `${esc(created.detail)}`, "ok");
+        `${esc(created.detail)}`, "ok", { sticky: true });
       $("admin-add-form").reset();
       $("nu-radid").value = "";
       loadAdminUsers();
@@ -1599,7 +1611,7 @@
   $("btn-test-email").addEventListener("click", async () => {
     const result = $("test-email-result");
     busy($("btn-test-email"), true);
-    show(result, "Sending\u2026");
+    show(result, "Sending\u2026", "info", { sticky: true });
     try {
       const outcome = await api("/api/v1/admin/test-email", { method: "POST" });
       show(result, esc(outcome.detail) + " Check your inbox, and your spam folder.", "ok");
