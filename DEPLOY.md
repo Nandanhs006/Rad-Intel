@@ -3,7 +3,8 @@
 Follow this top to bottom. Every step says what to do and how to tell it
 worked. Nothing here needs you to understand the code.
 
-Budget about **two hours** the first time.
+Budget about **two hours** the first time, plus half an hour if you do
+Step 4b.
 
 ---
 
@@ -14,12 +15,15 @@ Your project is three pieces that must all end up on the server:
 | Piece | What it is | Size |
 |---|---|---|
 | **The code** | what you push to GitHub | small |
-| **The model file** | `weights/best_hybrid_model.pt` | **136 MB** |
+| **The model files** | `weights/best_*_model.pt` | 136 MB each, **494 MB** for all five |
 | **The data** | `rad_intel.db` + `feedback_store/` | small, but must survive |
 
-The code goes up with git. **The model file does not** — it is in
-`.gitignore`, because GitHub refuses files that big. If you forget it, your
+The code goes up with git. **The model files do not** — they are in
+`.gitignore`, because GitHub refuses files that big. If you forget them, your
 site will load perfectly and every single analysis will fail.
+
+Only `best_hybrid_model.pt` is required; the rest decide how many models
+people can choose between. Step 3 has the list.
 
 That is the one mistake everybody makes. Step 3 is how you avoid it.
 
@@ -78,31 +82,42 @@ Mount it at:
 
 Give it **2 GB**.
 
-Now get the model file onto that disk. Pick whichever you can manage:
+Now get the model files onto that disk. The file transfer is the one part of
+this that no host makes easy, so here are two ways that work.
 
-**Option A — upload it directly (simplest)**
+**Option A — through Google Drive (works on every host)**
 
-Railway gives you a shell (`railway run bash`, or the web terminal). From
-your own machine:
-
-```bash
-railway run bash -c "mkdir -p /data/weights"
-# then copy the file up using railway's file transfer, or option B
-```
-
-**Option B — put it in Google Drive and download it on the server**
-
-1. Upload `weights/best_hybrid_model.pt` to your Drive.
-2. Right-click → Share → **Anyone with the link** → copy the link.
-3. Pull out the long id from the link.
-4. On the server, once:
+1. Upload the `.pt` files from your `weights/` folder to your Drive.
+2. For each: right-click → Share → **Anyone with the link** → **Copy link**.
+3. The link looks like
+   `https://drive.google.com/file/d/`**`1AbC...XyZ`**`/view` — the bold part
+   is the id.
+4. Open the server's shell (Railway: your service → the `⋮` menu →
+   **Shell**, or `railway run bash` from your own machine) and run:
 
 ```bash
 pip install gdown
-gdown <THE_ID> -O /data/weights/best_hybrid_model.pt
+mkdir -p /data/weights
+gdown 1AbC...XyZ -O /data/weights/best_hybrid_model.pt
 ```
 
-5. **Set the Drive file back to private** when the download is done.
+Repeat the `gdown` line for each model you want, changing the id and the
+filename. **The filename must match exactly** — the service finds models by
+name.
+
+5. **Set the Drive files back to Restricted** when the downloads are done.
+
+**Option B — Railway's own transfer**
+
+If `railway` is installed on your machine:
+
+```bash
+railway run bash -c "mkdir -p /data/weights"
+railway volume upload weights/best_hybrid_model.pt /data/weights/
+```
+
+Not every Railway plan has `volume upload`; if the command is unknown, use
+Option A.
 
 **How to tell it worked**
 
@@ -305,7 +320,36 @@ model loads — that is normal, not a hang.
 
 ---
 
-## Step 6 — Check it actually works
+## Step 6 — Make yourself the administrator on the server
+
+Your admin account exists in your laptop's database, not the server's. Open
+the server shell and create it there:
+
+```bash
+python scripts/manage_clinicians.py add \
+  --email poorabng@gmail.com \
+  --name "Poorab N G" \
+  --institution "Malnad College of Engineering" \
+  --phone "+91 9844407409" \
+  --role admin
+```
+
+It prints a password and a Rad-Intel ID. **Copy both** — you sign in with
+the password through the **Administrator** door, which the next step checks.
+
+If anything goes wrong and you cannot log in, this always works from the
+server shell:
+
+```bash
+python scripts/manage_clinicians.py code --email poorabng@gmail.com --admin
+```
+
+It prints a code. On the login page press **"I already have a code"**, paste
+it in. No email needed.
+
+---
+
+## Step 7 — Check it actually works
 
 **First, one command.** On the server shell:
 
@@ -320,16 +364,23 @@ connected — and prints each as **OK**, **FIX** or **CHECK**, with what to do
 about it. Nothing says FIX, you are ready. Add `--email` and it sends you a
 real test message too.
 
+> Run this *after* Step 6, not before — one of the things it checks is
+> whether an administrator account exists on this server, and until you make
+> one it will rightly say FIX.
+
 Then open your URL and go through these in order:
 
-**1. Is it alive?** Visit `your-url/api/v1/health`. You want:
+**1. Is it alive?** Visit `your-url/api/v1/health`. You want something like
+this — the first field is the one that matters:
 
 ```json
-{"status": "ok", "gemini_reporting_live": true}
+{"status": "ok", "active_device": "cpu", "default_model": "hybrid",
+ "gemini_reporting_live": true}
 ```
 
 **2. Does the model work?** On the site: **Analyse X-ray → Load Pneumonia
-CXR → Analyze**. You should get a verdict, a heat map and a written report.
+CXR → Analyze Radiograph**. You should get a verdict, a heat map and a
+written report.
 
 > If you get *"Model has no trained checkpoint"* — the file from Step 3 is
 > missing or in the wrong place. Go back and check `ls -lh /data/weights/`.
@@ -345,35 +396,6 @@ email**. It should say it was sent.
 
 **5. Is it private?** Visit `your-url/docs` — you should get **404**. If you
 see a page of API documentation, `RAD_INTEL_ENABLE_DOCS` is set; empty it.
-
----
-
-## Step 7 — Make yourself the administrator on the server
-
-Your admin account exists in your laptop's database, not the server's. Open
-the server shell and create it there:
-
-```bash
-python scripts/manage_clinicians.py add \
-  --email poorabng@gmail.com \
-  --name "Poorab N G" \
-  --institution "Malnad College of Engineering" \
-  --phone "+91 9844407409" \
-  --role admin
-```
-
-It prints a password and a Rad-Intel ID. **Copy both.** Log in with the
-password through the **Administrator** door.
-
-If anything goes wrong and you cannot log in, this always works from the
-server shell:
-
-```bash
-python scripts/manage_clinicians.py code --email poorabng@gmail.com --admin
-```
-
-It prints a code. On the login page press **"I already have a code"**, paste
-it in. No email needed.
 
 ---
 
@@ -443,7 +465,9 @@ so you can compare like with like.
 
 Press **Release to public**. It asks for your **password, every single
 time**. Then that version appears in the model dropdown on **Analyse X-ray**
-for everyone, labelled *"released from reviewed cases"* with its scores.
+for everyone, with its scores and a note saying what it was built from —
+*"retrained on the public dataset plus reviewed cases"* for a community
+model, *"fine-tuned on reviewed cases"* for the other kind.
 
 Two things that do not happen:
 
@@ -454,6 +478,12 @@ Two things that do not happen:
 
 **Withdraw from public** takes it back off the list. The file stays on disk.
 
+Separately, in **The shared model**, *Serve this version* changes which
+checkpoint everybody gets **by default**, without them choosing anything.
+That asks for your password too — it reaches further than a release does, so
+it is not a single click on a page left open. It is a pointer, never a copy
+over the original, so going back to the base checkpoint cannot fail.
+
 One thing the release panel deliberately cannot do: make a community model the
 *default*. It reaches people one way only — released by name, chosen
 deliberately on the Analyse tab. The model a visitor gets without choosing
@@ -463,8 +493,9 @@ anything is always the one your paper describes.
 
 # Things to know, not things to do
 
-- **If Gmail breaks, nobody can log in.** The command in Step 7 is your way
-  back in. Keep it somewhere you can find it.
+- **If Gmail breaks, nobody can log in.** The `manage_clinicians.py code`
+  command at the end of Step 6 is your way back in. Keep it somewhere you can
+  find it.
 - **The mailbox is the second factor.** Someone with a clinician's Rad-Intel
   ID *and* access to their email is in. That is the design; it is reasonable
   for a study.
