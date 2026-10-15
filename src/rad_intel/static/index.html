@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
-  <meta name="description" content="Minimalist, light-themed clinical decision support system for automated pneumonia detection and radiology reporting from chest X-rays.">
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
+  <link rel="stylesheet" href="/static/style.css?v=25">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -24,24 +24,39 @@
       <div class="header-meta">
         <div class="model-pill">
           <span class="status-dot"></span>
-          <span>90.38% Test Acc (AUC 0.947)</span>
+          <span>Hybrid: 92.0% Acc (AUC 0.974)</span>
         </div>
       </div>
     </div>
   </header>
 
+
+  <!-- Section Navigation -->
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <div class="tabs-inner">
+      <button class="tab is-active" role="tab" aria-selected="true" data-tab="analyse"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 12h8M12 8v8"/></svg><span>Analyse X-ray</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="learn"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg><span>Ask &amp; Learn</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="feedback"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Clinician Feedback</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="about"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>About &amp; Limitations</span></button>
+    </div>
+  </nav>
+
   <!-- Main Container -->
   <main class="main-container">
+    <section id="tab-analyse" class="tab-panel is-active" role="tabpanel">
     <div class="app-grid">
 
       <!-- Left Column: Upload & Parameters -->
       <section class="card" aria-label="Upload Radiograph">
-        <h1 class="card-title">Chest Radiograph</h1>
+        <h1 class="card-title"><span class="step-badge">1</span>Chest Radiograph</h1>
         <p class="card-subtitle">Upload a frontal Chest X-Ray (CXR) for automated pneumonia screening.</p>
 
         <!-- Drag & Drop Zone -->
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload chest x-ray image">
-          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <path d="M17 8l-5-5-5 5"/><path d="M12 3v13"/></svg>
+          </div>
           <div class="dropzone-prompt">Drag & drop radiograph, or <span>browse</span></div>
           <div class="dropzone-hint">Supports JPEG, PNG (DICOM converted) • Max 20MB</div>
           <input type="file" id="file-input" accept="image/jpeg,image/png,image/jpg">
@@ -69,21 +84,26 @@
         <!-- Optional Patient Metadata Accordion -->
         <div class="meta-accordion">
           <button id="meta-toggle" class="meta-toggle" type="button" aria-expanded="false">
-            <span>⚙️</span> Clinical Context & Model Settings ▾
+            <span>⚙️</span> Clinical context &amp; model settings <span class="opt-tag">optional</span> ▾
           </button>
           <div id="meta-fields" class="meta-fields">
             <div class="input-row">
               <div class="input-group">
                 <label for="input-patient-id">Patient ID</label>
                 <input type="text" id="input-patient-id" placeholder="e.g. PT-2026-089">
+                <span class="field-hint">Kept in this server's audit log. Use a
+                reference, not a name or a hospital number.</span>
               </div>
               <div class="input-group">
                 <label for="select-model">Model Architecture</label>
-                <select id="select-model">
-                  <option value="densenet121" selected>DenseNet121 (Trained: 90.4% Acc)</option>
-                  <option value="hybrid">Hybrid (DenseNet + Swin + CBAM)</option>
-                  <option value="resnet50">ResNet50 Baseline</option>
+<select id="select-model">
+                  <option value="hybrid" selected>Hybrid (DenseNet + Swin + CBAM) &mdash; 92.0% acc, AUC 0.974</option>
                 </select>
+                <span class="field-hint" id="model-hint">
+                  The list is filled in from the server, so a version released from
+                  clinician-reviewed cases appears here with the scores it was measured
+                  at.
+                </span>
               </div>
             </div>
             <div class="input-row">
@@ -116,11 +136,25 @@
       <!-- Right Column: Results & Report -->
       <section class="card" aria-label="Diagnostic Results">
 
+        <h2 class="card-title results-step"><span class="step-badge">2</span>Assessment</h2>
+
         <!-- Empty Placeholder State -->
         <div id="results-empty" class="results-empty">
           <div class="results-empty-icon">🩺</div>
           <div class="results-empty-title">Awaiting Radiograph</div>
           <p class="results-empty-desc">Upload or select a sample Chest X-Ray on the left and click "Analyze Radiograph" to generate the diagnostic assessment and clinical report.</p>
+        </div>
+
+        <!-- When something went wrong, said where the answer would have been -->
+        <div id="results-problem" class="results-problem" hidden role="alert">
+          <div class="results-problem-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          </div>
+          <div class="results-problem-title" id="results-problem-title">Could not analyse this</div>
+          <p class="results-problem-text" id="results-problem-text"></p>
+          <button class="btn-secondary btn-sm" id="results-problem-dismiss" type="button">
+            Try again
+          </button>
         </div>
 
         <!-- Loading State with Progress Steps -->
@@ -204,7 +238,7 @@
             </div>
 
             <div class="report-disclaimer">
-              *Notice: Rad-Intel is an automated clinical decision support system designed to assist licensed clinicians. Final diagnostic verification and therapeutic intervention must be validated by a physician.*
+              *Notice: Rad-Intel is restricted to technical research and education. It does not provide diagnosis, treatment, triage or autonomous decision support, and its output is not a radiological finding. Any clinical question must be referred to a physician.*
             </div>
           </div>
 
@@ -225,11 +259,896 @@
       </section>
 
     </div>
+    </section>
+
+    <!-- ============ ASK & LEARN ============ -->
+    <section id="tab-learn" class="tab-panel" role="tabpanel">
+      <div class="learn-grid">
+        <section class="card chat-card" aria-label="Educational assistant">
+          <h1 class="card-title">Ask about lungs and pneumonia</h1>
+          <p class="card-subtitle">
+            General educational questions only. This is separate from the classifier and
+            never sees your radiograph.
+          </p>
+
+          <div class="notice notice-amber" id="assistant-disclaimer">
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Educational information only; not medical diagnosis. Seek qualified medical care
+            for urgent or personal concerns.</span>
+          </div>
+
+          <div id="assistant-status" class="assistant-status" hidden></div>
+
+          <div id="chat-log" class="chat-log" aria-live="polite">
+            <div class="chat-empty">
+              <p><strong>Try asking:</strong></p>
+              <div class="chip-row">
+                <button class="chip" data-ask="What is pneumonia?">What is pneumonia?</button>
+                <button class="chip" data-ask="What does the heatmap actually show?">What does the heatmap show?</button>
+                <button class="chip" data-ask="What does specificity mean?">What does specificity mean?</button>
+                <button class="chip" data-ask="What are the limitations of this project?">What are its limitations?</button>
+              </div>
+            </div>
+          </div>
+
+          <label class="chat-context">
+            <input type="checkbox" id="chat-include-result">
+            <span>Let me ask about the result currently on screen (sends the predicted label and
+            probability only, never the image)</span>
+          </label>
+
+          <form class="chat-form" id="chat-form">
+            <input type="text" id="chat-input" class="chat-input" autocomplete="off"
+                   placeholder="Ask a general question about lungs, pneumonia or this project…"
+                   maxlength="1000" aria-label="Your question">
+            <button type="submit" class="btn-send" id="chat-send" aria-label="Send question"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ CLINICIAN FEEDBACK ============ -->
+    <section id="tab-feedback" class="tab-panel" role="tabpanel">
+
+      <!-- ---------- signed out: what this is, log in, or ask for access ---------- -->
+      <div id="fb-gate" class="gate-grid">
+
+        <section class="card gate-intro">
+          <span class="gate-eyebrow">Closed study · by invitation</span>
+          <h1 class="card-title">Clinician review workspace</h1>
+          <p class="card-subtitle">
+            A small group of named clinicians review cases against one shared model and
+            correct it where it is wrong. Access is issued by hand. There is no sign-up.
+          </p>
+
+          <div class="consent-box">
+            <h3>Read this before you log in</h3>
+            <ul>
+              <li><strong>One shared model, pooled data.</strong> Every participating
+                  clinician reviews cases against the same model. Reviews from all sites
+                  are pooled and used to train it. Your reviews are not kept to yourself,
+                  and neither is anyone else's.</li>
+              <li><strong>Where a trained model can end up.</strong> A model trained on
+                  these reviews — yours among them — may be released by the study
+                  administrator onto the <em>public</em> part of this site, where anyone
+                  visiting can select it. There are two kinds: a version fine-tuned from
+                  the project's own checkpoint, and a separate <em>community model</em>
+                  retrained from scratch on the public dataset together with every case
+                  collected here, so your cases stay in every future version of it unless
+                  you have them deleted. Either is published with the scores it was
+                  measured at, and the default model is not changed. Your radiographs are
+                  never published; what can become public is a model whose weights were
+                  shaped by them.</li>
+              <li><strong>What is stored, and where.</strong> The radiograph you upload,
+                  its SHA-256 hash, your name and institution, the model's prediction and
+                  probability, your verdict, and any note. The image is kept because
+                  training needs the pixels — on this server, and copied to a private
+                  folder in the study administrator's Google Drive so it survives the
+                  server being rebuilt. It is not shared, not published, and not
+                  searchable; deleting your case deletes both copies.</li>
+              <li><strong>Who can see it.</strong> Every other logged-in clinician in this
+                  group, and the study administrator. It is not public and is not shared
+                  outside the group — but it is <em>not</em> private to you.</li>
+              <li><strong>Your responsibility.</strong> Upload only images you are
+                  authorised to share, de-identified, with whatever approval your
+                  institution requires. Nothing here de-identifies an image for you.</li>
+              <li><strong>One device at a time.</strong> Logging in here logs you out
+                  wherever else you were, and closing the browser logs you out. Each
+                  sign-in needs a fresh code, emailed to the address on your
+                  account.</li>
+              <li><strong>What is logged.</strong> Logins, uploads, edits, deletions,
+                  exports and training runs are recorded against your name, and the
+                  administrator can read that log. It is what makes "everyone can see
+                  every case" accountable.</li>
+              <li><strong>Scope.</strong> A research and education study. It does not
+                  provide diagnosis, treatment, triage or autonomous decision support,
+                  and it is not a medical device.</li>
+              <li><strong>Leaving.</strong> Ask the administrator to disable your account
+                  at any time, and your cases can be deleted on request. Reviews already
+                  folded into a trained model cannot be retrospectively removed from that
+                  model's weights, and a version already released cannot be unlearned by
+                  anyone who downloaded it — that is why this is said before you log in
+                  and not afterwards.</li>
+            </ul>
+          </div>
+
+          <p class="gate-contact">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>
+            <span>Anything that needs sorting out — a lost Rad-Intel ID, a changed phone
+            number, a case uploaded by mistake, a question about how your data is used —
+            goes to the study administrator personally, using the contact details you were
+            given when your account was issued.</span>
+          </p>
+        </section>
+
+        <section class="card gate-forms">
+          <div class="seg" role="tablist" aria-label="Who is logging in">
+            <button type="button" class="seg-btn is-active" data-login-mode="clinician"
+                    role="tab" aria-selected="true">Clinician</button>
+            <button type="button" class="seg-btn" data-login-mode="admin"
+                    role="tab" aria-selected="false">Administrator</button>
+          </div>
+
+          <form id="login-form" class="auth-form" autocomplete="on">
+            <h3 class="auth-heading" id="login-heading">Log in</h3>
+            <p class="muted small" id="login-blurb">
+              Your email address and the Rad-Intel ID the administrator gave you. A
+              one-time code is then emailed to you.
+            </p>
+
+            <div class="form-row">
+              <label class="field-label" for="login-email">Email address</label>
+              <input type="email" id="login-email" class="input" autocomplete="username"
+                     placeholder="you@hospital.org" required>
+            </div>
+
+            <div class="form-row" id="row-radid">
+              <label class="field-label" for="login-radid">Rad-Intel ID</label>
+              <input type="text" id="login-radid" class="input mono" maxlength="20"
+                     placeholder="RAD••••••••" autocomplete="off" spellcheck="false">
+              <span class="field-hint">Issued to you personally. Starts with RAD.</span>
+            </div>
+
+            <div class="form-row" id="row-password" hidden>
+              <label class="field-label" for="login-password">Password</label>
+              <input type="password" id="login-password" class="input"
+                     autocomplete="current-password">
+            </div>
+
+            <button class="btn-primary btn-block" type="button" id="btn-send-code">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="btn-ico"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+              Send verification code
+            </button>
+
+            <button type="button" class="btn-link" id="btn-have-code">
+              I already have a code
+            </button>
+
+            <div id="login-step2" class="code-step" hidden>
+              <div class="code-sent" id="code-sent"></div>
+              <div class="form-row">
+                <label class="field-label" for="login-code">Verification code</label>
+                <input type="text" id="login-code" class="input mono code-input"
+                       maxlength="12" autocomplete="one-time-code" spellcheck="false"
+                       placeholder="12 characters">
+                <span class="field-hint">
+                  Twelve characters, case-sensitive. It works once, for 30 minutes.
+                </span>
+                <span class="field-hint">
+                  Twelve characters, case-sensitive. One use only, and it expires in ten
+                  minutes. Paste it rather than retyping it.
+                </span>
+              </div>
+              <button class="btn-primary btn-block" type="submit" id="login-submit">
+                Log in
+              </button>
+              <button class="btn-link" type="button" id="btn-resend">
+                Send a new code
+              </button>
+            </div>
+
+            <div id="login-error" class="fb-result fb-error" hidden></div>
+          </form>
+
+          <div class="gate-divider"><span>no account?</span></div>
+
+          <button type="button" class="request-cta" id="btn-open-request"
+                  aria-expanded="false" aria-controls="request-panel">
+            <span class="request-cta-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
+            </span>
+            <span class="request-cta-text">
+              <strong>Request clinician access</strong>
+              <small>The administrator verifies your registration personally before
+              issuing anything</small>
+            </span>
+            <span class="request-cta-chev" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </span>
+          </button>
+
+          <div id="request-panel" class="request-panel" hidden>
+            <p class="muted small">
+              Submitting this creates no account and grants no access. Your details go to
+              the study administrator, who checks them against your medical registration
+              and contacts you.
+            </p>
+            <form id="request-form" class="auth-form">
+              <div class="form-row">
+                <label class="field-label" for="req-name">Full name</label>
+                <input type="text" id="req-name" class="input" maxlength="120" required
+                       placeholder="Dr A. Example">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-institution">Institution</label>
+                <input type="text" id="req-institution" class="input" maxlength="160"
+                       required placeholder="Hospital or college">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-email">Email address</label>
+                <input type="email" id="req-email" class="input" maxlength="200" required
+                       placeholder="you@hospital.org">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-phone">Phone number
+                  <span class="opt-tag">WhatsApp preferred</span></label>
+                <input type="tel" id="req-phone" class="input" maxlength="24" required
+                       placeholder="+91 98765 43210">
+                <span class="field-hint">
+                  With the country code. This is how the administrator reaches you
+                  personally to verify who you are — WhatsApp is easiest. Sign-in codes
+                  go to your email address, never to a phone or a chat app.
+                </span>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-registration">Medical registration
+                  number <span class="opt-tag">speeds up verification</span></label>
+                <input type="text" id="req-registration" class="input" maxlength="120">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="req-message">Anything else
+                  <span class="opt-tag">optional</span></label>
+                <textarea id="req-message" class="input" rows="2" maxlength="1000"
+                          placeholder="Your speciality, or who referred you to the study."></textarea>
+              </div>
+              <button class="btn-secondary btn-block" type="submit" id="request-submit">
+                Send access request
+              </button>
+              <div id="request-result" class="fb-result" hidden></div>
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---------- logged in ---------- -->
+      <div id="fb-workspace" hidden>
+
+        <div class="session-bar">
+          <span class="session-who">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="session-ico">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span id="session-name">—</span>
+            <span class="badge badge-neutral" id="session-site">—</span>
+            <span class="badge badge-accent" id="session-role" hidden>administrator</span>
+            <span class="session-until" id="session-until"></span>
+            <span class="badge badge-neutral" id="session-mode" hidden>clinician view</span>
+          </span>
+          <button class="btn-link" id="btn-signout" type="button">Log out</button>
+        </div>
+
+        <div id="admin-hint" class="notice notice-amber" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>You are an administrator, but you logged in through <strong>Clinician</strong>
+          with your Rad-Intel ID, so this is the clinician workspace and the console is
+          not here. That is deliberate: an ID gets written down and handed over, and it
+          should not be able to reach the controls that read and delete everybody's
+          data. Log out and choose <strong>Administrator</strong> to manage accounts.</span>
+        </div>
+
+        <div id="displaced-notice" class="notice notice-amber" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          <span>This account was already logged in on another device, and that one has
+          just been logged out. An account works on one device at a time. If that was
+          not you, tell the study administrator — somebody else has your Rad-Intel
+          ID.</span>
+        </div>
+
+        <div id="must-change" class="notice notice-red" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <span>You are still on the password this account was issued with. Change it in
+          the administrator console below.</span>
+        </div>
+
+        <div id="train-banner" class="notice notice-amber" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span id="train-banner-text"></span>
+        </div>
+
+        <div class="app-grid">
+          <section class="card" aria-label="Submit review">
+            <h1 class="card-title">Review a case</h1>
+            <p class="card-subtitle">
+              Run a radiograph through the shared model, then record whether it was right.
+              Reviews are queued, exported, and only then used to train a new model
+              version — submitting one never changes the model by itself, and training is
+              run by the study administrator.
+            </p>
+
+            <div class="notice notice-red" id="fb-warning">
+              <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+              <span>Do not upload identifiable patient data without appropriate authorisation.</span>
+            </div>
+
+            <div class="shared-model-note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+              <span>Your cases are filed under <strong id="fb-site-label">your institution</strong>,
+              taken from your account. They go to the <strong>shared model</strong> every
+              site uses — DenseNet121 + Swin-T + CBAM. There is no per-site model.</span>
+            </div>
+
+            <div class="form-row">
+              <label class="field-label" for="fb-file">Radiograph <span class="opt-tag">JPEG or PNG, max 20 MB</span></label>
+              <input type="file" id="fb-file" class="input" accept="image/jpeg,image/png">
+            </div>
+
+            <button class="btn-primary" id="fb-run" type="button">Run prediction</button>
+
+            <div id="fb-result" class="fb-result" hidden></div>
+
+            <div id="fb-review" class="fb-review" hidden>
+              <div class="form-row">
+                <span class="field-label">Was the prediction correct?</span>
+                <div class="chip-row">
+                  <button class="chip" data-verdict="correct" type="button">Correct</button>
+                  <button class="chip" data-verdict="incorrect" type="button">Incorrect</button>
+                </div>
+              </div>
+              <div class="form-row" id="fb-correction-row" hidden>
+                <label class="field-label" for="fb-corrected">What it should have been</label>
+                <select id="fb-corrected" class="input">
+                  <option value="">Select…</option>
+                  <option value="NORMAL">NORMAL</option>
+                  <option value="PNEUMONIA">PNEUMONIA</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="fb-note">Review note <span class="opt-tag">optional</span></label>
+                <textarea id="fb-note" class="input" rows="2" maxlength="2000"
+                          placeholder="e.g. heatmap sat over the clavicle, not the lung"></textarea>
+              </div>
+              <button class="btn-primary" id="fb-submit" type="button">Submit review</button>
+            </div>
+          </section>
+
+          <section class="card" aria-label="Review queue">
+            <h2 class="card-title">Review queue</h2>
+            <p class="card-subtitle">
+              Every case from every site. You can correct and delete your own; the rest are
+              read-only.
+            </p>
+            <div id="fb-counts" class="fb-counts"></div>
+
+            <div class="queue-toolbar">
+              <div class="seg seg-sm" role="group" aria-label="Filter the queue">
+                <button type="button" class="seg-btn is-active" data-scope="all">All cases</button>
+                <button type="button" class="seg-btn" data-scope="mine">My cases</button>
+                <button type="button" class="seg-btn" data-scope="pending">Not yet exported</button>
+              </div>
+              <label class="sort-field">
+                <span class="field-label">Sort</span>
+                <select id="fb-sort" class="input input-sm">
+                  <option value="recent">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="name">Reviewer A–Z</option>
+                  <option value="institution">Institution A–Z</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="fb-queue" class="fb-queue">
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <p>No reviews yet. Run a case to start the queue.</p>
+              </div>
+            </div>
+
+            <div class="fb-actions">
+              <button class="btn-secondary" id="fb-refresh" type="button">Refresh</button>
+              <button class="btn-primary" id="fb-export" type="button">Create training export</button>
+            </div>
+            <p class="muted small">
+              An export writes a versioned manifest of every case not yet exported and
+              freezes those records, so they keep matching what gets trained on.
+            </p>
+            <div id="fb-exports" class="fb-exports"></div>
+
+            <div class="train-panel">
+              <h3 class="train-title">
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="train-ico">
+                  <path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/>
+                </svg>
+                What happens to reviewed cases
+              </h3>
+              <p class="muted small train-note">
+                An export is the save point: it freezes a batch of cases so they keep
+                matching whatever gets trained on them. Training itself is run by the
+                study administrator, on a separate machine, and never changes the
+                checkpoint the project reports. The held-out test partition is never
+                trained on.
+              </p>
+
+              <p class="muted small" id="train-clinician-note" hidden>
+                So there is nothing else for you to do here. Upload and correct cases, and
+                press <strong>Create training export</strong> when a batch is worth
+                keeping.
+              </p>
+
+              <div id="train-controls" hidden>
+                <div class="fb-actions">
+                  <button class="btn-danger" id="fb-train-cancel" type="button" hidden>Cancel run</button>
+                </div>
+              </div>
+
+              <pre id="fb-train-log" class="train-log" hidden></pre>
+
+              <div class="community-block">
+                <h4 class="train-title train-title-sm">
+                  The community model
+                  <span class="count-pill" id="community-count">—</span>
+                </h4>
+                <p class="muted small" id="community-note"></p>
+                <div id="community-versions" class="version-list"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="ws-trio">
+          <section class="card" aria-label="Your details">
+            <h3 class="card-title card-title-sm">Your details</h3>
+            <p class="card-subtitle">
+              Visible to you alone. Other clinicians see only your name and institution.
+            </p>
+            <dl class="detail-list" id="my-details"></dl>
+            <p class="muted small">
+              Your Rad-Intel ID is one of the two things needed to log in as you. Treat it
+              like a password and ask the administrator for a replacement if it is seen by
+              anyone else. Anything to change here goes through them.
+            </p>
+          </section>
+
+          <section class="card" aria-label="Participants">
+            <h3 class="card-title card-title-sm">
+              Who is in the study <span class="count-pill" id="participant-count">—</span>
+            </h3>
+            <p class="card-subtitle">
+              So you know whose cases are in the queue. Names and sites only — no contact
+              details.
+            </p>
+            <div class="scroll-box" id="participants"></div>
+          </section>
+
+          <section class="card" aria-label="Shared model">
+            <h3 class="card-title card-title-sm">The shared model</h3>
+            <p class="card-subtitle" id="models-blurb">
+              Which version of the project's own model is actually being served, and how
+              fine-tuned versions compare against it.
+            </p>
+            <div id="model-versions" class="version-list"></div>
+            <p class="muted small" id="models-note"></p>
+            <div id="storage-summary" class="storage-summary"></div>
+          </section>
+        </div>
+
+        <!-- ---------- administrator only ---------- -->
+        <div id="admin-console" hidden>
+          <div class="admin-header">
+            <h2 class="card-title">Administrator console</h2>
+            <p class="card-subtitle" id="admin-contact-note"></p>
+          </div>
+
+          <div class="stat-row" id="admin-stats"></div>
+          <div id="delivery-warning" class="notice notice-amber" hidden></div>
+
+          <section class="card card-feature" aria-label="Release a model">
+            <h3 class="card-title card-title-sm feature-title">
+              <span class="feature-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+              </span>
+              Release a model to the public
+              <span class="count-pill" id="release-count" hidden></span>
+            </h3>
+            <p class="card-subtitle">
+              A training run writes a new version and changes nothing until you do this
+              — whether it was a fine-tuning run here or a community model trained
+              elsewhere. Releasing one puts it in the model list on the
+              <strong>Analyse X-ray</strong> tab, beside the models the project reports,
+              with the scores it was measured at. The model the site uses by default does
+              not change — people choose it deliberately. Your password is asked for
+              every time.
+            </p>
+            <div id="release-list" class="version-list"></div>
+            <div id="release-result" class="fb-result" hidden></div>
+          </section>
+
+          <section class="card" aria-label="Where radiographs are kept">
+            <h3 class="card-title card-title-sm">
+              Where reviewed radiographs are kept
+              <span class="count-pill" id="drive-pill" hidden></span>
+            </h3>
+            <p class="card-subtitle">
+              This server's disk is rented by the month and most hosts wipe it on every
+              redeploy. A reviewed radiograph is the one thing here that cannot be made
+              again, so each one is also copied into your Google Drive — and fetched back
+              from there if the disk ever comes up empty.
+            </p>
+            <div id="drive-status" class="fb-result" hidden></div>
+            <p class="muted small" id="drive-scope"></p>
+            <div class="fb-actions">
+              <button class="btn-secondary btn-sm" id="drive-backfill" type="button" hidden>
+                Copy what is missing
+              </button>
+              <a class="btn-secondary btn-sm" id="drive-open" target="_blank"
+                 rel="noopener noreferrer" hidden>Open the folder</a>
+            </div>
+            <div id="drive-result" class="fb-result" hidden></div>
+          </section>
+
+          <section class="card" aria-label="The community model">
+            <h3 class="card-title card-title-sm">The community model</h3>
+            <p class="card-subtitle">
+              A second model, separate from the one the project reports. Every run
+              discards the previous community version and trains the same architecture
+              from scratch on the public dataset <em>together with every case clinicians
+              have reviewed</em>, so a version is built from all the evidence rather than
+              from the latest batch. The checkpoint the project's results describe is
+              never written to.
+            </p>
+
+            <div class="community-steps">
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">1</span>
+                <div class="step-body">
+                  <strong>Download what has been collected</strong>
+                  <p class="muted small">
+                    One zip: every reviewed radiograph and a manifest of the labels.
+                    Building it freezes anything still pending, the same way an export
+                    does. The public dataset is not in it — the training script downloads
+                    that itself.
+                  </p>
+                  <div class="fb-actions">
+                    <button class="btn-primary btn-sm" id="cm-bundle" type="button">
+                      Build training bundle
+                    </button>
+                    <a class="btn-secondary btn-sm" id="cm-download" hidden download>Download</a>
+                  </div>
+                  <div id="cm-bundle-result" class="fb-result" hidden></div>
+                  <div id="cm-bundles" class="fb-exports"></div>
+                </div>
+              </div>
+
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">2</span>
+                <div class="step-body">
+                  <strong>Train it on a GPU</strong>
+                  <p class="muted small">
+                    Not here. A full retrain is hours of compute and this server's job is
+                    to serve the site. Follow <code>COMMUNITY_MODEL.md</code> in the
+                    repository: it opens a free GPU notebook, takes the zip, and writes a
+                    <code>.pt</code> file. The held-out partition is never trained on, so
+                    its scores can be read beside the reported models.
+                  </p>
+                </div>
+              </div>
+
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">3</span>
+                <div class="step-body">
+                  <strong>Upload the result</strong>
+                  <p class="muted small">
+                    It is checked, scored and stored as a new numbered version. Nothing is
+                    served and nobody can choose it — it appears in
+                    <strong>Release a model to the public</strong> above, which asks for
+                    your password again.
+                  </p>
+                  <form id="cm-upload-form" class="auth-form">
+                    <div class="form-row">
+                      <label class="field-label" for="cm-link">Share link
+                        <span class="opt-tag">the easy way</span></label>
+                      <input type="url" id="cm-link" class="input"
+                             placeholder="https://drive.google.com/file/d/…/view">
+                      <span class="field-hint">Save the <code>.pt</code> to your Google
+                      Drive from the notebook — that is Google to Google, so it takes
+                      seconds — share it so <strong>anyone with the link</strong> can
+                      read it, and paste the link here. The server fetches it itself, so
+                      nothing goes up through your own connection. Dropbox, a GitHub
+                      release and Hugging Face work too.</span>
+                    </div>
+                    <div class="form-row">
+                      <label class="field-label" for="cm-file">…or the file itself</label>
+                      <input type="file" id="cm-file" class="input" accept=".pt">
+                      <span class="field-hint">The <code>best_community_hybrid_v…_model.pt</code>
+                      the notebook wrote, about 136 MB, sent from this browser. Fine on a
+                      fast connection; slow on a home one.</span>
+                    </div>
+                    <div class="form-row">
+                      <label class="field-label" for="cm-password">Your administrator password</label>
+                      <input type="password" id="cm-password" class="input"
+                             autocomplete="current-password" required>
+                    </div>
+                    <button class="btn-primary btn-block" type="submit" id="cm-upload">
+                      Bring this version in
+                    </button>
+                    <div id="cm-upload-result" class="fb-result" hidden></div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </section>
+
+
+          <div class="app-grid">
+            <section class="card" aria-label="Add a clinician">
+              <h3 class="card-title card-title-sm">Add a clinician</h3>
+              <p class="card-subtitle">
+                Generate a Rad-Intel ID, create the account, then give them the ID
+                yourself. Do not send it in the same message as the link to this site.
+              </p>
+              <form id="admin-add-form" class="auth-form">
+                <div class="form-row">
+                  <label class="field-label" for="nu-name">Full name</label>
+                  <input type="text" id="nu-name" class="input" maxlength="120" required>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="nu-institution">Institution</label>
+                  <input type="text" id="nu-institution" class="input" maxlength="160" required>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="nu-email">Email address</label>
+                  <input type="email" id="nu-email" class="input" maxlength="200" required>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="nu-phone">Phone number
+                    <span class="opt-tag">to reach them personally</span></label>
+                  <input type="tel" id="nu-phone" class="input" maxlength="24" required
+                         placeholder="+91 98765 43210">
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="nu-note">Private note
+                    <span class="opt-tag">optional — only you see this</span></label>
+                  <input type="text" id="nu-note" class="input" maxlength="500"
+                         placeholder="e.g. registration verified 14 Oct, referred by …">
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="nu-radid">Rad-Intel ID</label>
+                  <div class="id-field">
+                    <input type="text" id="nu-radid" class="input mono" readonly
+                           placeholder="press Generate">
+                    <button type="button" class="btn-secondary" id="nu-generate">Generate</button>
+                  </div>
+                  <span class="field-hint">Always starts with RAD. Generated here so it is
+                  checked against the IDs already issued.</span>
+                </div>
+                <button class="btn-primary btn-block" type="submit" id="nu-submit">
+                  Create account
+                </button>
+                <div id="nu-result" class="fb-result" hidden></div>
+              </form>
+            </section>
+
+            <section class="card" aria-label="Access requests">
+              <h3 class="card-title card-title-sm">
+                Access requests <span class="count-pill" id="req-count">—</span>
+              </h3>
+              <p class="card-subtitle">
+                Verify each applicant against their medical registration before issuing
+                anything. Nothing here has been granted.
+              </p>
+              <div class="fb-actions">
+                <button class="btn-secondary btn-sm" id="btn-test-email" type="button">
+                  Send myself a test email
+                </button>
+              </div>
+              <div id="test-email-result" class="fb-result" hidden></div>
+              <p class="muted small" id="delivery-note"></p>
+              <div class="scroll-box scroll-tall" id="admin-requests"></div>
+            </section>
+          </div>
+
+          <section class="card" aria-label="Manage clinicians">
+            <h3 class="card-title card-title-sm">Clinicians</h3>
+            <div class="queue-toolbar">
+              <div class="search-field">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                <input type="search" id="admin-search" class="input"
+                       placeholder="Search by name, email, institution, or a full Rad-Intel ID">
+              </div>
+              <button class="btn-secondary" id="admin-search-clear" type="button">Clear</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="admin-users">
+                <thead>
+                  <tr>
+                    <th>Name</th><th>Institution</th><th>Contact</th>
+                    <th>Rad-Intel ID</th><th>Last login</th><th>Status</th><th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="app-grid">
+            <section class="card" aria-label="Open sessions">
+              <h3 class="card-title card-title-sm">
+                Open sessions <span class="count-pill" id="session-count">—</span>
+              </h3>
+              <p class="card-subtitle">
+                One device per account. A session ends when that browser closes;
+                closing one here does the same immediately, without disabling the
+                account.
+              </p>
+              <div class="scroll-box" id="admin-sessions"></div>
+            </section>
+
+            <section class="card" aria-label="Your administrator account">
+              <h3 class="card-title card-title-sm">Your administrator account</h3>
+              <form id="admin-profile-form" class="auth-form">
+                <div class="form-row">
+                  <label class="field-label" for="ap-name">Full name</label>
+                  <input type="text" id="ap-name" class="input" maxlength="120">
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="ap-institution">Institution</label>
+                  <input type="text" id="ap-institution" class="input" maxlength="160">
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="ap-email">Email address</label>
+                  <input type="email" id="ap-email" class="input" maxlength="200">
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="ap-phone">Phone number
+                    <span class="opt-tag">how people reach you</span></label>
+                  <input type="tel" id="ap-phone" class="input" maxlength="24">
+                </div>
+                <button class="btn-secondary" type="submit">Save details</button>
+                <div id="ap-result" class="fb-result" hidden></div>
+              </form>
+
+              <form id="admin-password-form" class="auth-form form-divided">
+                <div class="form-row">
+                  <label class="field-label" for="pw-current">Current password</label>
+                  <input type="password" id="pw-current" class="input"
+                         autocomplete="current-password" required>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="pw-new">New password
+                    <span class="opt-tag">at least 10 characters</span></label>
+                  <input type="password" id="pw-new" class="input"
+                         autocomplete="new-password" minlength="10" required>
+                </div>
+                <button class="btn-secondary" type="submit">Change password</button>
+                <div id="pw-result" class="fb-result" hidden></div>
+              </form>
+            </section>
+          </div>
+
+          <section class="card" aria-label="Activity log">
+            <h3 class="card-title card-title-sm">
+              Activity log <span class="count-pill" id="activity-count">—</span>
+            </h3>
+            <p class="card-subtitle">
+              Logins, uploads, edits, deletions, exports and training runs, newest first.
+              This is a record of named clinicians' behaviour, so it stays with you.
+            </p>
+            <div class="table-wrap">
+              <table class="data-table" id="admin-activity">
+                <thead>
+                  <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th><th>From</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div><!-- /fb-workspace -->
+    </section>
+
+    <!-- ============ ABOUT & LIMITATIONS ============ -->
+    <section id="tab-about" class="tab-panel" role="tabpanel">
+      <div class="about-grid">
+        <section class="card">
+          <h1 class="card-title">What this system is</h1>
+          <p>
+            Rad-Intel classifies paediatric chest radiographs as normal or pneumonia, shows
+            which regions drove the score, and writes a structured summary from those recorded
+            outputs. Classification, explanation and language generation are kept separate so
+            that every displayed sentence traces back to a number the model produced.
+          </p>
+          <div class="notice notice-red">
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Restricted to technical research and education. It does not provide diagnosis,
+            treatment, triage or autonomous decision support, and it is not a medical device.</span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Measured results</h2>
+          <p class="card-subtitle">Held-out 624-image test partition, single run at seed 42.</p>
+          <div class="metric-strip">
+            <div class="metric-tile"><div class="metric-value">93.4%</div><div class="metric-label">Best accuracy</div></div>
+            <div class="metric-tile"><div class="metric-value">0.977</div><div class="metric-label">Best AUROC</div></div>
+            <div class="metric-tile"><div class="metric-value">624</div><div class="metric-label">Test images</div></div>
+            <div class="metric-tile"><div class="metric-value">5</div><div class="metric-label">Configurations</div></div>
+          </div>
+          <div class="about-table-wrap">
+          <table class="about-table">
+            <thead><tr><th>Configuration</th><th>Acc.</th><th>AUROC</th><th>Sens.</th><th>Spec.</th></tr></thead>
+            <tbody>
+              <tr><td>DenseNet121</td><td>91.5%</td><td>0.962</td><td>95.6%</td><td>84.6%</td></tr>
+              <tr><td>Swin-T</td><td>90.1%</td><td>0.975</td><td>97.4%</td><td>77.8%</td></tr>
+              <tr><td>ResNet50</td><td>89.7%</td><td>0.954</td><td>93.3%</td><td>83.8%</td></tr>
+              <tr class="is-best"><td>Fusion without CBAM</td><td>93.4%</td><td>0.977</td><td>94.6%</td><td>91.4%</td></tr>
+              <tr><td>Complete classifier</td><td>92.0%</td><td>0.974</td><td>95.9%</td><td>85.5%</td></tr>
+            </tbody>
+          </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Known limitations</h2>
+          <ul class="limitation-list">
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Paediatric images from a single institution; nothing extends to other ages,
+                institutions or acquisition protocols without external validation.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Labels collapse bacterial and viral pneumonia into one class.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>No dependable patient identifier, so the split cannot guarantee patient-level
+                independence.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Each configuration was trained once, so no result separates an architectural
+                effect from seed variation.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Between 21% and 48% of model response falls outside the segmented lung fields,
+                consistent with shortcut learning on this dataset.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Grad-CAM and LIME agree only weakly with each other; a heatmap shows model
+                sensitivity, not pathology.</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Generated summaries read as diagnostic to a reviewing clinician in half of
+                sampled cases despite passing schema validation.</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Which model you are using</h2>
+          <p class="card-subtitle">
+            The table above describes the five configurations trained for this project,
+            measured on the held-out partition named there.
+          </p>
+          <div class="notice notice-amber">
+            <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span><strong>The chooser offers what this server actually holds.</strong>
+            The table above is the record of what was trained for the project; a
+            configuration whose weights were not put on this server is simply not
+            listed, so you may see fewer than five. The model chooser may also offer
+            versions released
+            by the study administrator from radiographs contributed by participating
+            clinicians <em>after</em> these results were measured. One kind is this
+            project's own checkpoint fine-tuned on a batch of reviews; the other, named
+            <code>community_hybrid</code>, is the same fusion architecture retrained from
+            scratch on the public dataset together with every contributed case. Both are
+            scored on the same held-out partition and their numbers are shown beside their
+            names, but <strong>the table above does not describe them</strong> — it
+            describes the five configurations only. The default is unchanged: the complete
+            classifier, and a released model is only ever something a visitor picks
+            deliberately.</span>
+          </div>
+        </section>
+      </div>
+    </section>
   </main>
 
   <!-- Toast Notification -->
   <div id="toast" class="toast">Copied to clipboard</div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=5"></script>
+  <script src="/static/extras.js?v=25"></script>
+  <script src="/static/workspace.js?v=25"></script>
 </body>
 </html>

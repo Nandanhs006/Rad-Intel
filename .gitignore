@@ -1,6 +1,9 @@
-# Environment variables
+# Environment variables and key material
 .env
 .env.local
+# Encrypts stored phone numbers and signs sessions. Losing it makes
+# stored phone numbers unreadable; leaking it makes them readable.
+.radintel_key
 
 # Python
 __pycache__/
@@ -43,3 +46,27 @@ cache/
 uploads/
 rad_intel.db
 *.log
+
+# Paper working folder: local only. The dataset, build artefacts and scratch
+# PDFs here are large and reproducible; main.tex and references.bib are kept.
+Rad-Intel paper/chest_xray/
+Rad-Intel paper/tmp/
+Rad-Intel paper/output/
+Rad-Intel paper/*.pdf
+
+# Datasets and trained weights
+chest_xray/
+*.pt
+.DS_Store
+
+results/*.html
+results/*.csv
+
+# tectonic build intermediates
+Rad-Intel paper/*.aux
+Rad-Intel paper/*.bbl
+Rad-Intel paper/*.blg
+Rad-Intel paper/*.out
+
+# Clinician feedback store (reviewed images and export manifests)
+feedback_store/

@@ -137,6 +137,25 @@ class GeminiReportClient:
         luz = zones.get("left_upper_zone", 0.0)
         llz = zones.get("left_lower_zone", 0.0)
 
+        # Certainty tier. The template previously asserted the same categorical
+        # findings at 71% confidence as at 99%, which states more than the
+        # classifier supports. Hedging scales with the reported probability.
+        if conf >= 85.0:
+            hedge_find = "is identified"
+            hedge_impr = "Radiographic features consistent with"
+            hedge_caveat = ""
+        elif conf >= 75.0:
+            hedge_find = "is suggested"
+            hedge_impr = "Findings favour"
+            hedge_caveat = ""
+        else:
+            hedge_find = "is equivocal"
+            hedge_impr = "Equivocal findings that may represent"
+            hedge_caveat = (
+                r" Model confidence is low and close to the decision threshold; "
+                r"this finding should be treated as uncertain."
+            )
+
         if pred_class == "PNEUMONIA":
             verdict_bg = "red!6"
             verdict_frame = "alertred!70"
@@ -144,10 +163,13 @@ class GeminiReportClient:
             bilateral_str = "Yes (Multifocal bilateral opacification)" if is_bilateral else "No (Focal / unilateral)"
 
             findings_items = (
-                r"\item \textbf{LUNGS \& AIRSPACES:} A discrete region of focal airspace consolidation with associated patchy opacification is prominently identified, maximal within the "
+                r"\item \textbf{LUNGS \& AIRSPACES:} A region of airspace opacification "
+                + hedge_find
+                + r" in the model's region of maximal response, the "
                 + dom_desc
                 + r". "
                 + (r"Secondary multifocal airspace opacities are demonstrated within the contralateral lung field." if is_bilateral else r"Contralateral lung parenchyma demonstrates normal aeration without focal infiltrate.")
+                + hedge_caveat
                 + "\n"
                 r"\item \textbf{PLEURAL SPACES:} Bilateral costophrenic angles remain adequately preserved; no evidence of significant pleural effusion or pneumothorax."
                 + "\n"
@@ -157,21 +179,26 @@ class GeminiReportClient:
             )
 
             impression_items = (
-                r"\item Radiographic features diagnostic of acute airspace pneumonia, predominantly localized to the "
+                r"\item "
+                + hedge_impr
+                + r" acute airspace pneumonia. The model's response was greatest over the "
                 + dom_desc
-                + r"."
+                + r"; this is a saliency location, not an independently verified anatomical finding."
                 + "\n"
-                r"\item Automated deep learning diagnostic confidence: \textbf{"
+                r"\item Automated deep learning classifier confidence: \textbf{"
                 + f"{conf:.1f}\\%"
-                + r"} (PNEUMONIA)."
+                + r"} (PNEUMONIA). Interpretation by a qualified clinician is required."
             )
 
+            # Treatment directives removed: an image classifier has no basis to
+            # initiate antimicrobial therapy, and doing so exceeds the stated
+            # research/education scope of the system.
             recommendation_items = (
-                r"\item Recommend urgent clinical correlation with serum inflammatory markers (CBC with differential, C-reactive protein, procalcitonin) and sputum microbiologic cultures."
+                r"\item Clinical correlation is advised, including inflammatory markers (CBC with differential, C-reactive protein) and microbiologic sampling where clinically indicated."
                 + "\n"
-                r"\item Initiate guideline-directed empiric antimicrobial coverage according to institutional severity criteria."
+                r"\item Any decision regarding antimicrobial therapy rests with the treating clinician and is outside the scope of this automated output."
                 + "\n"
-                r"\item Consider interval follow-up frontal chest radiograph in 4 to 6 weeks to confirm complete radiographic resolution."
+                r"\item Interval follow-up radiography may be considered to confirm radiographic resolution."
             )
         else:
             verdict_bg = "green!6"

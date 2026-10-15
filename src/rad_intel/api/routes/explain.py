@@ -4,28 +4,32 @@ Explainability (XAI) API route for Grad-CAM and LIME saliency generation.
 
 import time
 from typing import Literal
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from rad_intel.api.dependencies import (
     ModelManager,
     get_model_manager,
     get_preprocessor,
     CXRPreprocessor,
 )
-from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import ExplanationResponse, AnatomicalLocalization
 from rad_intel.xai.gradcam import GradCAMExplainer
 from rad_intel.xai.lime_explainer import LIMECXRExplainer
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1", tags=["Explainability"])
 
 
-@router.post("/explain", response_model=ExplanationResponse)
+@router.post("/explain", response_model=ExplanationResponse,
+             dependencies=[Depends(limit("public-explain", 30, 300,
+                                         "explanations"))])
 async def explain_xray(
+    request: Request,
     file: UploadFile = File(..., description="Chest X-Ray image file"),
     method: Literal["gradcam", "gradcam++", "lime"] = Form(
         "gradcam", description="Explainability algorithm to apply"
     ),
-    model_name: ModelType | None = Form(None, description="Target model architecture"),
+    model_name: str | None = Form(None, description="Model name, as listed by /api/v1/models"),
     target_category: int | None = Form(
         None, description="Category index (0=NORMAL, 1=PNEUMONIA, None=predicted class)"
     ),
@@ -41,7 +45,14 @@ async def explain_xray(
         if not image_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
+        try:
+            tensor, rgb_processed = preprocessor.preprocess(image_bytes, device=manager.device)
+        except Exception as decode_error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not decode the uploaded file as an image: {decode_error}",
+            )
+        manager.require_trained(model_name, request)
         model = manager.get_model(model_name)
 
         if method in ("gradcam", "gradcam++"):
@@ -61,6 +72,7 @@ async def explain_xray(
                 left_lung_intensity=loc_data["left_lung_intensity"],
                 is_bilateral=loc_data["is_bilateral"],
                 distribution_summary=loc_data["distribution_summary"],
+                off_thorax_fraction=loc_data.get("off_thorax_fraction"),
             )
             overlay_b64 = result["overlay_base64"]
         else:
@@ -81,8 +93,11 @@ async def explain_xray(
             method=method,
             target_category=target_category,
             overlay_base64=overlay_b64,
+            preprocessed_base64=result.get("preprocessed_base64"),
             localization=localization,
             execution_time_ms=round(elapsed_ms, 2),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Explainability error: {str(e)}")

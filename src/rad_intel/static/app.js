@@ -24,6 +24,45 @@ document.addEventListener("DOMContentLoaded", () => {
   const loadingPanel = document.getElementById("loading-panel");
   const loadingStep = document.getElementById("loading-step");
   const resultsContent = document.getElementById("results-content");
+  const problemPanel = document.getElementById("results-problem");
+
+  /**
+   * Say what went wrong where the answer would have been.
+   *
+   * Not every refusal is a fault. A rate limit is the service working, and
+   * calling it "Analysis Error" in an alert box tells somebody they broke
+   * something when they did not -- so the heading follows the status and the
+   * server's own sentence is shown as written, since it is the one that says
+   * what to do next.
+   */
+  function showProblem(status, message) {
+    if (!problemPanel) {
+      alert(message);
+      return;
+    }
+    const titles = {
+      429: "Just a moment",
+      503: "That model is not available",
+      400: "That file could not be used",
+      413: "That file is too large",
+    };
+    document.getElementById("results-problem-title").textContent =
+      titles[status] || "Could not analyse this";
+    document.getElementById("results-problem-text").textContent = message;
+    loadingPanel.style.display = "none";
+    resultsContent.style.display = "none";
+    resultsEmpty.style.display = "none";
+    problemPanel.hidden = false;
+  }
+
+  function clearProblem() {
+    if (problemPanel) problemPanel.hidden = true;
+  }
+
+  document.getElementById("results-problem-dismiss")?.addEventListener("click", () => {
+    clearProblem();
+    resultsEmpty.style.display = "flex";
+  });
 
   const verdictBanner = document.getElementById("verdict-banner");
   const verdictIcon = document.getElementById("verdict-icon");
@@ -169,6 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Reset view to loading
     resultsEmpty.style.display = "none";
     resultsContent.style.display = "none";
+    clearProblem();
     loadingPanel.style.display = "block";
     btnAnalyze.disabled = true;
 
@@ -203,8 +243,15 @@ document.addEventListener("DOMContentLoaded", () => {
       clearInterval(loadingInterval);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Analysis request failed.");
+        let detail = "";
+        try {
+          detail = (await response.json()).detail || "";
+        } catch {
+          detail = "";
+        }
+        const problem = new Error(detail || "The analysis could not be completed.");
+        problem.status = response.status;
+        throw problem;
       }
 
       const data = await response.json();
@@ -212,10 +259,10 @@ document.addEventListener("DOMContentLoaded", () => {
       renderResults(data);
     } catch (err) {
       clearInterval(loadingInterval);
-      loadingPanel.style.display = "none";
-      resultsEmpty.style.display = "flex";
       btnAnalyze.disabled = false;
-      alert(`Analysis Error: ${err.message}`);
+      showProblem(err.status, err.status
+        ? err.message
+        : "Could not reach the server. Check your connection and try again.");
     }
   });
 
@@ -249,9 +296,19 @@ document.addEventListener("DOMContentLoaded", () => {
     probFillPneumonia.style.width = pnaPct;
 
     // Visualizer Images
-    imgOriginal.src = currentPreviewUrl;
+    // Show the preprocessed 224x224 image the heatmap was drawn on. Using the
+    // raw upload here made the two panels different crops/aspect ratios, so the
+    // overlay looked misaligned with the anatomy next to it.
+    imgOriginal.src =
+      (data.explanation && data.explanation.preprocessed_base64) || currentPreviewUrl;
     if (data.explanation && data.explanation.overlay_base64) {
-      imgGradcam.src = `data:image/png;base64,${data.explanation.overlay_base64}`;
+      // The API already returns a complete data URL (see xai/visualizer.py:
+      // image_to_base64). Only add the prefix if it is somehow missing, so we
+      // never emit "data:image/png;base64,data:image/png;base64,..." again.
+      const overlay = data.explanation.overlay_base64;
+      imgGradcam.src = overlay.startsWith("data:")
+        ? overlay
+        : `data:image/png;base64,${overlay}`;
     }
 
     // Anatomical Localization
@@ -268,11 +325,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Clinical Report
     if (data.report) {
-      reportEngine.textContent = data.report.engine || "Gemini 3.5 Flash-Lite";
+      reportEngine.textContent = data.report.engine || "unavailable";
       const sec = data.report.sections || {};
-      reportFindings.textContent = sec.findings || "No focal findings.";
-      reportImpression.textContent = sec.impression || "Evaluation completed.";
-      reportRecommendations.textContent = sec.recommendations || "Clinical correlation advised.";
+      // Never a clinical statement when there is no text. These defaults were
+      // "No focal findings." and "Evaluation completed.", which are findings
+      // of a normal study -- so a report that failed to generate read as an
+      // all-clear printed directly underneath a PNEUMONIA verdict.
+      const unavailable = "Report text unavailable for this section. " +
+        "The prediction and the heat map above are unaffected.";
+      reportFindings.textContent = sec.findings || unavailable;
+      reportImpression.textContent = sec.impression || unavailable;
+      reportRecommendations.textContent = sec.recommendations || unavailable;
     }
 
     // Smooth scroll to results

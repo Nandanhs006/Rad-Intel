@@ -30,7 +30,7 @@ def parse_args():
         "--model",
         type=str,
         default="densenet121",
-        choices=["densenet121", "hybrid"],
+        choices=["densenet121", "swin_t", "resnet50", "hybrid_no_cbam", "hybrid"],
         help="Model architecture to train (default: densenet121 for fast CPU transfer learning, hybrid for dual-branch attention)",
     )
     parser.add_argument(
@@ -83,6 +83,18 @@ def parse_args():
         help="Optional limit on test samples",
     )
     parser.add_argument(
+        "--finetune-epochs",
+        type=int,
+        default=10,
+        help="Phase 2 end-to-end fine-tuning epochs; 0 keeps backbones frozen (default: 10)",
+    )
+    parser.add_argument(
+        "--finetune-batch-size",
+        type=int,
+        default=12,
+        help="Batch size for phase-2 end-to-end fine-tuning (default: 12; lower if CUDA OOM)",
+    )
+    parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
@@ -103,6 +115,8 @@ def main():
     config = TrainingConfig(
         model_type=args.model,
         epochs=args.epochs,
+        finetune_epochs=args.finetune_epochs,
+        finetune_batch_size=args.finetune_batch_size,
         batch_size=args.batch_size,
         learning_rate=args.lr,
         loss_type=args.loss,
