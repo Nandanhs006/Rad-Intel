@@ -13,6 +13,13 @@ Three distinct problems, which is why there is not one global limit:
   starting a training run -- are cheap individually but collide. The limits
   here are loose enough that no honest reviewer will meet one and tight
   enough that a stuck script cannot fill the store.
+* Choosing a different model on the Analyse tab makes the server read a
+  checkpoint off disk and build a network, which is 200-700 ms of work that
+  the request limit does not see: twenty analyses on one model is twenty
+  predictions, and twenty analyses alternating between two models is twenty
+  predictions *and* twenty model loads. That one has its own limit, and a
+  second one for the server as a whole, because several people switching at
+  once costs the same whether or not any of them is doing it on purpose.
 
 Identity is the signed-in account where there is one and the client address
 otherwise, so one clinician on a hospital network cannot exhaust the budget
@@ -114,6 +121,54 @@ def limit_by_address(bucket: str, max_calls: int, window_seconds: float,
             )
 
     return dependency
+
+
+# Loading a model is the expensive thing, so it is counted separately from
+# the request that caused it. A person comparing architectures honestly makes
+# perhaps a dozen in a sitting; a script alternating between two makes one per
+# request for as long as it is left running.
+MODEL_LOADS_PER_PERSON = 15
+MODEL_LOAD_WINDOW = 300
+# And across everybody. Forty loads in a minute is already twenty seconds of
+# a small host's processor spent on nothing but reading weights.
+MODEL_LOADS_OVERALL = 40
+MODEL_LOAD_WINDOW_OVERALL = 60
+
+
+def check_model_load(request: Request, user: dict | None, model_name: str) -> None:
+    """
+    Refuse a model switch that is costing more than it is worth.
+
+    Called after the request has said which model it wants and the manager
+    has said it is not the one already in memory -- so an analysis on the
+    model everybody uses never reaches this, however often it is run.
+    """
+    identity = f"user:{user['id']}" if user else f"ip:{client_address(request)}"
+
+    crowd = _check("model-load:all", MODEL_LOADS_OVERALL, MODEL_LOAD_WINDOW_OVERALL)
+    if crowd:
+        raise HTTPException(
+            status_code=429,
+            detail=("The server is busy loading models for other people just now. "
+                    "Try again in a moment, or run this on the model that is "
+                    "already selected."),
+            headers={"Retry-After": str(max(1, int(crowd)))},
+        )
+
+    mine = _check(f"model-load:{identity}", MODEL_LOADS_PER_PERSON, MODEL_LOAD_WINDOW)
+    if mine:
+        minutes = max(1, int(mine // 60))
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"You have changed model {MODEL_LOADS_PER_PERSON} times in the last "
+                f"{_describe(MODEL_LOAD_WINDOW)}. Each change makes the server read "
+                f"a different set of weights, which is the slow part. Carry on with "
+                f"the model you have, or try again in about {minutes} "
+                f"minute{'' if minutes == 1 else 's'}."
+            ),
+            headers={"Retry-After": str(max(1, int(mine)))},
+        )
 
 
 def _describe(window_seconds: float) -> str:

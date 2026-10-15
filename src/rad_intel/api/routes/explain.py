@@ -4,7 +4,7 @@ Explainability (XAI) API route for Grad-CAM and LIME saliency generation.
 
 import time
 from typing import Literal
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from rad_intel.api.dependencies import (
     ModelManager,
     get_model_manager,
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/v1", tags=["Explainability"])
              dependencies=[Depends(limit("public-explain", 30, 300,
                                          "explanations"))])
 async def explain_xray(
+    request: Request,
     file: UploadFile = File(..., description="Chest X-Ray image file"),
     method: Literal["gradcam", "gradcam++", "lime"] = Form(
         "gradcam", description="Explainability algorithm to apply"
@@ -51,7 +52,7 @@ async def explain_xray(
                 status_code=400,
                 detail=f"Could not decode the uploaded file as an image: {decode_error}",
             )
-        manager.require_trained(model_name)
+        manager.require_trained(model_name, request)
         model = manager.get_model(model_name)
 
         if method in ("gradcam", "gradcam++"):

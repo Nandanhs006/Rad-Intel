@@ -166,3 +166,162 @@ async def test_the_default_is_offered_even_with_nothing_behind_it(monkeypatch):
     monkeypatch.setattr(model_manager, "has_checkpoint", lambda name: False)
     listing = await list_models(model_manager)
     assert [m.name for m in listing.available_models] == [model_manager.active_model_name]
+
+
+# --- switching models is rationed, running one is not -----------------------
+
+def _fake_request(address="203.0.113.7"):
+    from starlette.datastructures import Headers
+
+    class _Client:
+        host = address
+
+    class _Request:
+        client = _Client()
+        headers = Headers({})
+        cookies: dict = {}
+
+    return _Request()
+
+
+def test_running_the_same_model_over_and_over_is_never_rationed(monkeypatch):
+    """
+    The limit is on loading weights, not on asking a question.
+
+    Everybody uses the default model, and it is never unloaded, so the route
+    must not even reach the limiter for it. If this counted analyses it would
+    be a second, stricter limit on the thing the site is for.
+    """
+    monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "1")
+    manager = _Stub()
+    manager.get_model("hybrid")
+
+    # The guard the route uses, which is what decides whether anything is
+    # counted at all.
+    assert manager.is_loaded("hybrid") is True
+    assert manager.is_loaded(None) is True, "the default, named or not"
+
+    manager.get_model("swin_t")
+    assert manager.is_loaded("hybrid") is True, "and it stays loaded"
+    assert manager.is_loaded("densenet121") is False, "this one would cost a load"
+
+
+def test_switching_again_and_again_is_stopped_and_says_why():
+    from fastapi import HTTPException
+
+    from rad_intel.api import ratelimit
+
+    ratelimit.reset()
+    request = _fake_request()
+    for _ in range(ratelimit.MODEL_LOADS_PER_PERSON):
+        ratelimit.check_model_load(request, None, "swin_t")
+
+    with pytest.raises(HTTPException) as exc:
+        ratelimit.check_model_load(request, None, "densenet121")
+    assert exc.value.status_code == 429
+    detail = exc.value.detail
+    assert "changed model" in detail
+    # It says what to do instead, not just that the door is shut.
+    assert "Carry on with the model you have" in detail
+    assert "Retry-After" in exc.value.headers
+    ratelimit.reset()
+
+
+def test_one_persons_switching_does_not_use_up_anothers_budget():
+    from fastapi import HTTPException
+
+    from rad_intel.api import ratelimit
+
+    ratelimit.reset()
+    mine, theirs = _fake_request("203.0.113.7"), _fake_request("198.51.100.4")
+    for _ in range(ratelimit.MODEL_LOADS_PER_PERSON):
+        ratelimit.check_model_load(mine, None, "swin_t")
+
+    with pytest.raises(HTTPException):
+        ratelimit.check_model_load(mine, None, "swin_t")
+    # Somebody else arriving is unaffected.
+    ratelimit.check_model_load(theirs, None, "swin_t")
+    ratelimit.reset()
+
+
+def test_the_server_as_a_whole_is_protected_from_everybody_at_once():
+    """
+    Several people switching costs the same whether or not any of them means
+    it, so the per-person limit alone is not enough.
+    """
+    from fastapi import HTTPException
+
+    from rad_intel.api import ratelimit
+
+    ratelimit.reset()
+    for n in range(ratelimit.MODEL_LOADS_OVERALL):
+        ratelimit.check_model_load(_fake_request(f"198.51.100.{n % 250}"), None, "swin_t")
+
+    with pytest.raises(HTTPException) as exc:
+        ratelimit.check_model_load(_fake_request("203.0.113.99"), None, "swin_t")
+    assert exc.value.status_code == 429
+    assert "busy loading models" in exc.value.detail
+    ratelimit.reset()
+
+
+def test_a_signed_in_person_is_counted_as_themselves_not_as_an_address():
+    """Two clinicians behind one hospital address are two people."""
+    from fastapi import HTTPException
+
+    from rad_intel.api import ratelimit
+
+    ratelimit.reset()
+    request = _fake_request("203.0.113.7")
+    for _ in range(ratelimit.MODEL_LOADS_PER_PERSON):
+        ratelimit.check_model_load(request, {"id": "doctor-a"}, "swin_t")
+
+    with pytest.raises(HTTPException):
+        ratelimit.check_model_load(request, {"id": "doctor-a"}, "swin_t")
+    ratelimit.check_model_load(request, {"id": "doctor-b"}, "swin_t")
+    ratelimit.reset()
+
+
+def test_the_limit_is_checked_before_the_model_is_loaded(monkeypatch):
+    """
+    The ordering bug this had, which made the whole limit do nothing.
+
+    require_trained answers "is it trained?" by calling is_trained, which
+    loads the model to find out. The guard sat after that, so by the time it
+    asked "would this load something?" the answer was always no -- it had
+    just been loaded. Fifteen switches never counted as one.
+    """
+    from fastapi import HTTPException
+
+    from rad_intel.api import ratelimit
+    from rad_intel.api.dependencies import model_manager
+
+    class _Request:
+        class client:
+            host = "203.0.113.11"
+
+        headers: dict = {}
+        cookies: dict = {}
+
+    ratelimit.reset()
+    monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "1")
+    model_manager._models.clear()
+    try:
+        blocked_at = None
+        for n in range(1, 25):
+            name = "swin_t" if n % 2 else "densenet121"
+            try:
+                model_manager.require_trained(name, _Request())
+            except HTTPException as exc:
+                assert exc.status_code == 429
+                blocked_at = n
+                break
+        assert blocked_at == ratelimit.MODEL_LOADS_PER_PERSON + 1
+
+        # Being stopped from switching never stops somebody using the site.
+        # The default is exempt by name, so this holds even here, where the
+        # cache was emptied and it is not resident either.
+        assert "hybrid" not in model_manager._models
+        assert model_manager.require_trained("hybrid", _Request()) == "hybrid"
+    finally:
+        ratelimit.reset()
+        model_manager._models.clear()
