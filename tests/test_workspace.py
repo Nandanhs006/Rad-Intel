@@ -1250,7 +1250,17 @@ async def test_a_console_code_still_obeys_every_other_rule():
 # --- one device, thirty days, through the HTTP surface ----------------------
 
 async def _log_in(client, user, monkeypatch, code="Known-Code1!"):
-    """Drive the real two-step sign-in with delivery stubbed out."""
+    """
+    Drive the real two-step sign-in with delivery stubbed out.
+
+    Ages any code already issued past the resend cooldown first: these tests
+    sign the same person in twice within a second to check what happens to
+    their other device, which is not something real use does.
+    """
+    import sqlite3
+
+    with sqlite3.connect(otp.DB_PATH) as conn:
+        conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds');")
     monkeypatch.setattr(
         "rad_intel.api.routes.auth.notify.send_verification_code",
         lambda phone, c, name, email=None: (True, "test", "sent"))

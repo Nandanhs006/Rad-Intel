@@ -51,9 +51,27 @@ CODE_ALPHABET = string.ascii_letters + string.digits + "!#$%*+-=?@"
 CODE_TTL_SECONDS = 10 * 60
 MAX_ATTEMPTS = 5
 REQUEST_WINDOW_SECONDS = 15 * 60
+
+# Pressing the button again straight away is almost always impatience rather
+# than a lost code, so within this window the request is declined without
+# minting anything and without counting against the allowance below. The
+# message points at the inbox instead. This is what stops ordinary use
+# reaching a limit meant for abuse.
+RESEND_COOLDOWN_SECONDS = 60
+
+# How many codes an account may ask for in a window. The limit exists to stop
+# the endpoint being used to flood somebody's phone and run up an SMS bill,
+# so it is tighter for SMS than for email, where a code costs nothing and the
+# only cost of a few extra is a cluttered inbox.
 MAX_REQUESTS_PER_WINDOW = 5
+MAX_REQUESTS_PER_WINDOW_EMAIL = 12
+
 # How long issued-code hashes are kept, purely to guarantee no code is reused.
 HISTORY_RETENTION_DAYS = 365
+
+
+def allowance_for(channel: str | None) -> int:
+    return MAX_REQUESTS_PER_WINDOW_EMAIL if channel == "email" else MAX_REQUESTS_PER_WINDOW
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -100,6 +118,19 @@ def generate_code() -> str:
     return "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
 
 
+def seconds_since_last_code(user_id: str) -> float | None:
+    """Age of the most recent code request, or None when there has not been one."""
+    init()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM login_codes WHERE user_id = ?"
+            " ORDER BY created_at DESC LIMIT 1;", (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return (_now() - _parse(row["created_at"])).total_seconds()
+
+
 def recent_request_count(user_id: str) -> int:
     """How many codes this account has asked for inside the rate-limit window."""
     init()
@@ -113,7 +144,7 @@ def recent_request_count(user_id: str) -> int:
     return int(count)
 
 
-def seconds_until_next_allowed(user_id: str) -> int:
+def seconds_until_next_allowed(user_id: str, channel: str | None = None) -> int:
     """How long an account that has hit the limit must wait, in whole seconds."""
     init()
     cutoff = _now() - timedelta(seconds=REQUEST_WINDOW_SECONDS)
@@ -123,7 +154,7 @@ def seconds_until_next_allowed(user_id: str) -> int:
             " AND datetime(created_at) > datetime(?) ORDER BY datetime(created_at);",
             (user_id, _iso(cutoff)),
         ).fetchall()
-    if len(rows) < MAX_REQUESTS_PER_WINDOW:
+    if len(rows) < allowance_for(channel):
         return 0
     oldest = _parse(rows[0]["created_at"])
     return max(1, int((oldest + timedelta(seconds=REQUEST_WINDOW_SECONDS) - _now())
@@ -148,12 +179,25 @@ def issue_code(user_id: str, channel: str = "sms",
     failing provider gets locked out a second time by the recovery path.
     """
     init()
-    if rate_limited and recent_request_count(user_id) >= MAX_REQUESTS_PER_WINDOW:
-        wait = seconds_until_next_allowed(user_id)
-        return None, (
-            f"Too many verification codes requested. Try again in about "
-            f"{max(1, wait // 60)} minute{'' if wait // 60 == 1 else 's'}."
-        )
+    if rate_limited:
+        age = seconds_since_last_code(user_id)
+        if age is not None and age < RESEND_COOLDOWN_SECONDS:
+            wait = int(RESEND_COOLDOWN_SECONDS - age) + 1
+            return None, (
+                f"A code was sent less than a minute ago — check your inbox, including "
+                f"the spam folder. If it has not arrived, you can ask for another in "
+                f"{wait} second{'' if wait == 1 else 's'}."
+            )
+
+        if recent_request_count(user_id) >= allowance_for(channel):
+            wait = seconds_until_next_allowed(user_id, channel)
+            minutes = max(1, round(wait / 60))
+            return None, (
+                f"Too many codes requested for this account. Wait about "
+                f"{minutes} minute{'' if minutes == 1 else 's'} and try again. If you "
+                f"are locked out and need in now, the study administrator can issue a "
+                f"code directly."
+            )
 
     now = _now()
     with _connect() as conn:

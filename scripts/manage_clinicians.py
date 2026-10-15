@@ -257,29 +257,29 @@ def cmd_code(args: argparse.Namespace) -> None:
 
 def cmd_delivery(_args: argparse.Namespace) -> None:
     status = notify.delivery_status()
-    print("\nHow sign-in codes and emails are delivered\n" + "-" * 62)
+    print("\nHow sign-in codes and notifications are delivered\n" + "-" * 62)
     for key, value in status.items():
         print(f"  {key:<22}: {value}")
 
     channel = status["code_channel"]
     print()
-    if channel == "sms":
+    if channel == "email":
+        print("Sign-in codes go by EMAIL to each account's own address, and access")
+        print("requests are emailed to the administrator. Nothing needs an SMS")
+        print("provider, a DLT registration or a paid account.")
+        print("\nMail working is what logging in rests on. Check it from the console")
+        print("with \"Send myself a test email\" after changing anything.")
+    elif channel == "sms":
         print(f"Sign-in codes go by SMS through {status['sms_provider']}.")
-    elif channel == "email":
-        print("Sign-in codes go by EMAIL to each account's own address.")
-        print("That is a real second factor and needs no telecom registration.")
-        print("Set an SMS provider below, plus RAD_INTEL_OTP_CHANNEL=sms, to change it.")
     elif channel == "server-log":
         print("Sign-in codes are written to THIS SERVER'S LOG and sent to nobody.")
         print("Local test mode only. Nobody else can log in.")
     else:
         print("NOBODY CAN LOG IN. Nothing is configured to deliver a code.")
-        print("The quickest fix is email: fill in the SMTP block below.")
 
     if not status["email_configured"]:
-        print(f"\nEmail is not configured — access requests are not reaching "
-              f"{status['admin_email']}, and codes cannot be emailed either.")
-        print("  In .env:")
+        print("\nEmail is not configured. In .env:")
+        print("    RAD_INTEL_OTP_CHANNEL=email")
         print("    SMTP_HOST=smtp.gmail.com")
         print("    SMTP_PORT=587")
         print("    SMTP_USER=you@gmail.com")
@@ -287,23 +287,20 @@ def cmd_delivery(_args: argparse.Namespace) -> None:
         print("    SMTP_FROM=you@gmail.com")
         print("  The App Password is at myaccount.google.com/apppasswords and needs")
         print("  2-Step Verification switched on. It is NOT a backup code.")
+    else:
+        print("\nLocked out anyway? This prints a code and sends it nowhere:")
+        print("    python scripts/manage_clinicians.py code --email you@example.org")
+        print("  Then press \"I already have a code\" on the login form.")
 
     if not status["sms_configured"]:
-        print("\nNo SMS provider. Two options, and the right one depends on the country:")
-        print("\n  India — use Fast2SMS. Twilio will not carry domestic Indian A2P SMS")
-        print("  without DLT registration under TRAI's rules, which is weeks of")
-        print("  paperwork. Fast2SMS gives free starting credit and a route that works")
-        print("  without it.")
-        print("    FAST2SMS_API_KEY=...        # Dev API section of the Fast2SMS account")
-        print("    FAST2SMS_ROUTE=q            # optional; 'q' is the default")
-        print("    RAD_INTEL_OTP_CHANNEL=sms")
-        print("\n  Outside India — Twilio.")
-        print("    TWILIO_ACCOUNT_SID=...")
-        print("    TWILIO_AUTH_TOKEN=...")
-        print("    TWILIO_FROM=+1...")
-        print("    RAD_INTEL_OTP_CHANNEL=sms")
-        print("\n  Codes are never sent over WhatsApp. A phone number is for texting a")
-        print("  code and for the administrator to reach that clinician personally.")
+        print("\nSMS is optional and switched off. If you ever want it, set")
+        print("RAD_INTEL_OTP_CHANNEL=sms and one of:")
+        print("    FAST2SMS_API_KEY=...   # India. Fast2SMS will not let its free")
+        print("                           # credit be spent through the API until one")
+        print("                           # payment of 100 INR has been made.")
+        print("    TWILIO_ACCOUNT_SID/_AUTH_TOKEN/_FROM   # outside India; Twilio needs")
+        print("                           # DLT registration for Indian numbers.")
+        print("\n  Codes are never sent over WhatsApp.")
     print()
 
 

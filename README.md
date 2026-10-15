@@ -240,19 +240,27 @@ and nothing to phish out of them with a password form. The code is twelve
 characters, single-use, expires in ten minutes, is never issued twice to the
 same person, and is stored only as a hash.
 
-The code goes **by SMS when an SMS provider is configured, otherwise by
-email**. It is never sent over WhatsApp — a phone number on a record is for
-texting a code and for the administrator to reach that clinician personally,
-and a one-time code does not belong in a chat account that may be open on a
-shared laptop.
+The code goes **by email**, to the address on the account. SMS is supported
+and switched off: it is optional infrastructure with real costs, and email
+needs no provider, no telecom registration and no payment. Codes are never
+sent over WhatsApp — a phone number on a record is for the administrator to
+reach that clinician personally, and a one-time code does not belong in a
+chat account that may be open on a shared laptop.
 
-In India, domestic application-to-person SMS sits behind DLT registration
-under TRAI's TCCCPR rules, and Twilio will not carry it without that
-paperwork, so `FAST2SMS_API_KEY` is the practical route there — though
-Fast2SMS will not let its free signup credit be spent through the API until
-one payment of ₹100 or more has been made, and its dedicated OTP route needs
-website verification and carries numeric codes only. Email codes need no
-registration at all and are the sensible default for a study.
+Pressing *Send verification code* again within a minute does not mint a
+second code or count against the allowance; it says to look in the inbox.
+Beyond that an account may ask for twelve codes in fifteen minutes on email,
+five on SMS — tighter there because the limit exists to stop somebody's phone
+being flooded and a bill run up, which an emailed code cannot do.
+
+To use SMS instead, set `RAD_INTEL_OTP_CHANNEL=sms` and a provider. In India
+that means `FAST2SMS_API_KEY`: domestic application-to-person SMS sits behind
+DLT registration under TRAI's TCCCPR rules and Twilio will not carry it
+without that paperwork. Fast2SMS will not let its own free signup credit be
+spent through the API until one payment of ₹100 or more has been made, and
+its dedicated OTP route needs website verification and carries numeric codes
+only — which cannot hold a twelve-character one. None of that applies to
+email, which is why email is the default.
 
 **Send myself a test SMS** and **Send myself a test email** in the console
 report the provider's own words on failure. Those words usually name the
