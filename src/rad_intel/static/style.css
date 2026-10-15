@@ -2524,3 +2524,80 @@ code.id-reveal {
   white-space: nowrap;
 }
 @media (max-width: 640px) { .session-until { display: none; } }
+
+/* ===================================================================
+   WORKSPACE BREATHING ROOM
+   The console stacks several full-width cards under a two-column grid,
+   and at that density the default gap read as one continuous slab with
+   lines through it. Everything below is spacing: no colours, no new
+   components.
+   =================================================================== */
+
+/* The workspace is denser than the analysis view and wants the room. */
+#tab-feedback .main-container,
+#tab-feedback {
+  --ws-gap: var(--sp-6);
+}
+
+#fb-workspace .app-grid,
+#fb-gate.gate-grid {
+  gap: var(--sp-6);
+  margin-bottom: var(--sp-6);
+}
+
+#fb-workspace .ws-trio {
+  gap: var(--sp-6);
+  margin-top: var(--sp-6);
+}
+
+/* Consecutive full-width cards in the console were touching. */
+#admin-console > .card,
+#admin-console > .app-grid {
+  margin-bottom: var(--sp-6);
+}
+#admin-console > .card:last-child {
+  margin-bottom: 0;
+}
+#admin-console .app-grid {
+  gap: var(--sp-6);
+}
+
+#admin-console {
+  margin-top: var(--sp-10);
+  padding-top: var(--sp-8);
+}
+.admin-header {
+  margin-bottom: var(--sp-6);
+}
+.stat-row {
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+}
+
+/* Give each card its own edge rather than relying on the gap alone. */
+#fb-workspace .card {
+  padding: var(--sp-6);
+}
+@media (max-width: 640px) {
+  #fb-workspace .card { padding: var(--sp-5); }
+}
+
+/* The table sat flush against the toolbar above it. */
+#admin-console .table-wrap {
+  margin-top: var(--sp-4);
+}
+#admin-console .queue-toolbar {
+  margin-bottom: var(--sp-4);
+}
+
+/* Rows inside a scroll box need a little air, or they read as one block. */
+.scroll-box { gap: var(--sp-3); }
+.roster-row { padding: var(--sp-3); }
+
+/* Notices stacked directly on top of each other. */
+#fb-workspace > .notice { margin-bottom: var(--sp-4); }
+.session-bar { margin-bottom: var(--sp-5); }
+
+/* Form rows inside the console's two-column cards. */
+#admin-console .auth-form .form-row { margin-bottom: var(--sp-4); }
+#admin-console .form-divided { margin-top: var(--sp-6); padding-top: var(--sp-6); }

@@ -356,15 +356,48 @@ describe stays byte-identical on disk and switching back cannot fail.
 To try the shared model without filing a review, use the **Analyse X-ray**
 tab: it runs whichever version is currently active.
 
-### Where images live
+### Where images live, and where they go when this is hosted
 
-`feedback_store/images/<sha256>.jpg`, one file per distinct radiograph, so the
-same image submitted twice costs nothing extra. The database holds only the
-hash and the path. They are served to logged-in clinicians through an
+`feedback_store/images/<sha256>.jpg`, one file per distinct radiograph, so
+the same image submitted twice costs nothing extra. The database holds only
+the hash and the path. They are served to logged-in clinicians through an
 authenticated endpoint that takes a record UUID, not a path, and the resolved
 path is checked against the store before anything is read — a URL alone is
 useless without a session. Deleting a case removes its image unless another
 case still refers to the same file.
+
+**`RAD_INTEL_FEEDBACK_DIR` moves the whole store**, which is what hosting
+needs. Most small hosts give a container a filesystem that is wiped on every
+redeploy: the code comes back, the radiographs do not. Point this at
+something that survives:
+
+```ini
+RAD_INTEL_FEEDBACK_DIR=/data/rad-intel/feedback_store
+```
+
+Images and export manifests both live under it. Paths recorded before the
+move stay valid, because a path inside the project is still stored relative
+to it; anything written afterwards is stored absolute.
+
+What to point it at, cheapest first:
+
+| | Good for | Watch out for |
+|---|---|---|
+| **A mounted disk** on the host (Railway/Render/Fly volume, or a VPS) | the obvious answer: no extra account, no API, ordinary file I/O | costs a little per GB; a free tier may not offer one |
+| **A Google Drive folder mounted with `rclone`** | free up to the Drive quota, and it is the one account already in use here | it is a network filesystem — slower, and a dropped mount looks like missing images, so training should not run against it directly |
+| **Object storage** (S3, R2, GCS) | the right answer at scale | needs an SDK and a rewrite of the store; not worth it for a study |
+
+A Drive mount works **without any code change**: `rclone mount` it, point
+`RAD_INTEL_FEEDBACK_DIR` at the mount, and the service cannot tell the
+difference. Keep the folder private and shared with nobody — Drive sharing
+is the whole access-control story at that point, and this holds radiographs.
+Sizing is not the constraint: the Kaggle set is a few GB and reviewed cases
+accumulate at a handful of megabytes a week, so 8 GB is years of room.
+
+The **database** (`rad_intel.db`) is a separate question with the same
+answer: it holds accounts, sessions and the review queue, and it must sit on
+something that survives a redeploy too. It is small. Do not put SQLite on a
+network mount — put it on a real disk, and the images wherever is convenient.
 
 ### Security, stated plainly
 

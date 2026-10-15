@@ -610,10 +610,16 @@ async def test_the_session_cookie_goes_when_the_browser_does(monkeypatch):
     user = _make_clinician()
     async with _client() as client:
         res = await _log_in(client, user, monkeypatch)
-    header = res.headers["set-cookie"].lower()
-    assert "httponly" in header
-    assert "samesite=lax" in header
-    assert "max-age" not in header and "expires" not in header
+    cookies = [h for k, h in res.headers.multi_items() if k.lower() == "set-cookie"]
+    sess = next(h for h in cookies if h.startswith(f"{session.COOKIE_NAME}="))
+    assert "HttpOnly" in sess and "SameSite=lax" in sess
+    assert "Max-Age" not in sess and "expires" not in sess.lower()
+
+    # The device marker is the opposite: it has to outlive the browser, or
+    # every return looks like a new machine.
+    device = next(h for h in cookies if h.startswith(f"{session.DEVICE_COOKIE_NAME}="))
+    assert f"Max-Age={session.DEVICE_COOKIE_MAX_AGE}" in device
+    assert "HttpOnly" in device
 
 async def test_a_code_that_cannot_be_delivered_refuses_the_sign_in(monkeypatch):
     """Never fall back to showing the code: that is no second factor at all."""
@@ -1284,3 +1290,99 @@ async def test_the_mode_cannot_be_claimed_at_the_second_step(monkeypatch):
         me = (await client.get("/api/v1/auth/me")).json()
         assert me["is_admin_session"] is False
         assert (await client.get("/api/v1/admin/users")).status_code == 403
+
+
+# --- the same machine, twice -------------------------------------------------
+
+async def test_closing_the_browser_and_returning_is_not_a_new_device(monkeypatch):
+    """
+    The complaint this fixes: logging in again on the same machine reported
+    that another device had been signed out. One client, with its cookie jar
+    kept, is one device however many times the session cookie goes.
+    """
+    user = _make_clinician()
+    async with _client() as same_machine:
+        first = await _log_in(same_machine, user, monkeypatch, "Code-One12!")
+        assert first.json()["displaced_other_device"] is False
+        assert session.DEVICE_COOKIE_NAME in same_machine.cookies
+
+        # Closing the browser drops the session cookie and keeps the device one.
+        del same_machine.cookies[session.COOKIE_NAME]
+
+        again = await _log_in(same_machine, user, monkeypatch, "Code-Two12!")
+        assert again.status_code == 200
+        assert again.json()["displaced_other_device"] is False, \
+            "the same machine must not be reported as a displaced device"
+
+
+async def test_a_genuinely_different_machine_still_is(monkeypatch):
+    user = _make_clinician()
+    async with _client() as laptop, _client() as phone:
+        await _log_in(laptop, user, monkeypatch, "Code-One12!")
+        second = await _log_in(phone, user, monkeypatch, "Code-Two12!")
+    assert second.json()["displaced_other_device"] is True
+
+
+async def test_logging_out_keeps_the_device_marker(monkeypatch):
+    """Or every return after a deliberate sign-out looks like a new machine."""
+    user = _make_clinician()
+    async with _client() as client:
+        await _log_in(client, user, monkeypatch, "Code-One12!")
+        await client.post("/api/v1/auth/logout")
+        assert session.DEVICE_COOKIE_NAME in client.cookies
+        back = await _log_in(client, user, monkeypatch, "Code-Two12!")
+    assert back.json()["displaced_other_device"] is False
+
+
+# --- what a failed sign-in says ---------------------------------------------
+
+async def test_a_failed_sign_in_says_only_that_it_failed():
+    """
+    Identical, and short. A helpful message that is specific about one half
+    of a guess tells an attacker the other half was the problem.
+    """
+    _make_clinician()
+    async with _client() as client:
+        wrong_id = await client.post("/api/v1/auth/code", json={
+            "email": "a@hospital.org", "radintel_id": "RADZZZZZZZZZ"})
+        no_account = await client.post("/api/v1/auth/code", json={
+            "email": "nobody@nowhere.io", "radintel_id": "RADZZZZZZZZZ"})
+        wrong_password = await client.post("/api/v1/auth/admin/code", json={
+            "email": "a@hospital.org", "password": "guess"})
+    bodies = {r.json()["detail"] for r in (wrong_id, no_account, wrong_password)}
+    assert bodies == {"Invalid credentials."}
+
+
+# --- where the images live ---------------------------------------------------
+
+def test_the_store_can_be_moved_off_the_project_directory(monkeypatch, tmp_path):
+    """
+    Hosting needs this: a small host gives a container a filesystem that is
+    wiped on redeploy, so the radiographs have to sit on a mounted volume.
+    """
+    import importlib
+
+    monkeypatch.setenv("RAD_INTEL_FEEDBACK_DIR", str(tmp_path / "elsewhere"))
+    moved = importlib.reload(importlib.import_module("rad_intel.api.routes.feedback"))
+    try:
+        assert moved.FEEDBACK_DIR == (tmp_path / "elsewhere").resolve()
+        assert moved.IMAGE_DIR.parent == moved.FEEDBACK_DIR
+        # A path recorded from outside the project stays absolute, and comes
+        # back through the containment check.
+        moved._ensure_dirs()
+        image = moved.IMAGE_DIR / "abc.jpg"
+        image.write_bytes(b"x")
+        recorded = moved._store_path(image)
+        assert pathlib.Path(recorded).is_absolute()
+        assert moved._resolve_image(recorded) == image.resolve()
+    finally:
+        monkeypatch.delenv("RAD_INTEL_FEEDBACK_DIR")
+        importlib.reload(moved)
+
+
+def test_a_tampered_path_cannot_reach_a_file_outside_the_store():
+    from rad_intel.api.routes import feedback as fb
+
+    for attempt in ("../rad_intel.db", "/etc/passwd", "feedback_store/../rad_intel.db"):
+        assert fb._resolve_image(attempt) is None, attempt
+    assert fb._resolve_image(None) is None

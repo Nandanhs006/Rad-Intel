@@ -10,8 +10,9 @@ Properties the implementation has to hold, and the reason each one matters:
 
 * **Single use.** A code is consumed the moment it verifies, so one observed
   over someone's shoulder is already spent.
-* **Short-lived.** Ten minutes. Long enough to read a message and type twelve
-  characters, short enough that an old screenshot is worthless.
+* **Time-limited.** Twelve hours: long enough that a code read later in the
+  day still works, so nobody has to ask for a second one, and short
+  enough that yesterday's email is useless.
 * **Never repeated.** A hash of every code an account has ever been issued is
   kept and checked, so no code is ever sent twice to the same person. With a
   95-character alphabet and twelve characters this would essentially never
@@ -48,7 +49,13 @@ CODE_LENGTH = 12
 # read aloud over a phone.
 CODE_ALPHABET = string.ascii_letters + string.digits + "!#$%*+-=?@"
 
-CODE_TTL_SECONDS = 10 * 60
+# Twelve hours. A code is single use, so this does not make one reusable --
+# it means a code requested and not acted on straight away still works, which
+# is what stops the "expired, ask for another" round of emails. The cost is
+# that a code sitting unread in a mailbox is live for that long; the mailbox
+# is already the second factor, so this does not widen the attack surface so
+# much as make its size obvious.
+CODE_TTL_SECONDS = 12 * 60 * 60
 MAX_ATTEMPTS = 5
 REQUEST_WINDOW_SECONDS = 15 * 60
 
