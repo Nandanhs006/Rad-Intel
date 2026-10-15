@@ -274,18 +274,43 @@ logged out. Give them the new one.
 
 ## Training a better model
 
+There are two ways, and they are different things.
+
+**The quick one — fine-tuning, on the server, minutes**
+
 1. Clinicians review cases (upload, mark right or wrong).
-2. Someone presses **Create training export** — this freezes those cases.
-3. Someone presses **Start fine-tuning run** — takes several minutes.
-4. It produces a new version and **changes nothing**. You look at its scores.
+2. Anyone presses **Create training export** — this freezes those cases. That
+   is their save point, and it is the only part of training they do.
+3. **You** press **Start fine-tuning run**. Clinicians cannot; it is hours of
+   machine time at worst and it freezes everybody's exports while it runs.
+4. It nudges the existing checkpoint with that one batch, produces a new
+   numbered version, and **changes nothing**. You look at its scores.
+
+**The real one — the community model, on a borrowed GPU, an hour**
+
+A second model, kept completely apart from the one your paper reports. Each
+run throws the previous community version away and retrains the same
+architecture *from scratch* on the public dataset plus **every** case
+collected so far, so a version is built from all the evidence rather than
+carrying the drift of every run before it.
+
+It is three steps in the console — build a bundle, train it elsewhere, upload
+the result — and **[COMMUNITY_MODEL.md](COMMUNITY_MODEL.md)** walks through
+all of it with the cells to paste.
+
+> Neither kind of training takes the site down. Training runs as its own
+> process while the web server keeps answering from the model it already has
+> loaded. Visitors see nothing except, during a run on the server, slightly
+> slower predictions.
 
 ## Releasing a model to the public
 
 New in the console: **Release a model to the public**.
 
-It lists every fine-tuned version with its scores — accuracy, AUROC,
-precision, sensitivity, specificity, F1 — measured on the same held-out set
-as the models in your paper, so you can compare like with like.
+It lists every version you have produced — fine-tuned ones and community
+ones — with its scores: accuracy, AUROC, precision, sensitivity, specificity,
+F1, measured on the same 624 held-out radiographs as the models in your paper,
+so you can compare like with like.
 
 Press **Release to public**. It asks for your **password, every single
 time**. Then that version appears in the model dropdown on **Analyse X-ray**
@@ -299,6 +324,11 @@ Two things that do not happen:
   shaped by them.
 
 **Withdraw from public** takes it back off the list. The file stays on disk.
+
+One thing the release panel deliberately cannot do: make a community model the
+*default*. It reaches people one way only — released by name, chosen
+deliberately on the Analyse tab. The model a visitor gets without choosing
+anything is always the one your paper describes.
 
 ---
 

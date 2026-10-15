@@ -70,6 +70,22 @@ class TrainingConfig:
     # smaller batch size.
     finetune_batch_size: int = 12
     data_dir: Path | str | None = None
+    # Extra training images appended to the Kaggle train split, as
+    # (path, label) pairs. The community model is trained on the Kaggle data
+    # *plus* every clinician-reviewed case; the paper's models are trained on
+    # the Kaggle split alone. Leaving this empty is what keeps the two recipes
+    # otherwise identical, so their scores on the held-out partition can be
+    # read side by side.
+    extra_train_samples: list[tuple[Path, int]] | None = None
+    # Whether a hybrid run also writes weights/best_hybrid_model.pt. That file
+    # is the checkpoint the project's reported results describe, so any run
+    # that is not *the* run must not touch it.
+    sync_default_checkpoint: bool = True
+    # Keeps one run's cached features out of another run's files. Two runs
+    # with the same architecture and the same sample count would otherwise
+    # share a cache, and the second would silently train on the first's
+    # features.
+    cache_tag: str | None = None
 
 
 def stratified_subsample(
@@ -303,7 +319,7 @@ class HybridTrainer:
         }
         torch.save(checkpoint, self.checkpoint_path)
         print(f"\n[SUCCESS] Checkpoint saved successfully to: {self.checkpoint_path}")
-        if self.config.model_type == "hybrid":
+        if self.config.model_type == "hybrid" and self.config.sync_default_checkpoint:
             torch.save(checkpoint, self.checkpoint_dir / "best_hybrid_model.pt")
 
     def train_cached(self) -> tuple[nn.Module, EvaluationMetrics]:
@@ -336,6 +352,29 @@ class HybridTrainer:
             print(f"[INFO] Stratified subsampling test set to {self.config.max_test_samples} samples.", flush=True)
             test_samples = stratified_subsample(test_samples, self.config.max_test_samples, seed=self.config.seed)
 
+        # Reviewed cases join the *training* split only, and after any
+        # subsampling, so a limit applies to the Kaggle data and never drops a
+        # contributed radiograph. The validation and test splits stay exactly
+        # as load_dataset_splits built them: the 624-image Kaggle test
+        # partition is the only yardstick that makes this model comparable to
+        # the reported ones, so nothing is ever added to it.
+        if self.config.extra_train_samples:
+            extra = list(self.config.extra_train_samples)
+            train_samples = train_samples + extra
+            n_normal = sum(1 for _, y in extra if y == 0)
+            print(f"[INFO] Added {len(extra)} reviewed cases to the training split "
+                  f"(normal {n_normal}, pneumonia {len(extra) - n_normal}).", flush=True)
+            # Recomputed over the combined split: the weights exist to offset
+            # the class imbalance actually being trained on, and contributed
+            # cases change it.
+            count_0 = sum(1 for _, y in train_samples if y == 0)
+            count_1 = sum(1 for _, y in train_samples if y == 1)
+            total = count_0 + count_1
+            class_weights = torch.tensor([
+                total / (2.0 * count_0) if count_0 else 1.0,
+                total / (2.0 * count_1) if count_1 else 1.0,
+            ], dtype=torch.float32)
+
         print(f"Dataset split: Train={len(train_samples)}, Val={len(val_samples)}, Test={len(test_samples)}")
         print(f"Class Weights (Normal vs Pneumonia): {class_weights.tolist()}")
 
@@ -351,7 +390,8 @@ class HybridTrainer:
         # 4. Feature caching
         cache_dir = Path(".cache_features")
         cache_dir.mkdir(exist_ok=True)
-        prefix = f"{self.config.model_type}"
+        prefix = self.config.model_type + (
+            f"_{self.config.cache_tag}" if self.config.cache_tag else "")
         train_cache_path = cache_dir / f"{prefix}_train_{len(train_samples)}.pt"
         val_cache_path = cache_dir / f"{prefix}_val_{len(val_samples)}.pt"
         test_cache_path = cache_dir / f"{prefix}_test_{len(test_samples)}.pt"
@@ -570,14 +610,14 @@ class HybridTrainer:
 
         print("\n" + final_test_metrics.summary_table(f"Final Test Set Results ({self.config.model_type.upper()})"))
 
-        # 9. Save complete model checkpoint
+        # 9. Save complete model checkpoint.
+        #
+        # _save_checkpoint is the only place that writes, and the only place
+        # that decides whether a hybrid run also syncs best_hybrid_model.pt.
+        # A second copy of that decision used to sit here and referred to a
+        # `checkpoint` name that exists only inside _save_checkpoint, so
+        # reaching it raised NameError after the files had already been
+        # written correctly.
         self._save_checkpoint(model, final_test_metrics, best_epoch, class_weights)
-
-        # Previously this also wrote best_hybrid_model.pt whenever that file was
-        # absent, so training ANY architecture produced a file claiming to be the
-        # hybrid. Only the hybrid writes the hybrid checkpoint.
-        if self.config.model_type == "hybrid":
-            torch.save(checkpoint, self.checkpoint_dir / "best_hybrid_model.pt")
-            print(f"[INFO] Synced active default checkpoint: {self.checkpoint_dir / 'best_hybrid_model.pt'}")
 
         return model, final_test_metrics

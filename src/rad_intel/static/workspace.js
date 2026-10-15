@@ -313,6 +313,7 @@
 
     renderMyDetails();
     refreshQueue();
+    loadCommunity();
     loadParticipants();
     loadModelVersions();
     loadStorage();
@@ -689,6 +690,12 @@
     const start = $("fb-train");
     const cancel = $("fb-train-cancel");
 
+    // Starting a run is the administrator's. A clinician still sees the
+    // banner and the log -- it is their cases being trained on -- but gets a
+    // sentence about what to do instead of a button that would be refused.
+    $("train-controls").hidden = !state.can_train;
+    $("train-clinician-note").hidden = !!state.can_train;
+
     if (state.running) {
       const who = state.is_holder
         ? "You started a fine-tuning run"
@@ -699,11 +706,14 @@
       $("train-banner-text").innerHTML =
         `<strong>${esc(who)}${esc(site)}</strong> — started ${stamp(state.started_at)}, ` +
         `${state.cases} cases, ${state.epochs} epochs. Exporting and training are held ` +
-        `until it finishes. You can carry on uploading and correcting cases.`;
+        `until it finishes. You can carry on uploading and correcting cases, and the ` +
+        `public tool is unaffected.`;
       start.disabled = true;
       start.classList.add("is-loading");
       start.textContent = state.is_holder ? "Your run is in progress…"
                                           : `Held — ${state.holder_name} is training`;
+      // Export freezes records; a run is reading the ones it already froze.
+      // So it waits, for everybody, including whoever started the run.
       $("fb-export").disabled = true;
       cancel.hidden = !state.can_cancel;
     } else {
@@ -727,6 +737,7 @@
                `before-and-after comparison above; an administrator activates a ` +
                `version from "The shared model" panel.`);
       loadModelVersions();
+      loadCommunity();
     }
   }
 
@@ -765,8 +776,9 @@
       "Start a fine-tuning run on the latest export?\n\n" +
       "It creates a NEW version of the shared model. The current one keeps being " +
       "served until an administrator activates the new one.\n\n" +
-      "It takes several minutes. Keep this tab open: if the browser that started a " +
-      "run stops reporting in for three minutes, the run cancels itself."
+      "It takes several minutes. Leave this tab open: if the browser that started a " +
+      "run stops reporting in for half an hour, the run cancels itself.\n\n" +
+      "Nobody using the site is interrupted — training runs in its own process."
     );
     if (!confirmed) return;
 
@@ -798,6 +810,146 @@
       pollTrainState();
     }
   });
+
+  // ==================================================== the community model
+
+  const metricOf = (value, digits = 3) =>
+    typeof value === "number" ? value.toFixed(digits) : "—";
+
+  /**
+   * Which community versions exist and what each was built from.
+   *
+   * Read by every clinician, not just the administrator: the model is made
+   * out of their cases, so they can see what came of them. Building one is a
+   * different matter and lives in the console.
+   */
+  async function loadCommunity() {
+    if (!me) return;
+    const list = $("community-versions");
+    if (!list) return;
+    try {
+      const data = await api("/api/v1/feedback/community");
+      $("community-count").textContent = data.versions.length
+        ? `${data.versions.length} version${data.versions.length === 1 ? "" : "s"}`
+        : "none yet";
+      $("community-note").textContent = data.note;
+
+      list.innerHTML = data.versions.length
+        ? data.versions.map((version) => {
+            const m = version.metrics || {};
+            return `<div class="version-row ${version.is_released ? "is-live" : ""}">
+              <div class="version-head">
+                <code>${esc(version.name)}</code>
+                ${version.is_released
+                  ? '<span class="badge badge-ok">on the public list</span>'
+                  : '<span class="badge badge-neutral">not released</span>'}
+              </div>
+              <div class="version-label">
+                ${version.reviewed_cases != null
+                  ? `trained on the public dataset plus ${version.reviewed_cases} reviewed
+                     case${version.reviewed_cases === 1 ? "" : "s"}`
+                  : "trained from scratch"}${version.created_at
+                  ? ` · ${stamp(version.created_at)}` : ""}
+              </div>
+              ${m.accuracy != null ? `<div class="version-metrics">
+                <span>acc ${metricOf(m.accuracy)}</span>
+                <span>AUROC ${metricOf(m.auroc ?? m.auc_roc)}</span>
+                <span>sens ${metricOf(m.sensitivity)}</span>
+                <span>spec ${metricOf(m.specificity)}</span>
+              </div>` : ""}
+            </div>`;
+          }).join("")
+        : `<p class="muted small">None built yet. ${data.reviewed_cases} reviewed
+             case${data.reviewed_cases === 1 ? "" : "s"} are waiting to go into the
+             first one.</p>`;
+      showRows(list, 3, ".version-row");
+
+      if (me.is_admin_session) renderBundles(data.bundles || []);
+    } catch (error) {
+      if (error.status === 401) applySession(null);
+    }
+  }
+
+  function renderBundles(bundles) {
+    const node = $("cm-bundles");
+    if (!node) return;
+    node.innerHTML = bundles.length
+      ? "<p class='field-label'>Bundles built</p>" + bundles.map((b) =>
+          `<div class="export-row">
+             <a href="/api/v1/feedback/bundle/${encodeURIComponent(b.file)}" download>
+               <code>${esc(b.file)}</code></a>
+             — ${(b.bytes / (1024 * 1024)).toFixed(1)} MB, ${stamp(b.built_at)}
+           </div>`).join("")
+      : "";
+  }
+
+  const bundleButton = $("cm-bundle");
+  if (bundleButton) {
+    bundleButton.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "Build a training bundle?\n\n" +
+        "It packages every reviewed radiograph collected so far into one zip, and " +
+        "freezes anything still pending — the same thing an export does.\n\n" +
+        "Nothing changes for anyone using the site."
+      );
+      if (!confirmed) return;
+
+      busy(bundleButton, true);
+      hide($("cm-bundle-result"));
+      try {
+        const result = await api("/api/v1/feedback/bundle", { method: "POST" });
+        const link = $("cm-download");
+        link.href = result.download;
+        link.textContent = `Download ${(result.bytes / (1024 * 1024)).toFixed(1)} MB`;
+        link.hidden = false;
+        show($("cm-bundle-result"), esc(result.detail), "ok");
+        loadCommunity();
+        refreshQueue();
+      } catch (error) {
+        show($("cm-bundle-result"), esc(readable(error)), "error");
+      } finally {
+        busy(bundleButton, false);
+      }
+    });
+  }
+
+  const uploadForm = $("cm-upload-form");
+  if (uploadForm) {
+    uploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const chosen = $("cm-file").files[0];
+      if (!chosen) return;
+
+      const body = new FormData();
+      body.append("file", chosen);
+      body.append("password", $("cm-password").value);
+
+      busy($("cm-upload"), true);
+      show($("cm-upload-result"),
+        `Uploading ${esc(chosen.name)} — ${(chosen.size / (1024 * 1024)).toFixed(0)} MB. ` +
+        `This takes a while and the page must stay open.`, "info");
+      try {
+        const result = await api("/api/v1/feedback/community/upload",
+                                 { method: "POST", body });
+        const m = result.metrics || {};
+        show($("cm-upload-result"),
+          `<strong>${esc(result.name)}</strong> stored. ` +
+          `acc ${metricOf(m.accuracy)} · AUROC ${metricOf(m.auroc ?? m.auc_roc)} · ` +
+          `sens ${metricOf(m.sensitivity)} · spec ${metricOf(m.specificity)}<br>` +
+          esc(result.detail), "ok");
+        uploadForm.reset();
+        loadCommunity();
+        loadReleasable();
+      } catch (error) {
+        show($("cm-upload-result"), esc(readable(error)), "error");
+      } finally {
+        busy($("cm-upload"), false);
+        // The password is not left sitting in the form after the attempt,
+        // whether it worked or not.
+        $("cm-password").value = "";
+      }
+    });
+  }
 
   // ======================================================= the shared model
 

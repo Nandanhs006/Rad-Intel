@@ -24,6 +24,10 @@ import hashlib
 import json
 import logging
 import os
+import re
+import shutil
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,7 +50,11 @@ from rad_intel.api.schemas import (
 )
 from rad_intel.api.training_job import HEARTBEAT_GRACE_SECONDS, TrainingJob
 from rad_intel.auth import accounts, activity
-from rad_intel.auth.dependencies import require_admin, require_clinician
+from rad_intel.auth.dependencies import (
+    is_admin_session,
+    require_admin,
+    require_clinician,
+)
 from rad_intel.config import settings
 from rad_intel.storage.database import db_manager
 
@@ -80,6 +88,24 @@ PREPROCESSING_VERSION = "clahe2.0-8x8_pil-bilinear-224_imagenet-norm"
 # Every contribution trains the same shared model, so the configuration is
 # fixed here rather than chosen per review.
 SHARED_MODEL = "hybrid"
+
+# The second lineage: the same architecture, trained from nothing on the
+# public dataset together with every reviewed case, every time. It is a
+# separate set of files on purpose. best_hybrid_model.pt is the checkpoint the
+# project's reported results describe and it is never written to by any of
+# this; the community model starts at best_community_hybrid_v1_model.pt and
+# counts up, so no run can overwrite an earlier one either.
+COMMUNITY_MODEL = f"community_{SHARED_MODEL}"
+COMMUNITY_PREFIX = f"best_{COMMUNITY_MODEL}_v"
+
+# A hybrid checkpoint is ~136 MB. The ceiling is generous enough for one that
+# grew a little and small enough that a stray upload cannot fill the disk.
+MAX_CHECKPOINT_BYTES = 400 * 1024 * 1024
+
+# A fine-tuned version of the shared model, i.e. best_hybrid_v3_model.pt.
+# Written out rather than inferred from a filename, because this is what
+# decides which files may become the default everybody gets.
+_VERSION_IN_LINEAGE = re.compile(rf"best_{SHARED_MODEL}_v\d+_model\.pt")
 
 UPLOAD_WARNING = (
     "Do not upload identifiable patient data without appropriate authorisation. "
@@ -391,6 +417,52 @@ async def delete_feedback(record_id: str, request: Request,
     }
 
 
+def _manifest_row(row: dict) -> dict:
+    """One line of an export manifest."""
+    return {
+        "id": row["id"],
+        "image_path": row["image_path"],
+        "image_sha256": row["image_sha256"],
+        "label": row["corrected_label"] or row["predicted_label"],
+        "label_source": "reviewer_correction" if row["corrected_label"] else "model_agreed",
+        "institution": row["institution"],
+        "model_version": row["model_version"],
+        "preprocessing_version": row["preprocessing_version"],
+        "predicted_label": row["predicted_label"],
+        "predicted_probability": row["predicted_probability"],
+        "threshold": row["threshold"],
+        "verdict": row["verdict"],
+        "reviewer": row["reviewer"],
+        "note": row["note"],
+        "reviewed_at": row["updated_at"],
+    }
+
+
+async def _write_export() -> tuple[str, Path, int]:
+    """
+    Freeze every pending review into a new manifest. Returns (tag, path, count).
+
+    Shared by the clinicians' export button and by building a training bundle,
+    because both mean the same thing: this is the set of records as they stood
+    at this moment, and they stop being editable so they keep matching it.
+    A count of zero means nothing was pending and no file was written.
+    """
+    pending = await db_manager.list_feedback(status="pending", limit=500)
+    if not pending:
+        return "", EXPORT_DIR, 0
+
+    _ensure_dirs()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tag = f"reviewed-export-{stamp}"
+    path = EXPORT_DIR / f"{tag}.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for row in pending:
+            fh.write(json.dumps(_manifest_row(row), ensure_ascii=False) + "\n")
+
+    updated = await db_manager.mark_feedback_exported([r["id"] for r in pending], tag)
+    return tag, path, updated
+
+
 @router.post("/export", response_model=FeedbackExportResponse,
              dependencies=[Depends(limit("feedback-export", 20, 3600, "exports"))])
 async def create_training_export(request: Request,
@@ -411,36 +483,9 @@ async def create_training_export(request: Request,
                     f"carry on uploading and correcting cases."),
         )
 
-    pending = await db_manager.list_feedback(status="pending", limit=500)
-    if not pending:
+    tag, path, updated = await _write_export()
+    if not updated:
         raise HTTPException(status_code=400, detail="No pending reviews to export.")
-
-    _ensure_dirs()
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    tag = f"reviewed-export-{stamp}"
-    path = EXPORT_DIR / f"{tag}.jsonl"
-
-    with path.open("w", encoding="utf-8") as fh:
-        for row in pending:
-            fh.write(json.dumps({
-                "id": row["id"],
-                "image_path": row["image_path"],
-                "image_sha256": row["image_sha256"],
-                "label": row["corrected_label"] or row["predicted_label"],
-                "label_source": "reviewer_correction" if row["corrected_label"] else "model_agreed",
-                "institution": row["institution"],
-                "model_version": row["model_version"],
-                "preprocessing_version": row["preprocessing_version"],
-                "predicted_label": row["predicted_label"],
-                "predicted_probability": row["predicted_probability"],
-                "threshold": row["threshold"],
-                "verdict": row["verdict"],
-                "reviewer": row["reviewer"],
-                "note": row["note"],
-                "reviewed_at": row["updated_at"],
-            }, ensure_ascii=False) + "\n")
-
-    updated = await db_manager.mark_feedback_exported([r["id"] for r in pending], tag)
     activity.record("export.created", user=user, ip=client_address(request),
                     detail=f"{tag} records={updated}")
     return FeedbackExportResponse(
@@ -476,12 +521,19 @@ async def list_exports(_user: dict = Depends(require_clinician)):
 # the interface polls for progress. The script keeps every guarantee it has on
 # the command line: the Kaggle test partition is not trained on, the existing
 # checkpoint is not overwritten, and nothing is promoted automatically.
+#
+# Starting and cancelling a run are the administrator's, not a clinician's.
+# Training is the one thing here that costs hours of machine time and freezes
+# everybody else's exports while it runs, and a clinician's job in this study
+# is to review cases, not to wait on a job queue. They keep everything else:
+# uploading, correcting and deleting their own cases, writing an export, and
+# seeing that a run is going and who is holding it.
 
 @router.post("/train", dependencies=[Depends(limit("feedback-train", 8, 3600,
                                                    "training runs"))])
 async def start_training(request: Request, epochs: int = Form(3),
-                         user: dict = Depends(require_clinician)):
-    """Start a fine-tuning run over the most recent export."""
+                         user: dict = Depends(require_admin)):
+    """Start a fine-tuning run over the most recent export. Administrator only."""
     if not 1 <= epochs <= 20:
         raise HTTPException(status_code=400, detail="Choose between 1 and 20 epochs.")
 
@@ -538,16 +590,18 @@ async def start_training(request: Request, epochs: int = Form(3),
         "epochs": epochs,
         "holder_name": user["full_name"],
         "note": ("Training runs on the server. The original checkpoint is untouched and "
-                 "nothing is promoted automatically. Keep this page open: if the browser "
+                 "nothing is promoted automatically. Leave this page open: if the browser "
                  "that started the run stops reporting in for "
                  f"{HEARTBEAT_GRACE_SECONDS // 60} minutes the run is cancelled, because "
-                 "nobody would be left to read the result."),
+                 "nobody would be left to read the result. The public tool keeps working "
+                 "throughout — it serves its own loaded copy of the model and this runs "
+                 "in a separate process."),
     }
 
 
 @router.post("/train/cancel")
-async def cancel_training(request: Request, user: dict = Depends(require_clinician)):
-    """Stop the run. Allowed to the clinician who started it, and to an administrator."""
+async def cancel_training(request: Request, user: dict = Depends(require_admin)):
+    """Stop the run. Administrator only, as starting one is."""
     state = job.snapshot()
     if not state["running"]:
         raise HTTPException(status_code=409, detail="No training run is in progress.")
@@ -558,8 +612,8 @@ async def cancel_training(request: Request, user: dict = Depends(require_clinici
                     f"administrator can cancel it."),
         )
 
-    by = "administrator" if (user["role"] == "admin"
-                             and state["holder_id"] != user["id"]) else "the clinician who started it"
+    by = ("the administrator who started it" if state["holder_id"] == user["id"]
+          else "the administrator")
     job.cancel(reason=f"cancelled by {by}", by=user["full_name"])
     activity.record("training.cancelled", user=user, ip=client_address(request),
                     detail=str(state["manifest"]))
@@ -601,7 +655,12 @@ async def training_status(user: dict = Depends(require_clinician)):
         "holder_name": state["holder_name"],
         "holder_institution": state["holder_institution"],
         "is_holder": state["holder_id"] == user["id"],
-        "can_cancel": job.may_cancel(user),
+        # Both halves: the account may cancel, and this session came in
+        # through the administrator door. Without the second, an
+        # administrator reading the queue as a clinician would be shown a
+        # cancel button that the endpoint then refuses.
+        "can_cancel": job.may_cancel(user) and is_admin_session(user),
+        "can_train": is_admin_session(user),
         "cancelled_by": state["cancelled_by"],
         "cancel_reason": state["cancel_reason"],
         "log": log,
@@ -646,6 +705,9 @@ def _checkpoint_meta(path: Path) -> dict:
                 "threshold": blob.get("optimal_threshold"),
                 "metrics_before": blob.get("metrics_before"),
                 "metrics_after": blob.get("metrics_after"),
+                # A checkpoint trained from scratch has no "before" to
+                # compare against, so the trainer records its scores here.
+                "metrics": blob.get("metrics"),
                 "provenance": blob.get("provenance"),
             }
     except Exception as exc:
@@ -679,7 +741,11 @@ async def model_versions(manager: ModelManager = Depends(get_model_manager),
         if not path.exists():
             continue
         meta = await run_in_threadpool(_checkpoint_meta, path)
-        after = meta.get("metrics_after") or {}
+        # A fine-tuned version records before/after; a checkpoint trained in
+        # one go records its scores under "metrics". The base checkpoint is
+        # the second kind, so without this fallback the row the clinicians are
+        # being asked to compare against showed nothing but dashes.
+        after = meta.get("metrics_after") or meta.get("metrics") or {}
         provenance = meta.get("provenance") or {}
         versions.append({
             "file": path.name,
@@ -689,7 +755,7 @@ async def model_versions(manager: ModelManager = Depends(get_model_manager),
             "is_live": live is not None and Path(live).name == path.name,
             "threshold": meta.get("threshold"),
             "accuracy": after.get("accuracy"),
-            "auroc": after.get("auroc"),
+            "auroc": after.get("auroc", after.get("auc_roc")),
             "sensitivity": after.get("sensitivity"),
             "specificity": after.get("specificity"),
             "reviewed_cases": provenance.get("reviewed_cases"),
@@ -729,6 +795,19 @@ async def activate_version(request: Request, file: str = Form(...),
     if not str(candidate).startswith(str(WEIGHTS_DIR.resolve())) or not candidate.is_file():
         raise HTTPException(status_code=404, detail="No such checkpoint.")
 
+    # Only this lineage. A community checkpoint is a hybrid inside, so the
+    # model_type check below would wave it through, and it would then become
+    # the default model for everyone who never chose it. The community model
+    # reaches people one way: released by name, chosen deliberately.
+    if not (candidate.name == f"best_{SHARED_MODEL}_model.pt"
+            or _VERSION_IN_LINEAGE.fullmatch(candidate.name)):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"{candidate.name} is not a version of the shared model. The "
+                    f"community model is not served by default — it is released by "
+                    f"name and people choose it on the Analyse tab."),
+        )
+
     meta_is_base = candidate.name == f"best_{SHARED_MODEL}_model.pt"
     meta = await run_in_threadpool(_checkpoint_meta, candidate)
     if meta.get("model_type") not in (None, SHARED_MODEL):
@@ -745,6 +824,471 @@ async def activate_version(request: Request, file: str = Form(...),
         "activated": candidate.name,
         "detail": (f"The service now serves {candidate.name}. Every prediction, here and "
                    f"on the Analyse tab, comes from it until it is changed back."),
+    }
+
+
+# --- the community model ----------------------------------------------------
+#
+# The second lineage. Fine-tuning nudges the reported checkpoint with one
+# batch of reviews; this one throws the previous community model away and
+# trains the same architecture from ImageNet initialisation on the public
+# dataset *plus every reviewed case to date*, so each run is a model built
+# from all the evidence rather than a model carrying the accumulated drift of
+# every run before it. Nothing about it touches best_hybrid_model.pt.
+#
+# It trains off this server, which is the whole reason these two endpoints
+# exist. A full retrain is hours of GPU time; a host that can serve the site
+# cannot do it in a sensible wall-clock time, and renting a machine that can,
+# to sit idle between runs, is the wrong shape. So: the administrator
+# downloads a bundle, trains it on a borrowed GPU, and uploads the checkpoint
+# back. The server's job is to hand over exactly what was trained on and to
+# refuse anything that comes back that it cannot verify.
+
+BUNDLE_DIR = FEEDBACK_DIR / "bundles"
+# How many built bundles to keep. Each one carries a copy of every reviewed
+# image, so they are not free, and only the newest is ever trained on.
+KEEP_BUNDLES = 3
+
+BUNDLE_README = """Rad-Intel community model training bundle
+=========================================
+
+tag:   {tag}
+built: {built}
+cases: {cases} reviewed radiographs
+
+What is in here
+---------------
+manifest.jsonl   one line per reviewed case: the label, who reviewed it, which
+                 site it came from, and what the model had predicted.
+images/          the radiographs themselves, named by SHA-256, exactly the
+                 files the manifest points at.
+
+What is NOT in here
+-------------------
+The public chest-radiograph dataset. It is 2.3 GB and anyone can download it,
+so the training script fetches it itself.
+
+What to do with it
+------------------
+Follow COMMUNITY_MODEL.md in the Rad-Intel repository. In short: open the
+notebook it describes on a free GPU, give it this zip, let it run, and upload
+the .pt file it produces back into the administrator console.
+
+These are radiographs people uploaded to a study. Keep the file somewhere
+private, and delete it from the machine you train on when you are done.
+"""
+
+
+def _release_name(filename: str) -> str:
+    """The name this checkpoint would be offered under, e.g. community_hybrid_v1."""
+    from rad_intel.models import registry
+
+    described = registry.describe(filename)
+    return described[1] if described else filename
+
+
+def _community_versions() -> list[Path]:
+    """Community checkpoints on disk, oldest first."""
+    def version_of(path: Path) -> int:
+        match = re.fullmatch(rf"{COMMUNITY_PREFIX}(\d+)_model\.pt", path.name)
+        return int(match.group(1)) if match else 0
+
+    return sorted(
+        (p for p in WEIGHTS_DIR.glob(f"{COMMUNITY_PREFIX}*_model.pt") if version_of(p)),
+        key=version_of,
+    )
+
+
+def _next_community_path() -> Path:
+    """The filename the next upload takes. Never an existing one."""
+    n = 1
+    while (WEIGHTS_DIR / f"{COMMUNITY_PREFIX}{n}_model.pt").exists():
+        n += 1
+    return WEIGHTS_DIR / f"{COMMUNITY_PREFIX}{n}_model.pt"
+
+
+async def _all_reviewed_rows() -> list[dict]:
+    """
+    Every review in the store, newest first, deduplicated by radiograph.
+
+    Cumulative on purpose: a community run trains on all the evidence, not on
+    the latest batch. Where the same radiograph was reviewed more than once --
+    the same image submitted by two sites, or re-reviewed after a correction
+    -- the most recent review wins, because that is the label somebody stands
+    behind now.
+    """
+    rows: list[dict] = []
+    offset, page = 0, 500
+    while True:
+        batch = await db_manager.list_feedback(limit=page, offset=offset, sort="recent")
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+        offset += page
+
+    seen: set[str] = set()
+    unique = []
+    for row in rows:
+        digest = row.get("image_sha256") or ""
+        if digest and digest in seen:
+            continue
+        seen.add(digest)
+        unique.append(row)
+    return unique
+
+
+def _build_bundle(tag: str, entries: list[tuple[dict, Path]]) -> Path:
+    """Write the zip. Runs off the event loop; copying images is slow."""
+    BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
+    target = BUNDLE_DIR / f"{tag}.zip"
+    partial = target.with_suffix(".zip.partial")
+
+    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        lines = []
+        for row, image in entries:
+            inside = f"images/{image.name}"
+            bundle.write(image, inside)
+            lines.append(json.dumps({**_manifest_row(row), "image_path": inside},
+                                    ensure_ascii=False))
+        bundle.writestr("manifest.jsonl", "\n".join(lines) + "\n")
+        bundle.writestr("README.txt", BUNDLE_README.format(
+            tag=tag,
+            built=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            cases=len(entries),
+        ))
+
+    # Renamed into place only once it is complete, so a download can never
+    # pick up a half-written archive.
+    partial.replace(target)
+
+    for old in sorted(BUNDLE_DIR.glob("community-bundle-*.zip"), reverse=True)[KEEP_BUNDLES:]:
+        old.unlink(missing_ok=True)
+    return target
+
+
+@router.get("/community")
+async def community_model(_user: dict = Depends(require_clinician)):
+    """
+    The community model: what it is, which versions exist, and what is waiting.
+
+    Readable by every clinician. Their cases are what it is made of, so they
+    can see what has been built from them without being able to build one.
+    """
+    from rad_intel.models import registry
+
+    live = registry.released()
+    by_file = {entry["file"]: name for name, entry in live.items()}
+
+    versions = []
+    for path in reversed(_community_versions()):
+        meta = await run_in_threadpool(_checkpoint_meta, path)
+        scores = meta.get("metrics") or meta.get("metrics_after") or {}
+        provenance = meta.get("provenance") or {}
+        versions.append({
+            "file": path.name,
+            "name": _release_name(path.name),
+            "is_released": path.name in by_file,
+            "threshold": meta.get("threshold"),
+            "metrics": {k: v for k, v in scores.items() if isinstance(v, (int, float))},
+            "reviewed_cases": provenance.get("reviewed_cases"),
+            "trained_images": provenance.get("trained_images"),
+            "bundle": provenance.get("bundle"),
+            "created_at": provenance.get("created_at"),
+            "size_mb": round(path.stat().st_size / (1024 * 1024), 1),
+        })
+
+    reviewed = len(await _all_reviewed_rows())
+    bundles = [
+        {"file": b.name,
+         "bytes": b.stat().st_size,
+         "built_at": datetime.fromtimestamp(b.stat().st_mtime, timezone.utc).isoformat()}
+        for b in sorted(BUNDLE_DIR.glob("community-bundle-*.zip"), reverse=True)
+    ] if BUNDLE_DIR.exists() else []
+
+    return {
+        "name": COMMUNITY_MODEL,
+        "reviewed_cases": reviewed,
+        "versions": versions,
+        "bundles": bundles,
+        "note": (
+            "A separate model from the one the project reports. Each run discards the "
+            "previous community model and trains the same architecture from scratch on "
+            "the public dataset together with every case reviewed so far, so a version "
+            "is built from all the evidence rather than from the latest batch. It is "
+            "scored on the same held-out partition as the reported models, and it only "
+            "becomes choosable on the Analyse tab when the administrator releases it. "
+            "The checkpoint the project's results describe is never written to."
+        ),
+    }
+
+
+@router.post("/bundle",
+             dependencies=[Depends(limit("feedback-bundle", 10, 3600, "training bundles"))])
+async def build_bundle(request: Request, admin: dict = Depends(require_admin)):
+    """
+    Package every reviewed case into one zip, ready to train elsewhere.
+
+    It freezes anything still pending first, exactly as the clinicians' export
+    button does, because a bundle has to name the records it holds and they
+    have to stop changing underneath it.
+    """
+    if job.running:
+        raise HTTPException(
+            status_code=409,
+            detail=("A run is in progress and is reading the exported cases. Building "
+                    "a bundle would freeze records underneath it."),
+        )
+
+    rows = await _all_reviewed_rows()
+    entries = []
+    missing = 0
+    for row in rows:
+        image = _resolve_image(row.get("image_path"))
+        label = row.get("corrected_label") or row.get("predicted_label")
+        if not image or label not in ("NORMAL", "PNEUMONIA"):
+            missing += 1
+            continue
+        entries.append((row, image))
+
+    if len(entries) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Only {len(entries)} usable reviewed radiograph"
+                    f"{'' if len(entries) == 1 else 's'} in the store. Training on so "
+                    f"few teaches the model nothing and risks skewing it. Wait for more "
+                    f"reviews — a mix of normal and pneumonia, including cases the model "
+                    f"got wrong."),
+        )
+    classes = {c: sum(1 for row, _ in entries
+                      if (row.get("corrected_label") or row["predicted_label"]) == c)
+               for c in ("NORMAL", "PNEUMONIA")}
+    if min(classes.values()) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=("Every reviewed case in the store carries the same label. A model "
+                    "trained on one class collapses, so this is refused until there are "
+                    "examples of both."),
+        )
+
+    # Freeze whatever was still pending, so the bundle's records keep matching
+    # it. Nothing to freeze is normal: it means somebody already exported.
+    export_tag, _, frozen = await _write_export()
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tag = f"community-bundle-{stamp}"
+    path = await run_in_threadpool(_build_bundle, tag, entries)
+
+    activity.record("community.bundle_built", user=admin, ip=client_address(request),
+                    detail=f"{tag} cases={len(entries)} frozen={frozen}")
+    return {
+        "tag": tag,
+        "file": path.name,
+        "download": f"/api/v1/feedback/bundle/{path.name}",
+        "cases": len(entries),
+        "normal": classes["NORMAL"],
+        "pneumonia": classes["PNEUMONIA"],
+        "skipped": missing,
+        "newly_frozen": frozen,
+        "export_tag": export_tag or None,
+        "bytes": path.stat().st_size,
+        "detail": (
+            f"Bundle built with {len(entries)} reviewed radiographs "
+            f"({classes['NORMAL']} normal, {classes['PNEUMONIA']} pneumonia)"
+            + (f" and froze {frozen} case{'' if frozen == 1 else 's'} that were still "
+               f"pending." if frozen else ".")
+            + " Download it, train with it, then upload the checkpoint back here. "
+              "Nothing has changed for anybody using the site."
+        ),
+    }
+
+
+@router.get("/bundle/{filename}")
+async def download_bundle(filename: str, request: Request,
+                          admin: dict = Depends(require_admin)):
+    """
+    Hand a built bundle over. Administrator only.
+
+    It carries radiographs from the review store, so it is served the same way
+    a single one is: through an authenticated endpoint, by name, with the path
+    resolved and checked against the bundle directory rather than trusted.
+    """
+    from fastapi.responses import FileResponse
+
+    safe = (BUNDLE_DIR / Path(filename).name).resolve()
+    if (not BUNDLE_DIR.exists() or BUNDLE_DIR.resolve() not in safe.parents
+            or safe.suffix != ".zip" or not safe.is_file()):
+        raise HTTPException(status_code=404, detail="No such bundle.")
+
+    activity.record("community.bundle_downloaded", user=admin, ip=client_address(request),
+                    detail=safe.name)
+    return FileResponse(safe, media_type="application/zip", filename=safe.name,
+                        headers={"Cache-Control": "no-store"})
+
+
+def _validate_checkpoint(path: Path) -> dict:
+    """
+    Read an uploaded checkpoint and decide whether it is one of ours.
+
+    Loaded with weights_only=True, so nothing in the file is executed. A
+    PyTorch checkpoint is a pickle, and unpickling one is running whatever it
+    contains; the restricted loader takes tensors and plain data and refuses
+    everything else, which is all our checkpoints hold anyway.
+
+    Raises ValueError with something a person can act on.
+    """
+    import torch
+
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ValueError(
+            f"That file could not be read as a PyTorch checkpoint ({exc}). Upload the "
+            f".pt file the training notebook saved, not a zip or a folder."
+        ) from exc
+
+    if not isinstance(blob, dict):
+        raise ValueError("That checkpoint is not a dictionary, so it was not written "
+                         "by the Rad-Intel training script.")
+
+    state = blob.get("model_state_dict")
+    if not isinstance(state, dict) or not state:
+        raise ValueError("That checkpoint has no model_state_dict, so there are no "
+                         "weights in it.")
+
+    model_type = blob.get("model_type")
+    if model_type != SHARED_MODEL:
+        raise ValueError(
+            f"That checkpoint says it holds a '{model_type}' model. The community model "
+            f"is the {SHARED_MODEL} architecture, so only a {SHARED_MODEL} checkpoint "
+            f"can be uploaded here."
+        )
+
+    threshold = blob.get("optimal_threshold")
+    if not isinstance(threshold, (int, float)) or not 0.0 < float(threshold) < 1.0:
+        raise ValueError(
+            "That checkpoint carries no operating threshold. Serving it would fall back "
+            "to 0.5 and disagree with the sensitivity and specificity it reports, so it "
+            "is refused."
+        )
+
+    scores = blob.get("metrics") or blob.get("metrics_after") or {}
+    numeric = {k: v for k, v in scores.items() if isinstance(v, (int, float))}
+    for needed in ("accuracy", "auroc", "sensitivity", "specificity"):
+        if needed not in numeric:
+            raise ValueError(
+                f"That checkpoint reports no {needed}. A model nobody can judge is worse "
+                f"than no model, so it cannot be uploaded. Let the training script finish "
+                f"its evaluation on the held-out partition."
+            )
+
+    # The weights have to fit the network that will be built to serve them.
+    # Compared against the base checkpoint's own keys and shapes, which is
+    # exact and costs no model construction.
+    reference = WEIGHTS_DIR / f"best_{SHARED_MODEL}_model.pt"
+    if reference.is_file():
+        try:
+            ref = torch.load(reference, map_location="cpu", weights_only=True, mmap=True)
+            ref_state = ref.get("model_state_dict", {}) if isinstance(ref, dict) else {}
+        except Exception:
+            ref_state = {}
+        if ref_state:
+            theirs = {k: tuple(v.shape) for k, v in state.items()
+                      if hasattr(v, "shape")}
+            ours = {k: tuple(v.shape) for k, v in ref_state.items()
+                    if hasattr(v, "shape")}
+            mismatched = [k for k, shape in ours.items()
+                          if k in theirs and theirs[k] != shape]
+            missing = [k for k in ours if k not in theirs]
+            if mismatched or len(missing) > len(ours) * 0.05:
+                raise ValueError(
+                    f"The weights in that checkpoint do not fit the {SHARED_MODEL} "
+                    f"architecture ({len(missing)} layers missing, {len(mismatched)} the "
+                    f"wrong shape). It was trained from a different model definition, so "
+                    f"loading it would produce an untrained network that still returns "
+                    f"confident-looking numbers."
+                )
+
+    return {
+        "model_type": model_type,
+        "threshold": float(threshold),
+        "metrics": numeric,
+        "provenance": blob.get("provenance") if isinstance(blob.get("provenance"), dict) else {},
+    }
+
+
+@router.post("/community/upload",
+             dependencies=[Depends(limit("community-upload", 10, 3600,
+                                         "community model uploads"))])
+async def upload_community_model(
+    request: Request,
+    file: UploadFile = File(..., description="Checkpoint written by the training script"),
+    password: str = Form(..., description="The administrator's password"),
+    admin: dict = Depends(require_admin),
+):
+    """
+    Take in a community model trained elsewhere. Administrator only.
+
+    The password is asked for because this writes a file that can then be put
+    in front of the public. It is checked before the upload is read, so a
+    wrong one costs nothing.
+
+    Uploading does not release anything. The checkpoint lands as a new
+    numbered version, is scored and listed, and appears in the release panel
+    for a separate, deliberate act.
+    """
+    if not await run_in_threadpool(accounts.identify_admin, admin["email"], password):
+        activity.record("community.upload_refused", user=admin, ip=client_address(request),
+                        detail="wrong password", outcome="refused")
+        raise HTTPException(status_code=403,
+                            detail="Password incorrect. Nothing was uploaded.")
+
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    holding = Path(tempfile.mkdtemp(prefix="radintel-upload-", dir=WEIGHTS_DIR))
+    staged = holding / "upload.pt"
+    try:
+        written = 0
+        with staged.open("wb") as out:
+            while chunk := await file.read(4 * 1024 * 1024):
+                written += len(chunk)
+                if written > MAX_CHECKPOINT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(f"That file is larger than the "
+                                f"{MAX_CHECKPOINT_BYTES // (1024 * 1024)} MB limit. A "
+                                f"{SHARED_MODEL} checkpoint is about 136 MB."),
+                    )
+                out.write(chunk)
+        if not written:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+        try:
+            summary = await run_in_threadpool(_validate_checkpoint, staged)
+        except ValueError as exc:
+            activity.record("community.upload_refused", user=admin,
+                            ip=client_address(request), detail=str(exc)[:200],
+                            outcome="refused")
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        target = _next_community_path()
+        shutil.move(str(staged), target)
+    finally:
+        shutil.rmtree(holding, ignore_errors=True)
+
+    _meta_cache.clear()
+    described = _release_name(target.name)
+    activity.record("community.model_uploaded", user=admin, ip=client_address(request),
+                    detail=f"{target.name} acc={summary['metrics'].get('accuracy')}")
+    return {
+        "file": target.name,
+        "name": described,
+        "metrics": summary["metrics"],
+        "threshold": summary["threshold"],
+        "size_mb": round(target.stat().st_size / (1024 * 1024), 1),
+        "detail": (
+            f"Stored as {target.name}. Nothing is being served from it and nobody can "
+            f"choose it yet — it is now in “Release a model to the public”, where "
+            f"releasing it asks for your password again."
+        ),
     }
 
 

@@ -18,6 +18,17 @@ ModelType = Literal[
     "hybrid", "hybrid_no_cbam", "densenet121", "swin_t", "resnet50"
 ]
 
+# The networks create_model can build. Named once so anything that has to
+# check a name against them -- releasing a checkpoint, validating an uploaded
+# one -- asks here rather than keeping its own copy of the list.
+ARCHITECTURES: tuple[str, ...] = (
+    "hybrid", "hybrid_no_cbam", "densenet121", "swin_t", "resnet50",
+)
+
+
+def known_architectures() -> tuple[str, ...]:
+    return ARCHITECTURES
+
 
 class ResNet50Baseline(nn.Module):
     """ResNet50 baseline model for comparison benchmarks."""

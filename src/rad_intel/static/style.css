@@ -1679,6 +1679,54 @@ input[type="file"].input::file-selector-button:hover {
 }
 .train-title.is-running .train-ico { animation: spin 2.4s linear infinite; }
 .train-note { margin-bottom: var(--sp-3); }
+.train-title-sm { font-size: 0.88rem; }
+
+/* --- the community model --------------------------------------------- */
+
+.community-block {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px dashed var(--border-light);
+}
+
+.community-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+}
+.community-step {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+/* Numbered because the three parts only make sense in order: download what
+   has been collected, train it elsewhere, bring the result back. */
+.step-num {
+  flex: 0 0 24px;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--bg-orange-soft);
+  border: 1px solid var(--border-orange);
+  color: var(--primary-orange-hover);
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.step-body { flex: 1 1 auto; min-width: 0; }
+.step-body > strong {
+  display: block;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+.step-body .fb-actions { margin-top: var(--sp-3); }
+.community-step input[type="file"] {
+  padding: var(--sp-2);
+  font-size: 0.8rem;
+}
 
 .train-log {
   margin-top: var(--sp-3);

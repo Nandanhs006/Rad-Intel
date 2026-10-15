@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=21">
+  <link rel="stylesheet" href="/static/style.css?v=22">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -314,15 +314,19 @@
             <ul>
               <li><strong>One shared model, pooled data.</strong> Every participating
                   clinician reviews cases against the same model. Reviews from all sites
-                  are pooled and used to fine-tune that one model. Your reviews are not
-                  kept to yourself, and neither is anyone else's.</li>
-              <li><strong>Where a trained model can end up.</strong> A version
-                  fine-tuned on these reviews — yours among them — may be released by the
-                  study administrator onto the <em>public</em> part of this site, where
-                  anyone visiting can select it. It is published with the scores it was
-                  measured at, and the default model is not changed. Your radiographs
-                  are never published; what can become public is a model whose weights
-                  were shaped by them.</li>
+                  are pooled and used to train it. Your reviews are not kept to yourself,
+                  and neither is anyone else's.</li>
+              <li><strong>Where a trained model can end up.</strong> A model trained on
+                  these reviews — yours among them — may be released by the study
+                  administrator onto the <em>public</em> part of this site, where anyone
+                  visiting can select it. There are two kinds: a version fine-tuned from
+                  the project's own checkpoint, and a separate <em>community model</em>
+                  retrained from scratch on the public dataset together with every case
+                  collected here, so your cases stay in every future version of it unless
+                  you have them deleted. Either is published with the scores it was
+                  measured at, and the default model is not changed. Your radiographs are
+                  never published; what can become public is a model whose weights were
+                  shaped by them.</li>
               <li><strong>What is stored.</strong> The radiograph you upload, its SHA-256
                   hash, your name and institution, the model's prediction and probability,
                   your verdict, and any note. The image is kept on this server because
@@ -551,8 +555,9 @@
             <h1 class="card-title">Review a case</h1>
             <p class="card-subtitle">
               Run a radiograph through the shared model, then record whether it was right.
-              Reviews are queued, exported, and only then used to fine-tune a new model
-              version — submitting one never changes the model by itself.
+              Reviews are queued, exported, and only then used to train a new model
+              version — submitting one never changes the model by itself, and training is
+              run by the study administrator.
             </p>
 
             <div class="notice notice-red" id="fb-warning">
@@ -648,29 +653,48 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true" class="train-ico">
                   <path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/>
                 </svg>
-                Train on reviewed cases
+                What happens to reviewed cases
               </h3>
               <p class="muted small train-note">
-                Fine-tunes a <strong>new</strong> version of the shared model from the
-                latest export. The current checkpoint is untouched, the held-out test
-                partition is never trained on, and nothing is served until an
-                administrator activates it.
+                Reviewed cases become training material through an export, and training
+                itself is run by the study administrator. Neither one changes the
+                checkpoint the project reports, and the held-out test partition is never
+                trained on.
               </p>
-              <div class="fb-actions">
-                <button class="btn-primary" id="fb-train" type="button">Start fine-tuning run</button>
-                <button class="btn-danger" id="fb-train-cancel" type="button" hidden>Cancel run</button>
+
+              <div id="train-controls" hidden>
+                <div class="fb-actions">
+                  <button class="btn-primary" id="fb-train" type="button">Start fine-tuning run</button>
+                  <button class="btn-danger" id="fb-train-cancel" type="button" hidden>Cancel run</button>
+                </div>
+                <p class="caution" id="train-caution">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+                  <span>One run at a time. While it is going, everybody can keep uploading
+                  and correcting cases, but exporting is held. The public tool keeps working
+                  throughout — it serves its own loaded copy of the model. <strong>Leave
+                  this tab open</strong>: if the browser that started the run stops reporting
+                  in for half an hour the run cancels itself, because nobody would be left to
+                  read the result. Cancelling writes no new version and leaves the current
+                  model alone.</span>
+                </p>
               </div>
-              <p class="caution" id="train-caution">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-                <span>One run at a time, because there is one shared model. While it is
-                going, everybody can keep uploading and correcting cases, but exporting and
-                training are held. <strong>Keep this tab open</strong>: if the browser that
-                started the run stops reporting in for three minutes — a closed tab, a
-                dropped connection — the run cancels itself, because nobody would be left
-                to read the result. Cancelling writes no new version and leaves the current
-                model alone.</span>
+
+              <p class="muted small" id="train-clinician-note" hidden>
+                You do not need to do anything here. Upload and correct cases, and press
+                <strong>Create training export</strong> when a batch is worth keeping —
+                that is the save point. The administrator trains from it.
               </p>
+
               <pre id="fb-train-log" class="train-log" hidden></pre>
+
+              <div class="community-block">
+                <h4 class="train-title train-title-sm">
+                  The community model
+                  <span class="count-pill" id="community-count">—</span>
+                </h4>
+                <p class="muted small" id="community-note"></p>
+                <div id="community-versions" class="version-list"></div>
+              </div>
             </div>
           </section>
         </div>
@@ -703,7 +727,8 @@
           <section class="card" aria-label="Shared model">
             <h3 class="card-title card-title-sm">The shared model</h3>
             <p class="card-subtitle" id="models-blurb">
-              Which version is actually being served, and how fine-tuned versions compare.
+              Which version of the project's own model is actually being served, and how
+              fine-tuned versions compare against it.
             </p>
             <div id="model-versions" class="version-list"></div>
             <p class="muted small" id="models-note"></p>
@@ -730,8 +755,9 @@
               <span class="count-pill" id="release-count" hidden></span>
             </h3>
             <p class="card-subtitle">
-              A fine-tuning run writes a new version and changes nothing until you do
-              this. Releasing one puts it in the model list on the
+              A training run writes a new version and changes nothing until you do this
+              — whether it was a fine-tuning run here or a community model trained
+              elsewhere. Releasing one puts it in the model list on the
               <strong>Analyse X-ray</strong> tab, beside the models the project reports,
               with the scores it was measured at. The model the site uses by default does
               not change — people choose it deliberately. Your password is asked for
@@ -739,6 +765,85 @@
             </p>
             <div id="release-list" class="version-list"></div>
             <div id="release-result" class="fb-result" hidden></div>
+          </section>
+
+          <section class="card" aria-label="The community model">
+            <h3 class="card-title card-title-sm">The community model</h3>
+            <p class="card-subtitle">
+              A second model, separate from the one the project reports. Every run
+              discards the previous community version and trains the same architecture
+              from scratch on the public dataset <em>together with every case clinicians
+              have reviewed</em>, so a version is built from all the evidence rather than
+              from the latest batch. The checkpoint the project's results describe is
+              never written to.
+            </p>
+
+            <div class="community-steps">
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">1</span>
+                <div class="step-body">
+                  <strong>Download what has been collected</strong>
+                  <p class="muted small">
+                    One zip: every reviewed radiograph and a manifest of the labels.
+                    Building it freezes anything still pending, the same way an export
+                    does. The public dataset is not in it — the training script downloads
+                    that itself.
+                  </p>
+                  <div class="fb-actions">
+                    <button class="btn-primary btn-sm" id="cm-bundle" type="button">
+                      Build training bundle
+                    </button>
+                    <a class="btn-secondary btn-sm" id="cm-download" hidden download>Download</a>
+                  </div>
+                  <div id="cm-bundle-result" class="fb-result" hidden></div>
+                  <div id="cm-bundles" class="fb-exports"></div>
+                </div>
+              </div>
+
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">2</span>
+                <div class="step-body">
+                  <strong>Train it on a GPU</strong>
+                  <p class="muted small">
+                    Not here. A full retrain is hours of compute and this server's job is
+                    to serve the site. Follow <code>COMMUNITY_MODEL.md</code> in the
+                    repository: it opens a free GPU notebook, takes the zip, and writes a
+                    <code>.pt</code> file. The held-out partition is never trained on, so
+                    its scores can be read beside the reported models.
+                  </p>
+                </div>
+              </div>
+
+              <div class="community-step">
+                <span class="step-num" aria-hidden="true">3</span>
+                <div class="step-body">
+                  <strong>Upload the result</strong>
+                  <p class="muted small">
+                    It is checked, scored and stored as a new numbered version. Nothing is
+                    served and nobody can choose it — it appears in
+                    <strong>Release a model to the public</strong> above, which asks for
+                    your password again.
+                  </p>
+                  <form id="cm-upload-form" class="auth-form">
+                    <div class="form-row">
+                      <label class="field-label" for="cm-file">Checkpoint file</label>
+                      <input type="file" id="cm-file" class="input" accept=".pt" required>
+                      <span class="field-hint">The <code>best_community_hybrid_v…_model.pt</code>
+                      the notebook wrote. About 136 MB.</span>
+                    </div>
+                    <div class="form-row">
+                      <label class="field-label" for="cm-password">Your administrator password</label>
+                      <input type="password" id="cm-password" class="input"
+                             autocomplete="current-password" required>
+                    </div>
+                    <button class="btn-primary btn-block" type="submit" id="cm-upload">
+                      Upload this version
+                    </button>
+                    <div id="cm-upload-result" class="fb-result" hidden></div>
+                  </form>
+                </div>
+              </div>
+            </div>
           </section>
 
 
@@ -977,13 +1082,17 @@
           </p>
           <div class="notice notice-amber">
             <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
-            <span>The model chooser on the Analyse tab may also offer versions marked
-            <strong>released from reviewed cases</strong>. Those were fine-tuned on
-            radiographs contributed by participating clinicians <em>after</em> these
-            results were measured. They are scored on the same held-out partition and
-            their numbers are shown beside their names, but <strong>the table above does
-            not describe them</strong> — it describes the five configurations only. The
-            default is unchanged: the complete classifier.</span>
+            <span>The model chooser on the Analyse tab may also offer versions released
+            by the study administrator from radiographs contributed by participating
+            clinicians <em>after</em> these results were measured. One kind is this
+            project's own checkpoint fine-tuned on a batch of reviews; the other, named
+            <code>community_hybrid</code>, is the same fusion architecture retrained from
+            scratch on the public dataset together with every contributed case. Both are
+            scored on the same held-out partition and their numbers are shown beside their
+            names, but <strong>the table above does not describe them</strong> — it
+            describes the five configurations only. The default is unchanged: the complete
+            classifier, and a released model is only ever something a visitor picks
+            deliberately.</span>
           </div>
         </section>
       </div>
@@ -994,7 +1103,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=5"></script>
-  <script src="/static/extras.js?v=21"></script>
-  <script src="/static/workspace.js?v=21"></script>
+  <script src="/static/extras.js?v=22"></script>
+  <script src="/static/workspace.js?v=22"></script>
 </body>
 </html>
