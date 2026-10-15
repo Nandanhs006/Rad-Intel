@@ -133,7 +133,14 @@ python -c "import secrets; print(secrets.token_hex(32))"
 ```
 RAD_INTEL_SECRET_KEY    = <the long string you just generated>
 RAD_INTEL_COOKIE_SECURE = 1
+RAD_INTEL_TRUSTED_PROXY = 1
 ```
+
+> `RAD_INTEL_TRUSTED_PROXY=1` matters on Railway, Render, Cloudflare or any
+> load balancer. Without it every request looks like it came from the proxy,
+> so **one person can use up everybody's rate limit** and the activity log
+> records the wrong address. Leave it empty only if people reach the machine
+> directly.
 
 > Write that key down somewhere safe. If you lose it, every stored phone
 > number becomes permanently unreadable.
@@ -234,6 +241,18 @@ yours.
 
 ## Step 5 — Tell it how to start
 
+Railway → **Settings → Build Command**:
+
+```
+pip install -r requirements-deploy.txt
+```
+
+That one line saves two to three gigabytes. By default pip installs the
+**CUDA** build of PyTorch — NVIDIA libraries that will never run on a host
+with no graphics card, but still have to be downloaded, stored and shipped on
+every deploy. `requirements-deploy.txt` points it at the CPU wheels instead.
+The site behaves identically.
+
 Railway → **Settings → Start Command**:
 
 ```
@@ -250,7 +269,20 @@ model loads — that is normal, not a hang.
 
 ## Step 6 — Check it actually works
 
-Open your URL. Then, in order:
+**First, one command.** On the server shell:
+
+```bash
+python scripts/preflight.py
+```
+
+It goes through everything that can quietly be wrong at the same time — the
+key, the cookie, the proxy, the model file, the mail settings, where the
+review store lives, whether an administrator exists, whether Drive is
+connected — and prints each as **OK**, **FIX** or **CHECK**, with what to do
+about it. Nothing says FIX, you are ready. Add `--email` and it sends you a
+real test message too.
+
+Then open your URL and go through these in order:
 
 **1. Is it alive?** Visit `your-url/api/v1/health`. You want:
 
@@ -402,6 +434,9 @@ anything is always the one your paper describes.
   a time — logging in somewhere else logs out the old one.
 - **There is no idle timeout.** An unlocked laptop is an open account until
   the browser closes.
+- **Run preflight after any settings change.** `python scripts/preflight.py`.
+  It is the quickest way to find out that something you changed last week
+  broke sign-in for everybody.
 - **Back up `/data`.** It holds every account and every reviewed radiograph.
   A monthly copy is enough at this scale. With Step 4b done, the radiographs
   are already safe in Drive — what a backup protects is the accounts and the

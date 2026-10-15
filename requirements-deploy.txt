@@ -1,0 +1,19 @@
+# What to install on the server.
+#
+# The one thing this adds over `pip install -e .` is where PyTorch comes
+# from. By default pip takes the CUDA build, which drags in two to three
+# gigabytes of NVIDIA libraries that will never run on a host with no GPU:
+# the image takes far longer to build, costs more to store, and behaves
+# identically. The line below points PyTorch at its CPU wheels instead.
+#
+#   pip install -r requirements-deploy.txt
+#
+# If the host has a GPU, drop this file and use `pip install -e .`.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.14.1+cpu; sys_platform == "linux"
+torchvision==0.29.1+cpu; sys_platform == "linux"
+
+# Everything else, from the project's own metadata.
+-e .
