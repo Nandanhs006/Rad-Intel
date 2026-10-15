@@ -43,11 +43,13 @@ def test_a_well_set_up_server_passes(monkeypatch, tmp_path):
     assert set(_statuses().values()) == {preflight.OK}
 
 
-def test_the_settings_that_hurt_somebody_are_called_out(monkeypatch):
+def test_the_settings_that_hurt_somebody_are_called_out(monkeypatch, tmp_path):
     monkeypatch.delenv("RAD_INTEL_SECRET_KEY", raising=False)
     monkeypatch.delenv("RAD_INTEL_COOKIE_SECURE", raising=False)
     monkeypatch.setenv("RAD_INTEL_ENABLE_DOCS", "1")
     monkeypatch.setenv("RAD_INTEL_CORS_ORIGINS", "*")
+    # No key anywhere: neither set nor already generated.
+    monkeypatch.setattr("rad_intel.config.BASE_DIR", tmp_path)
 
     preflight.check_secret_key()
     preflight.check_cookies()
@@ -67,6 +69,24 @@ def test_a_short_secret_key_is_not_a_secret_key(monkeypatch):
     monkeypatch.setenv("RAD_INTEL_SECRET_KEY", "hunter2")
     preflight.check_secret_key()
     assert _statuses()["Secret key"] == preflight.FIX
+
+
+def test_a_key_file_on_a_disk_that_survives_is_not_a_failure(monkeypatch, tmp_path):
+    """
+    Running this yourself, on your own machine, the generated key is fine.
+
+    It only becomes a problem on a host that rebuilds its filesystem, where a
+    new key every deploy means every stored phone number becomes unreadable.
+    Saying FIX to somebody self-hosting would be telling them to fix what is
+    not broken.
+    """
+    monkeypatch.delenv("RAD_INTEL_SECRET_KEY", raising=False)
+    monkeypatch.setattr("rad_intel.config.BASE_DIR", tmp_path)
+    (tmp_path / ".radintel_key").write_text("a" * 64, encoding="utf-8")
+
+    preflight.check_secret_key()
+    assert _statuses()["Secret key"] == preflight.CHECK
+    assert "Back that file up" in preflight.results[0][3]
 
 
 def test_codes_going_to_the_log_is_a_problem_in_production(monkeypatch):

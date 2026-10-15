@@ -90,11 +90,21 @@ def check_secret_key() -> None:
         else:
             say(OK, "Secret key", "Set from the environment.")
         return
-    say(FIX, "Secret key", "RAD_INTEL_SECRET_KEY is not set.",
-        "A random one is being written to .radintel_key instead. On a host that "
-        "wipes its disk, that is a new key on every deploy — every stored phone "
-        "number becomes unreadable and everyone is logged out. Set it and keep a "
-        "copy somewhere safe.")
+    from rad_intel.config import BASE_DIR
+
+    key_file = Path(BASE_DIR) / ".radintel_key"
+    if key_file.is_file():
+        say(CHECK, "Secret key", f"Generated once and kept in {key_file.name}.",
+            "Fine on a machine whose disk survives a restart, which is the case "
+            "when you run this yourself. Back that file up: lose it and every "
+            "stored phone number becomes unreadable and everyone is logged out. "
+            "On a host that rebuilds its filesystem, set RAD_INTEL_SECRET_KEY "
+            "instead, or you get a new key on every deploy.")
+        return
+    say(FIX, "Secret key", "There is no key yet and RAD_INTEL_SECRET_KEY is not set.",
+        "One will be generated into .radintel_key on first use. Either let that "
+        "happen and then back the file up, or set RAD_INTEL_SECRET_KEY now: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\"")
 
 
 def check_cookies() -> None:
@@ -102,20 +112,28 @@ def check_cookies() -> None:
         say(OK, "Session cookie", "Marked secure; it will not travel over plain HTTP.")
     else:
         say(FIX, "Session cookie", "RAD_INTEL_COOKIE_SECURE is not set.",
-            "Set it to 1. Without it the session cookie can be sent over plain "
-            "HTTP, which is how a session gets stolen on a shared network.")
+            "Set it to 1 as soon as people reach this over HTTPS — including "
+            "through a tunnel, where the public address is HTTPS even though "
+            "this process speaks plain HTTP to it. Without it the session cookie "
+            "can travel in the clear, which is how a session gets stolen. Leave "
+            "it empty only while you are testing on this machine alone.")
 
 
 def check_proxy() -> None:
     if env("RAD_INTEL_TRUSTED_PROXY") in ("1", "true", "yes"):
-        say(OK, "Caller address", "X-Forwarded-For is trusted.")
+        say(OK, "Caller address", "X-Forwarded-For is trusted.",
+            "Only correct if something you control really sets it. If it does "
+            "not, anyone can put any address in that header and the rate limits "
+            "stop meaning anything.")
     else:
         say(CHECK, "Caller address", "X-Forwarded-For is ignored.",
-            "Right on a machine people reach directly. Wrong behind Railway, "
-            "Render, Cloudflare or any load balancer: every request then looks "
-            "like it came from the proxy, so one person can use up everybody's "
-            "rate limit and the activity log records the wrong address. Set "
-            "RAD_INTEL_TRUSTED_PROXY=1 if you are behind one.")
+            "Right when people reach this machine directly. Wrong behind a "
+            "tunnel or a load balancer: every request then looks like it came "
+            "from the tunnel, so one person uses up everybody's rate limit and "
+            "the activity log records the wrong address. To find out which you "
+            "are: open the site from a phone on mobile data, sign in, then look "
+            "at the Activity log in the console. Your phone's own address means "
+            "set RAD_INTEL_TRUSTED_PROXY=1; 127.0.0.1 means leave it empty.")
 
 
 def check_docs_and_cors() -> None:
@@ -179,9 +197,11 @@ def check_storage() -> None:
     inside_project = str(FEEDBACK_DIR).startswith(str(settings.BASE_DIR))
     if inside_project and not env("RAD_INTEL_FEEDBACK_DIR"):
         say(CHECK, "Review store", f"{FEEDBACK_DIR}",
-            "That is inside the code directory. On a host that rebuilds the "
-            "container, everything in it is lost on the next deploy. Point "
-            "RAD_INTEL_FEEDBACK_DIR at the mounted volume.")
+            "Inside the code directory. That is fine when you run this on your "
+            "own machine, where nothing wipes it — just do not delete the "
+            "folder when you pull a new version. On a host that rebuilds the "
+            "container it would be lost on the next deploy, and there you would "
+            "point RAD_INTEL_FEEDBACK_DIR at a volume that survives.")
     else:
         say(OK, "Review store", str(FEEDBACK_DIR))
 
