@@ -26,6 +26,8 @@ from rad_intel.api.schemas import (
 from rad_intel.config import BASE_DIR
 from rad_intel.storage.database import db_manager
 from rad_intel.xai.gradcam import GradCAMExplainer
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1", tags=["Comprehensive Analysis"])
 
@@ -33,7 +35,9 @@ REPORTS_DIR = BASE_DIR / "uploads" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@router.post("/analyze", response_model=AnalysisResponse)
+@router.post("/analyze", response_model=AnalysisResponse,
+             dependencies=[Depends(limit("public-analyze", 20, 300,
+                                         "full analyses"))])
 async def analyze_xray(
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG)"),
     model_name: ModelType | None = Form(
@@ -189,7 +193,9 @@ async def analyze_xray(
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {str(e)}")
 
 
-@router.get("/analyze/{analysis_id}/pdf")
+@router.get("/analyze/{analysis_id}/pdf",
+            dependencies=[Depends(limit("public-pdf", 30, 300,
+                                        "report downloads"))])
 async def download_analysis_pdf(analysis_id: str):
     """
     Downloads the compiled clinical radiology PDF report for the specified analysis ID.

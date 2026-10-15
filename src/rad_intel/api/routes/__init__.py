@@ -7,6 +7,7 @@ from rad_intel.api.routes.history import router as history_router
 from rad_intel.api.routes.assistant import router as assistant_router
 from rad_intel.api.routes.feedback import router as feedback_router
 from rad_intel.api.routes.auth import router as auth_router
+from rad_intel.api.routes.admin import router as admin_router
 
 __all__ = [
     "health_router",
@@ -18,4 +19,5 @@ __all__ = [
     "assistant_router",
     "feedback_router",
     "auth_router",
+    "admin_router",
 ]

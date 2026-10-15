@@ -4,11 +4,20 @@ Configuration management for Rad-Intel using Pydantic Settings.
 
 from pathlib import Path
 from typing import Literal
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import torch
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Put .env into the process environment as well as into Settings below.
+# The authentication and delivery modules read os.environ directly, so that
+# their secrets never become attributes of a settings object that gets
+# printed, logged or returned by an endpoint. Existing environment variables
+# win, which keeps a real deployment's configuration ahead of a stray local
+# file.
+load_dotenv(BASE_DIR / ".env", override=False)
 
 
 class Settings(BaseSettings):

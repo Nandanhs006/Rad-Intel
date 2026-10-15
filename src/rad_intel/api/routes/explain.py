@@ -15,11 +15,15 @@ from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import ExplanationResponse, AnatomicalLocalization
 from rad_intel.xai.gradcam import GradCAMExplainer
 from rad_intel.xai.lime_explainer import LIMECXRExplainer
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1", tags=["Explainability"])
 
 
-@router.post("/explain", response_model=ExplanationResponse)
+@router.post("/explain", response_model=ExplanationResponse,
+             dependencies=[Depends(limit("public-explain", 30, 300,
+                                         "explanations"))])
 async def explain_xray(
     file: UploadFile = File(..., description="Chest X-Ray image file"),
     method: Literal["gradcam", "gradcam++", "lime"] = Form(

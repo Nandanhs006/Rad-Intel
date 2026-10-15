@@ -7,11 +7,13 @@ under its own tag so the interface can keep it visually separate from the
 classifier's evidence-constrained summary.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 
 from rad_intel.assistant.chat import DISCLAIMER, answer_question
 from rad_intel.api.schemas import AssistantRequest, AssistantResponse, AssistantStatus
 from rad_intel.config import settings
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1/assistant", tags=["Educational Assistant"])
 
@@ -29,7 +31,9 @@ async def assistant_status():
     )
 
 
-@router.post("/chat", response_model=AssistantResponse)
+@router.post("/chat", response_model=AssistantResponse,
+             dependencies=[Depends(limit("public-chat", 40, 300,
+                                         "questions"))])
 async def assistant_chat(req: AssistantRequest):
     """Answers a general question about lung health, pneumonia, radiography or this project."""
     question = (req.question or "").strip()

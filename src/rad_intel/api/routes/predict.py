@@ -11,11 +11,15 @@ from rad_intel.api.dependencies import (
 )
 from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import PredictionResponse
+from rad_intel.api.ratelimit import limit
+
 
 router = APIRouter(prefix="/api/v1", tags=["Prediction"])
 
 
-@router.post("/predict", response_model=PredictionResponse)
+@router.post("/predict", response_model=PredictionResponse,
+             dependencies=[Depends(limit("public-predict", 60, 300,
+                                         "predictions"))])
 async def predict_xray(
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG, or DICOM-derived)"),
     model_name: ModelType | None = Form(

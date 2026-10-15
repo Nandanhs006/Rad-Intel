@@ -1,25 +1,33 @@
 """
-Clinician feedback route: a review queue, not a training loop.
+The clinician review workspace.
 
-A reviewer runs a case, marks the prediction right or wrong, optionally
-supplies a corrected binary label and a note. The case is written to a
-separate store with the model and preprocessing versions that produced it.
+A reviewer runs a case against the shared model, marks the prediction right or
+wrong, optionally supplies a corrected label and a note. The case is written to
+a store separate from the Kaggle dataset, with the model and preprocessing
+versions that produced it. Submitting a review changes no checkpoint: review
+material becomes training material only through an explicit export, and a
+fine-tuning run is a deliberate act with a result somebody has to read.
 
-Nothing here retrains anything. Submitting feedback does not touch a
-checkpoint, and the Kaggle dataset and its split are never written to. Review
-material leaves this queue only through an explicit export, which writes a
-versioned JSONL manifest and marks the records it consumed.
+Who can do what:
+
+* Every signed-in clinician sees every case. That is the point of a shared
+  model, and the consent panel says so before anyone logs in.
+* A clinician may edit or delete *their own* submissions. Not anyone else's,
+  and never the image of a case already recorded -- changing the pixels under
+  a verdict somebody else has read would make the record a lie. Re-upload
+  instead.
+* An administrator may edit or delete any record, and is the only account that
+  can activate a different model version.
 """
 
 import hashlib
 import json
-import subprocess
-import sys
-import threading
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from rad_intel.api.dependencies import (
     CXRPreprocessor,
@@ -27,6 +35,7 @@ from rad_intel.api.dependencies import (
     get_model_manager,
     get_preprocessor,
 )
+from rad_intel.api.ratelimit import client_address, limit
 from rad_intel.api.schemas import (
     FeedbackExportResponse,
     FeedbackItem,
@@ -34,9 +43,13 @@ from rad_intel.api.schemas import (
     FeedbackSubmitResponse,
     FeedbackUpdateRequest,
 )
-from rad_intel.auth.dependencies import require_clinician
+from rad_intel.api.training_job import HEARTBEAT_GRACE_SECONDS, TrainingJob
+from rad_intel.auth import accounts, activity
+from rad_intel.auth.dependencies import require_admin, require_clinician
 from rad_intel.config import settings
 from rad_intel.storage.database import db_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["Clinician Feedback"])
 
@@ -44,6 +57,7 @@ router = APIRouter(prefix="/api/v1/feedback", tags=["Clinician Feedback"])
 FEEDBACK_DIR = settings.BASE_DIR / "feedback_store"
 IMAGE_DIR = FEEDBACK_DIR / "images"
 EXPORT_DIR = FEEDBACK_DIR / "exports"
+WEIGHTS_DIR = settings.BASE_DIR / "weights"
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png"}
@@ -61,10 +75,24 @@ UPLOAD_WARNING = (
     "This is a research and education store, not a clinical record system."
 )
 
+TRAIN_LOG = FEEDBACK_DIR / "training.log"
+job = TrainingJob(TRAIN_LOG)
+
 
 def _ensure_dirs() -> None:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _may_edit(record: dict, user: dict) -> bool:
+    """The clinician who submitted it, or an administrator."""
+    return user.get("role") == "admin" or (
+        bool(record.get("owner_id")) and record["owner_id"] == user["id"]
+    )
+
+
+def _as_item(record: dict, user: dict) -> FeedbackItem:
+    return FeedbackItem(**record, editable=_may_edit(record, user))
 
 
 @router.get("/warning")
@@ -73,18 +101,45 @@ async def upload_warning(_user: dict = Depends(require_clinician)):
     return {"warning": UPLOAD_WARNING, "preprocessing_version": PREPROCESSING_VERSION}
 
 
-@router.post("/submit", response_model=FeedbackSubmitResponse)
+@router.get("/participants")
+async def participants(_user: dict = Depends(require_clinician)):
+    """
+    Who else is in the study.
+
+    Names and institutions only. A reviewer needs to know whose cases are in
+    the queue; they have no need for anybody's email address, phone number or
+    Rad-Intel ID, so those are not in this response at all rather than merely
+    hidden by the interface.
+    """
+    accounts_list = await run_in_threadpool(accounts.list_clinicians)
+    everyone = [a for a in accounts_list if a["status"] == "active"]
+    return {
+        "count": len(everyone),
+        "participants": [accounts.public_view(a) for a in everyone],
+    }
+
+
+@router.post("/submit", response_model=FeedbackSubmitResponse,
+             dependencies=[Depends(limit("feedback-submit", 120, 3600,
+                                        "review submissions"))])
 async def submit_feedback(
+    request: Request,
     file: UploadFile = File(..., description="Chest radiograph reviewed by the clinician"),
     verdict: str = Form(..., description="correct | incorrect"),
     corrected_label: str | None = Form(None, description="NORMAL | PNEUMONIA"),
     note: str | None = Form(None, description="Optional short review note"),
-    institution: str | None = Form(None, description="Source institution, for multi-site tracking"),
     user: dict = Depends(require_clinician),
     manager: ModelManager = Depends(get_model_manager),
     preprocessor: CXRPreprocessor = Depends(get_preprocessor),
 ):
-    """Runs the standard prediction, then records the reviewer's judgement against it."""
+    """
+    Runs the standard prediction, then records the reviewer's judgement against it.
+
+    The reviewer's name and institution come from their account, not from the
+    form. Letting a submission carry its own institution would mean the queue's
+    multi-site counts were self-reported per upload, and a record could be
+    attributed to a site nobody at it ever saw.
+    """
     if verdict not in ("correct", "incorrect"):
         raise HTTPException(status_code=400, detail="verdict must be 'correct' or 'incorrect'.")
     if corrected_label is not None and corrected_label not in ("NORMAL", "PNEUMONIA"):
@@ -144,8 +199,11 @@ async def submit_feedback(
         corrected_label=corrected_label,
         note=(note or "").strip()[:2000] or None,
         image_path=str(stored.relative_to(settings.BASE_DIR)),
-        institution=(institution or user["institution"] or "").strip()[:120] or None,
+        institution=user["institution"],
+        owner_id=user["id"],
     )
+    activity.record("review.submitted", user=user, ip=client_address(request),
+                    detail=f"{record_id[:8]} verdict={verdict}")
 
     return FeedbackSubmitResponse(
         id=record_id,
@@ -160,29 +218,50 @@ async def submit_feedback(
 
 
 @router.get("", response_model=FeedbackListResponse)
-async def list_feedback(status: str | None = None, limit: int = 100, offset: int = 0,
-                        _user: dict = Depends(require_clinician)):
-    """Lists the review queue, newest first."""
-    rows = await db_manager.list_feedback(status=status, limit=min(limit, 500), offset=offset)
+async def list_feedback(status: str | None = None, limit_rows: int = 100, offset: int = 0,
+                        scope: str = "all", sort: str = "recent",
+                        user: dict = Depends(require_clinician)):
+    """
+    Lists the review queue.
+
+    `scope=mine` narrows it to the caller's own submissions, which is the only
+    practical way to find the one you need to correct once the queue holds
+    cases from several sites. `sort=name` orders by reviewer alphabetically;
+    the default is newest first.
+    """
+    owner = user["id"] if scope == "mine" else None
+    rows = await db_manager.list_feedback(
+        status=status, limit=min(limit_rows, 500), offset=offset,
+        owner_id=owner, sort=sort,
+    )
     return FeedbackListResponse(
         counts=await db_manager.feedback_counts(),
         institutions=await db_manager.feedback_institutions(),
-        items=[FeedbackItem(**r) for r in rows],
+        items=[_as_item(r, user) for r in rows],
     )
 
 
 @router.patch("/{record_id}", response_model=FeedbackItem)
-async def update_feedback(record_id: str, req: FeedbackUpdateRequest,
-                          _user: dict = Depends(require_clinician)):
-    """Edits a queued review before it is exported."""
+async def update_feedback(record_id: str, req: FeedbackUpdateRequest, request: Request,
+                          user: dict = Depends(require_clinician)):
+    """Edits a queued review. Only its author or an administrator may."""
     existing = await db_manager.get_feedback(record_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Feedback record not found.")
-    if existing["status"] == "exported":
+    if not _may_edit(existing, user):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"This case was submitted by {existing['reviewer']}. You can edit "
+                    f"your own submissions only — use the “My cases” filter to "
+                    f"find them. Ask the study administrator if something else needs "
+                    f"correcting."),
+        )
+    if existing["status"] == "exported" and user.get("role") != "admin":
         raise HTTPException(
             status_code=409,
-            detail="This record has already been exported and is frozen. Export tag: "
-                   f"{existing['exported_in']}.",
+            detail=("This case has already been exported for training and is frozen, so "
+                    "the record still matches what was trained on. Export tag: "
+                    f"{existing['exported_in']}. The administrator can still change it."),
         )
     if req.verdict is not None and req.verdict not in ("correct", "incorrect"):
         raise HTTPException(status_code=400, detail="verdict must be 'correct' or 'incorrect'.")
@@ -190,25 +269,104 @@ async def update_feedback(record_id: str, req: FeedbackUpdateRequest,
         raise HTTPException(
             status_code=400, detail="corrected_label must be 'NORMAL' or 'PNEUMONIA'."
         )
+    if req.verdict == "incorrect" and not (req.corrected_label or existing["corrected_label"]):
+        raise HTTPException(
+            status_code=400,
+            detail="A corrected label is required when the prediction is marked incorrect.",
+        )
 
     await db_manager.update_feedback(
         record_id,
         verdict=req.verdict,
         corrected_label=req.corrected_label,
         note=req.note,
-        status=req.status,
+        status=req.status if user.get("role") == "admin" else None,
     )
-    return FeedbackItem(**(await db_manager.get_feedback(record_id)))
+    activity.record("review.edited", user=user, ip=client_address(request),
+                    detail=f"{record_id[:8]} by={'admin' if user['role'] == 'admin' else 'owner'}")
+    return _as_item(await db_manager.get_feedback(record_id), user)
 
 
-@router.post("/export", response_model=FeedbackExportResponse)
-async def create_training_export(_user: dict = Depends(require_clinician)):
+@router.delete("/{record_id}")
+async def delete_feedback(record_id: str, request: Request,
+                          user: dict = Depends(require_clinician)):
+    """
+    Removes a review the caller submitted, e.g. the wrong image was uploaded.
+
+    The stored image is deleted with it only when no other review still refers
+    to the same file, since images are stored once per distinct radiograph and
+    shared between records.
+
+    Two things deliberately do not happen. An export manifest already written
+    is not rewritten, and a model already fine-tuned on this case is not
+    changed: both are historical records of what was actually trained on, and
+    editing them afterwards would make the provenance a fiction. Deleting a
+    record keeps it out of every *future* export.
+    """
+    existing = await db_manager.get_feedback(record_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Feedback record not found.")
+    if not _may_edit(existing, user):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"This case was submitted by {existing['reviewer']}. You can delete "
+                    f"your own submissions only."),
+        )
+    if job.running:
+        raise HTTPException(
+            status_code=409,
+            detail=("A fine-tuning run is in progress and is reading the exported cases. "
+                    "Deleting can resume when it finishes."),
+        )
+
+    await db_manager.delete_feedback(record_id)
+
+    removed_image = False
+    if existing.get("image_sha256"):
+        remaining = await db_manager.count_feedback_for_image(existing["image_sha256"])
+        if remaining == 0 and existing.get("image_path"):
+            path = (settings.BASE_DIR / existing["image_path"]).resolve()
+            if str(path).startswith(str(IMAGE_DIR.resolve())) and path.is_file():
+                path.unlink()
+                removed_image = True
+
+    activity.record("review.deleted", user=user, ip=client_address(request),
+                    detail=f"{record_id[:8]} image_removed={removed_image}")
+    was_exported = existing["status"] == "exported"
+    return {
+        "deleted": True,
+        "image_removed": removed_image,
+        "detail": (
+            "Review deleted and it will not appear in any future export."
+            + (" The export it was already part of, and any model trained from that "
+               "export, are unchanged — those are records of what was actually "
+               "trained on." if was_exported else "")
+            + ("" if removed_image else
+               " The image file is kept because another review still refers to it.")
+        ),
+    }
+
+
+@router.post("/export", response_model=FeedbackExportResponse,
+             dependencies=[Depends(limit("feedback-export", 20, 3600, "exports"))])
+async def create_training_export(request: Request,
+                                 user: dict = Depends(require_clinician)):
     """
     Writes a versioned JSONL manifest of every pending review and freezes them.
 
     This produces review material for a later, separate fine-tuning run. It
     does not start training and does not alter any checkpoint.
     """
+    if job.running:
+        held_by = job.snapshot()["holder_name"]
+        raise HTTPException(
+            status_code=409,
+            detail=(f"{held_by} is running a fine-tuning job right now. Exporting would "
+                    f"freeze records underneath it and change what is being trained on "
+                    f"halfway through, so it waits until the run finishes. You can "
+                    f"carry on uploading and correcting cases."),
+        )
+
     pending = await db_manager.list_feedback(status="pending", limit=500)
     if not pending:
         raise HTTPException(status_code=400, detail="No pending reviews to export.")
@@ -239,13 +397,15 @@ async def create_training_export(_user: dict = Depends(require_clinician)):
             }, ensure_ascii=False) + "\n")
 
     updated = await db_manager.mark_feedback_exported([r["id"] for r in pending], tag)
+    activity.record("export.created", user=user, ip=client_address(request),
+                    detail=f"{tag} records={updated}")
     return FeedbackExportResponse(
         export_tag=tag,
         path=str(path.relative_to(settings.BASE_DIR)),
         record_count=updated,
         note=(
             "Export written. No training has been started and no checkpoint was modified. "
-            "Fine-tuning remains a separate, manual, versioned workflow."
+            "Fine-tuning remains a separate, explicit, versioned step."
         ),
     )
 
@@ -259,7 +419,7 @@ async def list_exports(_user: dict = Depends(require_clinician)):
         items.append({
             "tag": p.stem,
             "path": str(p.relative_to(settings.BASE_DIR)),
-            "records": sum(1 for _ in p.open(encoding="utf-8")),
+            "records": sum(1 for line in p.open(encoding="utf-8") if line.strip()),
             "bytes": p.stat().st_size,
         })
     return {"exports": items}
@@ -268,41 +428,28 @@ async def list_exports(_user: dict = Depends(require_clinician)):
 # --- training ---------------------------------------------------------------
 #
 # Fine-tuning takes minutes, so it cannot be a request/response cycle. The
-# endpoint starts scripts/finetune_from_feedback.py as a detached process and
+# endpoint starts scripts/finetune_from_feedback.py as a separate process and
 # the interface polls for progress. The script keeps every guarantee it has on
 # the command line: the Kaggle test partition is not trained on, the existing
 # checkpoint is not overwritten, and nothing is promoted automatically.
 
-TRAIN_LOG = FEEDBACK_DIR / "training.log"
-_train_state: dict[str, object] = {"running": False, "started_at": None, "manifest": None}
-_train_lock = threading.Lock()
-
-
-def _run_training(manifest: Path, base_model: str, epochs: int) -> None:
-    script = settings.BASE_DIR / "scripts" / "finetune_from_feedback.py"
-    cmd = [sys.executable, "-u", str(script), "--manifest", str(manifest),
-           "--base-model", base_model, "--epochs", str(epochs)]
-    try:
-        with TRAIN_LOG.open("w", encoding="utf-8") as log:
-            log.write(f"$ {' '.join(cmd)}\n\n")
-            log.flush()
-            subprocess.run(cmd, cwd=settings.BASE_DIR, stdout=log,
-                           stderr=subprocess.STDOUT, check=False)
-    except Exception as exc:
-        with TRAIN_LOG.open("a", encoding="utf-8") as log:
-            log.write(f"\nTraining process failed to run: {exc}\n")
-    finally:
-        with _train_lock:
-            _train_state["running"] = False
-
-
-@router.post("/train")
-async def start_training(epochs: int = Form(3),
-                         _user: dict = Depends(require_clinician)):
+@router.post("/train", dependencies=[Depends(limit("feedback-train", 8, 3600,
+                                                   "training runs"))])
+async def start_training(request: Request, epochs: int = Form(3),
+                         user: dict = Depends(require_clinician)):
     """Start a fine-tuning run over the most recent export."""
-    with _train_lock:
-        if _train_state["running"]:
-            raise HTTPException(status_code=409, detail="A training run is already in progress.")
+    if not 1 <= epochs <= 20:
+        raise HTTPException(status_code=400, detail="Choose between 1 and 20 epochs.")
+
+    if job.running:
+        state = job.snapshot()
+        raise HTTPException(
+            status_code=409,
+            detail=(f"{state['holder_name']} started a fine-tuning run at "
+                    f"{(state['started_at'] or '')[11:16]} UTC. There is one shared "
+                    f"model, so one run at a time. You can keep uploading and "
+                    f"correcting cases while it finishes."),
+        )
 
     _ensure_dirs()
     manifests = sorted(EXPORT_DIR.glob("reviewed-export-*.jsonl"), reverse=True)
@@ -326,12 +473,18 @@ async def start_training(epochs: int = Form(3),
             ),
         )
 
-    with _train_lock:
-        _train_state.update(running=True,
-                            started_at=datetime.now(timezone.utc).isoformat(),
-                            manifest=manifest.name)
-    threading.Thread(target=_run_training, args=(manifest, SHARED_MODEL, epochs),
-                     daemon=True).start()
+    if not job.claim(user, manifest, usable, epochs):
+        raise HTTPException(status_code=409, detail="Another run started a moment ago.")
+
+    job.start(
+        script=settings.BASE_DIR / "scripts" / "finetune_from_feedback.py",
+        base_dir=settings.BASE_DIR,
+        manifest=manifest,
+        base_model=SHARED_MODEL,
+        epochs=epochs,
+    )
+    activity.record("training.started", user=user, ip=client_address(request),
+                    detail=f"{manifest.name} cases={usable} epochs={epochs}")
 
     return {
         "started": True,
@@ -339,22 +492,54 @@ async def start_training(epochs: int = Form(3),
         "cases": usable,
         "base_model": SHARED_MODEL,
         "epochs": epochs,
-        "note": "Training runs in the background. The original checkpoint is untouched "
-                "and nothing will be promoted automatically.",
+        "holder_name": user["full_name"],
+        "note": ("Training runs on the server. The original checkpoint is untouched and "
+                 "nothing is promoted automatically. Keep this page open: if the browser "
+                 "that started the run stops reporting in for "
+                 f"{HEARTBEAT_GRACE_SECONDS // 60} minutes the run is cancelled, because "
+                 "nobody would be left to read the result."),
+    }
+
+
+@router.post("/train/cancel")
+async def cancel_training(request: Request, user: dict = Depends(require_clinician)):
+    """Stop the run. Allowed to the clinician who started it, and to an administrator."""
+    state = job.snapshot()
+    if not state["running"]:
+        raise HTTPException(status_code=409, detail="No training run is in progress.")
+    if not job.may_cancel(user):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{state['holder_name']} started this run. Only they or the study "
+                    f"administrator can cancel it."),
+        )
+
+    by = "administrator" if (user["role"] == "admin"
+                             and state["holder_id"] != user["id"]) else "the clinician who started it"
+    job.cancel(reason=f"cancelled by {by}", by=user["full_name"])
+    activity.record("training.cancelled", user=user, ip=client_address(request),
+                    detail=str(state["manifest"]))
+    return {
+        "cancelled": True,
+        "detail": ("Run stopped. No new model version was written and the current model "
+                   "is untouched. The export is still there, so it can be retried."),
     }
 
 
 @router.get("/train/status")
-async def training_status(_user: dict = Depends(require_clinician)):
-    """Progress of the current or most recent run."""
-    with _train_lock:
-        running = bool(_train_state["running"])
-        started_at = _train_state["started_at"]
-        manifest = _train_state["manifest"]
+async def training_status(user: dict = Depends(require_clinician)):
+    """
+    Progress of the current or most recent run, and what the caller may do.
+
+    Polling this is also the holder's heartbeat: a run whose starter has gone
+    away is cancelled rather than left holding the queue.
+    """
+    job.heartbeat(user["id"])
+    state = job.snapshot()
 
     log = ""
     if TRAIN_LOG.exists():
-        log = TRAIN_LOG.read_text(encoding="utf-8", errors="replace")[-6000:]
+        log = TRAIN_LOG.read_text(encoding="utf-8", errors="replace")[-8000:]
 
     produced = None
     for line in reversed(log.splitlines()):
@@ -363,14 +548,163 @@ async def training_status(_user: dict = Depends(require_clinician)):
             break
 
     return {
-        "running": running,
-        "started_at": started_at,
-        "manifest": manifest,
+        "running": state["running"],
+        "started_at": state["started_at"],
+        "finished_at": state["finished_at"],
+        "manifest": state["manifest"],
+        "cases": state["cases"],
+        "epochs": state["epochs"],
+        "holder_name": state["holder_name"],
+        "holder_institution": state["holder_institution"],
+        "is_holder": state["holder_id"] == user["id"],
+        "can_cancel": job.may_cancel(user),
+        "cancelled_by": state["cancelled_by"],
+        "cancel_reason": state["cancel_reason"],
         "log": log,
         "produced_checkpoint": produced,
         "promoted": False,
+        "heartbeat_grace_seconds": HEARTBEAT_GRACE_SECONDS,
     }
 
+
+# --- model versions ---------------------------------------------------------
+#
+# The question this answers is the obvious one a reviewer asks after their
+# first run: where did the new model go? Fine-tuning writes a new, numbered
+# checkpoint and never overwrites the one being served, so until somebody
+# activates it, every prediction -- here and on the Analyse tab -- still comes
+# from the version the paper reports. That is correct behaviour and it is also
+# invisible, so it is reported explicitly.
+
+_meta_cache: dict[tuple[str, float], dict] = {}
+
+
+def _checkpoint_meta(path: Path) -> dict:
+    """
+    Metadata from a checkpoint, cached by modification time.
+
+    A checkpoint is ~140 MB and this is called for every version on every
+    poll, so reading them all on each request would make the panel cost more
+    than the training does.
+    """
+    key = (str(path), path.stat().st_mtime)
+    if key in _meta_cache:
+        return _meta_cache[key]
+
+    import torch
+
+    summary: dict = {}
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
+        if isinstance(blob, dict):
+            summary = {
+                "model_type": blob.get("model_type"),
+                "threshold": blob.get("optimal_threshold"),
+                "metrics_before": blob.get("metrics_before"),
+                "metrics_after": blob.get("metrics_after"),
+                "provenance": blob.get("provenance"),
+            }
+    except Exception as exc:
+        logger.warning("Could not read metadata from %s: %s", path.name, exc)
+        summary = {"error": "metadata unreadable"}
+
+    # Keyed by (path, mtime), so a rewritten checkpoint is re-read. Bounded
+    # rather than cleared on each miss: with several versions on disk,
+    # clearing meant nothing was ever cached.
+    if len(_meta_cache) > 12:
+        _meta_cache.pop(next(iter(_meta_cache)))
+    _meta_cache[key] = summary
+    return summary
+
+
+@router.get("/models")
+async def model_versions(manager: ModelManager = Depends(get_model_manager),
+                         _user: dict = Depends(require_clinician)):
+    """
+    Every version of the shared model, and which one is actually being served.
+
+    The base checkpoint is the one whose numbers the project reports. A
+    fine-tuned version is scored on the same held-out partition so the two are
+    comparable, and is served only if an administrator activates it.
+    """
+    base = WEIGHTS_DIR / f"best_{SHARED_MODEL}_model.pt"
+    live = manager.active_checkpoint(SHARED_MODEL)
+    versions = []
+
+    for path in [base, *sorted(WEIGHTS_DIR.glob(f"best_{SHARED_MODEL}_v*_model.pt"))]:
+        if not path.exists():
+            continue
+        meta = await run_in_threadpool(_checkpoint_meta, path)
+        after = meta.get("metrics_after") or {}
+        provenance = meta.get("provenance") or {}
+        versions.append({
+            "file": path.name,
+            "label": "base (as reported in the project's results)" if path == base
+                     else f"fine-tuned {path.stem.split('_')[-2]}",
+            "is_base": path == base,
+            "is_live": live is not None and Path(live).name == path.name,
+            "threshold": meta.get("threshold"),
+            "accuracy": after.get("accuracy"),
+            "auroc": after.get("auroc"),
+            "sensitivity": after.get("sensitivity"),
+            "specificity": after.get("specificity"),
+            "reviewed_cases": provenance.get("reviewed_cases"),
+            "created_at": provenance.get("created_at"),
+            "size_mb": round(path.stat().st_size / (1024 * 1024), 1),
+        })
+
+    return {
+        "shared_model": SHARED_MODEL,
+        "live_file": Path(live).name if live else base.name,
+        "versions": versions,
+        "where_to_test": (
+            "The Analyse X-ray tab runs the live version shown here, so that is where "
+            "to try the shared model on a case without filing a review."
+        ),
+        "note": (
+            "A fine-tuned version is scored on the held-out partition the project's "
+            "results use, so the two rows are comparable. Nothing is served until an "
+            "administrator activates it, and the base checkpoint is never overwritten, "
+            "so activating a version is always reversible."
+        ),
+    }
+
+
+@router.post("/models/activate")
+async def activate_version(request: Request, file: str = Form(...),
+                           manager: ModelManager = Depends(get_model_manager),
+                           admin: dict = Depends(require_admin)):
+    """
+    Choose which version of the shared model the service serves. Administrator only.
+
+    Implemented as a pointer file rather than by copying over the base
+    checkpoint, so the version the project's reported results describe stays
+    byte-identical on disk and "go back to the base model" cannot fail.
+    """
+    candidate = (WEIGHTS_DIR / Path(file).name).resolve()
+    if not str(candidate).startswith(str(WEIGHTS_DIR.resolve())) or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="No such checkpoint.")
+
+    meta_is_base = candidate.name == f"best_{SHARED_MODEL}_model.pt"
+    meta = await run_in_threadpool(_checkpoint_meta, candidate)
+    if meta.get("model_type") not in (None, SHARED_MODEL):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"{candidate.name} holds a {meta.get('model_type')} model. Only "
+                    f"{SHARED_MODEL} versions can be served as the shared model."),
+        )
+
+    manager.activate_checkpoint(SHARED_MODEL, None if meta_is_base else candidate)
+    activity.record("model.activated", user=admin, ip=client_address(request),
+                    detail=candidate.name)
+    return {
+        "activated": candidate.name,
+        "detail": (f"The service now serves {candidate.name}. Every prediction, here and "
+                   f"on the Analyse tab, comes from it until it is changed back."),
+    }
+
+
+# --- stored images ----------------------------------------------------------
 
 @router.get("/image/{record_id}")
 async def feedback_image(record_id: str, _user: dict = Depends(require_clinician)):
@@ -380,7 +714,8 @@ async def feedback_image(record_id: str, _user: dict = Depends(require_clinician
     Images are not served from a static directory: they are only reachable
     through this endpoint, which means a URL alone is useless without a
     session. The record id is a UUID rather than the file path, so the store
-    cannot be walked by guessing names.
+    cannot be walked by guessing names, and the resolved path is checked
+    against the store before anything is read.
     """
     from fastapi.responses import FileResponse
 
@@ -389,12 +724,15 @@ async def feedback_image(record_id: str, _user: dict = Depends(require_clinician
         raise HTTPException(status_code=404, detail="No image for this review.")
 
     path = (settings.BASE_DIR / record["image_path"]).resolve()
-    # Containment check: a stored path must never escape the feedback store.
     if not str(path).startswith(str(IMAGE_DIR.resolve())) or not path.is_file():
         raise HTTPException(status_code=404, detail="Image file is missing.")
 
     media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
-    return FileResponse(path, media_type=media)
+    return FileResponse(path, media_type=media, headers={
+        # The image is only valid for whoever holds the session that fetched
+        # it, so it must not be left in a shared cache.
+        "Cache-Control": "private, max-age=300",
+    })
 
 
 @router.get("/storage")
@@ -409,8 +747,12 @@ async def storage_summary(_user: dict = Depends(require_clinician)):
         "bytes": total,
         "human": f"{total / (1024 * 1024):.1f} MB",
         "note": (
-            "Images are stored once per distinct file, named by SHA-256, so the same "
-            "radiograph submitted twice costs nothing extra. They are kept because "
-            "fine-tuning needs the pixels; the database holds only the hash and the path."
+            "Images are stored on this server, one file per distinct radiograph, named "
+            "by SHA-256, so the same image submitted twice costs nothing extra. They are "
+            "kept because fine-tuning needs the pixels; the database holds only the hash "
+            "and the path. They are served to signed-in clinicians through an "
+            "authenticated endpoint and are not reachable from a plain URL. A review "
+            "deleted by its author takes its image with it, unless another review still "
+            "refers to the same file."
         ),
     }
