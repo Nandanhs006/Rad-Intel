@@ -1111,3 +1111,117 @@ def test_a_password_is_never_sent_over_an_untrusted_plaintext_connection(smtp_si
     assert not sent
     assert "STARTTLS" in detail
     assert not smtp_sink.received, "nothing may be sent over the clear connection"
+
+
+# --- when the SMS provider refuses ------------------------------------------
+
+def test_a_provider_refusal_is_reported_in_its_own_words(monkeypatch):
+    """
+    Fast2SMS refuses for account-state reasons with specific remedies. Those
+    have to reach the administrator: "the provider refused the message" sends
+    them looking in the wrong place entirely.
+    """
+    import urllib.error
+
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+
+    def refuse(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "https://www.fast2sms.com/dev/bulkV2", 400, "Bad Request", {},
+            __import__("io").BytesIO(
+                b'{"status_code":999,"message":"You need to complete one transaction '
+                b'of 100 INR or more before using API route."}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", refuse)
+    sent, detail = notify._fast2sms_send("+91 98444 07409", "body")
+    assert not sent
+    assert "100 INR" in detail, "the remedy must survive into the message"
+
+
+def test_a_login_attempt_is_not_told_the_studys_billing_state(monkeypatch):
+    """
+    The same refusal, seen from the login form, must say only that it is not
+    the clinician's problem. What the study owes its SMS provider is the
+    administrator's business.
+    """
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "sms")
+    monkeypatch.setattr(notify, "_send_sms",
+                        lambda phone, body: (False, "Fast2SMS refused it: complete one "
+                                                    "transaction of 100 INR"))
+    ok, channel, shown = notify.send_verification_code(
+        "+91 98444 07409", "Known-Code1", "Dr A", "a@h.org")
+    assert not ok and channel == "sms"
+    assert "100 INR" not in shown and "Fast2SMS" not in shown
+    assert "administrator" in shown
+
+
+async def test_the_console_can_test_sms_and_see_why_it_failed(monkeypatch):
+    admin = _make_admin()
+    monkeypatch.setattr("rad_intel.api.routes.admin.notify.send_test_sms",
+                        lambda phone, name: (False, "Fast2SMS refused it: complete "
+                                                    "one transaction of 100 INR"))
+    async with _client() as client:
+        res = await client.post("/api/v1/admin/test-sms", cookies=_signed_in(admin))
+    assert res.status_code == 502
+    assert "100 INR" in res.json()["detail"]
+
+
+async def test_only_an_administrator_can_send_a_test_sms():
+    user = _make_clinician()
+    async with _client() as client:
+        signed_out = await client.post("/api/v1/admin/test-sms")
+        as_clinician = await client.post("/api/v1/admin/test-sms", cookies=_signed_in(user))
+    assert signed_out.status_code == 401
+    assert as_clinician.status_code == 403
+
+
+# --- getting back in when nothing can be delivered --------------------------
+
+def test_the_log_channel_can_be_chosen_outright(monkeypatch):
+    """
+    Deliberately choosing to print codes to the server's terminal has to beat
+    a configured provider, or an administrator whose provider is refusing has
+    no way to take the decision.
+    """
+    from rad_intel.auth import notify
+
+    monkeypatch.setenv("FAST2SMS_API_KEY", "key")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SMTP_FROM", "study@example.org")
+    assert notify.channel_name() == "sms"
+    monkeypatch.setenv("RAD_INTEL_OTP_CHANNEL", "log")
+    assert notify.channel_name() == "server-log"
+
+
+async def test_a_code_minted_on_the_console_logs_in(monkeypatch):
+    """
+    The locked-out path: no SMS, no email, a code minted on the server with
+    manage_clinicians.py, and a session at the end of it.
+    """
+    admin = _make_admin()
+    code, _ = otp.issue_code(admin["id"], channel="console")
+
+    async with _client() as client:
+        # No /auth/code call at all: delivery is the thing that is broken.
+        res = await client.post("/api/v1/auth/login",
+                                json={"email": admin["email"], "code": code})
+        assert res.status_code == 200
+        assert (await client.get("/api/v1/admin/overview")).status_code == 200
+
+
+async def test_a_console_code_still_obeys_every_other_rule():
+    admin = _make_admin()
+    code, _ = otp.issue_code(admin["id"], channel="console")
+    async with _client() as client:
+        first = await client.post("/api/v1/auth/login",
+                                  json={"email": admin["email"], "code": code})
+        second = await client.post("/api/v1/auth/login",
+                                   json={"email": admin["email"], "code": code})
+    assert first.status_code == 200
+    assert second.status_code == 401, "a console code is single use like any other"
