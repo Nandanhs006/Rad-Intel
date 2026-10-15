@@ -278,11 +278,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Clinical Report
     if (data.report) {
-      reportEngine.textContent = data.report.engine || "Gemini 3.5 Flash-Lite";
+      reportEngine.textContent = data.report.engine || "unavailable";
       const sec = data.report.sections || {};
-      reportFindings.textContent = sec.findings || "No focal findings.";
-      reportImpression.textContent = sec.impression || "Evaluation completed.";
-      reportRecommendations.textContent = sec.recommendations || "Clinical correlation advised.";
+      // Never a clinical statement when there is no text. These defaults were
+      // "No focal findings." and "Evaluation completed.", which are findings
+      // of a normal study -- so a report that failed to generate read as an
+      // all-clear printed directly underneath a PNEUMONIA verdict.
+      const unavailable = "Report text unavailable for this section. " +
+        "The prediction and the heat map above are unaffected.";
+      reportFindings.textContent = sec.findings || unavailable;
+      reportImpression.textContent = sec.impression || unavailable;
+      reportRecommendations.textContent = sec.recommendations || unavailable;
     }
 
     // Smooth scroll to results

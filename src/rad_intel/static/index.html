@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=17">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -91,6 +91,8 @@
               <div class="input-group">
                 <label for="input-patient-id">Patient ID</label>
                 <input type="text" id="input-patient-id" placeholder="e.g. PT-2026-089">
+                <span class="field-hint">Kept in this server's audit log. Use a
+                reference, not a name or a hospital number.</span>
               </div>
               <div class="input-group">
                 <label for="select-model">Model Architecture</label>
@@ -944,8 +946,8 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast">Copied to clipboard</div>
 
-  <script src="/static/app.js?v=3"></script>
-  <script src="/static/extras.js?v=15"></script>
-  <script src="/static/workspace.js?v=15"></script>
+  <script src="/static/app.js?v=4"></script>
+  <script src="/static/extras.js?v=17"></script>
+  <script src="/static/workspace.js?v=17"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ FastAPI application entry point for the Rad-Intel research and education framewo
 
 from contextlib import asynccontextmanager
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,14 +81,32 @@ async def validation_error_handler(request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": safe})
 
 
-# CORS Configuration for frontend / client applications
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Cross-origin access.
+#
+# This was allow_origins=["*"] together with allow_credentials=True. Starlette
+# handles that pair by echoing back whichever Origin asked, which means any
+# website could make credentialed requests to this API. SameSite=Lax keeps the
+# session cookie off cross-site fetches, so it was not exploitable as it
+# stood -- but it was one cookie attribute away from being so, and the
+# interface is served from this same origin and needs no CORS at all.
+#
+# RAD_INTEL_CORS_ORIGINS adds specific origins, comma separated, for the case
+# where a separate front end really is hosted elsewhere. There is no wildcard
+# option: a credentialed wildcard is the bug this replaces.
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("RAD_INTEL_CORS_ORIGINS", "").split(",")
+    if origin.strip() and origin.strip() != "*"
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
+    logger.info("Cross-origin requests allowed from: %s", ", ".join(_cors_origins))
 
 # Register Route Handlers
 app.include_router(health_router)
