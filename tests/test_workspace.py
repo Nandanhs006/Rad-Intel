@@ -806,3 +806,87 @@ async def test_two_clinicians_can_work_on_the_queue_at_the_same_time():
     assert [r.status_code for r in responses] == [200] * 6
     for index, record in enumerate(records):
         assert (await db_manager.get_feedback(record))["note"] == f"note {index}"
+
+
+# --- mail that did not arrive ----------------------------------------------
+
+async def test_the_console_counts_requests_that_never_reached_the_inbox():
+    """
+    A misconfigured SMTP password fails quietly from the applicant's side.
+
+    They are told the administrator will be in touch, which is true whether
+    or not the email went out, so the only place the failure can surface is
+    the console.
+    """
+    admin = _make_admin()
+    accounts.create_access_request("Dr Hopeful", "hope@clinic.org", "Some Clinic",
+                                   phone="+91 99999 11111")
+    async with _client() as client:
+        res = await client.get("/api/v1/admin/overview", cookies=_signed_in(admin))
+    assert res.json()["access_requests_unemailed"] == 1
+
+    # Once it has gone out, it stops being counted.
+    accounts.mark_request_notified(accounts.list_access_requests()[0]["id"])
+    async with _client() as client:
+        res = await client.get("/api/v1/admin/overview", cookies=_signed_in(admin))
+    assert res.json()["access_requests_unemailed"] == 0
+
+
+async def test_a_test_email_says_plainly_that_nothing_is_configured():
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post("/api/v1/admin/test-email", cookies=_signed_in(admin))
+    assert res.status_code == 503
+    assert "SMTP_HOST" in res.json()["detail"]
+
+
+async def test_a_test_email_is_sent_when_mail_works(monkeypatch):
+    admin = _make_admin()
+    sent: list[tuple] = []
+    monkeypatch.setattr("rad_intel.api.routes.admin.notify.email_configured", lambda: True)
+    monkeypatch.setattr("rad_intel.api.routes.admin.notify.send_email",
+                        lambda subject, body, to=None: (sent.append((subject, body)),
+                                                        (True, "Emailed you."))[1])
+    async with _client() as client:
+        res = await client.post("/api/v1/admin/test-email", cookies=_signed_in(admin))
+    assert res.status_code == 200
+    assert len(sent) == 1
+
+
+async def test_a_missed_request_can_be_emailed_later(monkeypatch):
+    admin = _make_admin()
+    accounts.create_access_request("Dr Hopeful", "hope@clinic.org", "Some Clinic",
+                                   phone="+91 99999 11111")
+    request_id = accounts.list_access_requests()[0]["id"]
+
+    monkeypatch.setattr("rad_intel.api.routes.admin.notify.send_access_request_email",
+                        lambda *args: (True, "Emailed you."))
+    async with _client() as client:
+        res = await client.post(f"/api/v1/admin/requests/{request_id}/resend",
+                                cookies=_signed_in(admin))
+        after = await client.get("/api/v1/admin/overview", cookies=_signed_in(admin))
+    assert res.status_code == 200
+    assert after.json()["access_requests_unemailed"] == 0
+
+
+async def test_a_failed_resend_does_not_claim_the_request_was_delivered():
+    admin = _make_admin()
+    accounts.create_access_request("Dr Hopeful", "hope@clinic.org", "Some Clinic",
+                                   phone="+91 99999 11111")
+    request_id = accounts.list_access_requests()[0]["id"]
+    async with _client() as client:
+        res = await client.post(f"/api/v1/admin/requests/{request_id}/resend",
+                                cookies=_signed_in(admin))
+    assert res.status_code == 502
+    assert accounts.list_access_requests()[0]["notified"] == 0
+
+
+async def test_only_an_administrator_can_test_or_resend_mail():
+    user = _make_clinician()
+    async with _client() as client:
+        for method, path in (("post", "/api/v1/admin/test-email"),
+                             ("post", "/api/v1/admin/requests/any/resend")):
+            signed_out = await client.request(method, path)
+            as_clinician = await client.request(method, path, cookies=_signed_in(user))
+            assert signed_out.status_code == 401, path
+            assert as_clinician.status_code == 403, path

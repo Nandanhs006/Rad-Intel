@@ -874,10 +874,19 @@
             "codes cannot be delivered. Run <code>python scripts/manage_clinicians.py " +
             "delivery</code> to see what to set.");
       }
+      const missed = data.access_requests_unemailed || 0;
+      const missedLine = missed
+        ? ` <strong>${missed} request${missed === 1 ? "" : "s"} never reached your ` +
+          `inbox.</strong> ${missed === 1 ? "It is" : "They are"} listed above marked ` +
+          `"not emailed", and can be sent once mail works.`
+        : "";
       if (!data.delivery.email_configured) {
         missing.push(`No SMTP server is configured, so access requests are not emailed ` +
                      `to ${esc(data.delivery.admin_email)}. They are still recorded and ` +
-                     `appear above.`);
+                     `appear above.${missedLine}`);
+      } else if (missed) {
+        missing.push(`Mail is configured, but${missedLine} Send yourself a test email to ` +
+                     `check the settings, then send them.`);
       }
       warning.hidden = !missing.length;
       warning.innerHTML = missing.length
@@ -1147,13 +1156,17 @@
           </div>
           <div class="request-row-meta">
             ref <code>${esc(request.reference)}</code> · ${stamp(request.created_at)}
-            · emailed to you: ${request.emailed_to_admin ? "yes" : "no"}
+            ${request.emailed_to_admin
+              ? '&middot; <span class="badge badge-ok">emailed to you</span>'
+              : '&middot; <span class="badge badge-warn">not emailed</span>'}
           </div>
           <div class="fb-actions">
             <button class="btn-secondary btn-sm" data-prefill='${esc(JSON.stringify({
               name: request.full_name, email: request.email,
               institution: request.institution, phone: request.phone || "",
             }))}'>Use these details</button>
+            ${request.emailed_to_admin ? "" :
+              `<button class="btn-link" data-request-resend="${esc(request.id)}">Email it to me</button>`}
             <button class="btn-link" data-request-status="${esc(request.id)}" data-next="contacted">Mark contacted</button>
             <button class="btn-link" data-request-status="${esc(request.id)}" data-next="declined">Decline</button>
             <button class="btn-link btn-link-danger" data-request-delete="${esc(request.id)}">Remove</button>
@@ -1186,6 +1199,38 @@
       loadAdminOverview();
     } catch (error) {
       window.alert(readable(error));
+    }
+  });
+
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-request-resend]");
+    if (!button) return;
+    busy(button, true);
+    try {
+      const outcome = await api(
+        `/api/v1/admin/requests/${button.dataset.requestResend}/resend`,
+        { method: "POST" });
+      window.alert(outcome.detail);
+      loadAdminRequests();
+      loadAdminOverview();
+    } catch (error) {
+      window.alert(readable(error));
+    } finally {
+      busy(button, false);
+    }
+  });
+
+  $("btn-test-email").addEventListener("click", async () => {
+    const result = $("test-email-result");
+    busy($("btn-test-email"), true);
+    show(result, "Sending\u2026");
+    try {
+      const outcome = await api("/api/v1/admin/test-email", { method: "POST" });
+      show(result, esc(outcome.detail) + " Check your inbox, and your spam folder.", "ok");
+    } catch (error) {
+      show(result, esc(readable(error)), "error");
+    } finally {
+      busy($("btn-test-email"), false);
     }
   });
 

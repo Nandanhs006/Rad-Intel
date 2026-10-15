@@ -217,6 +217,14 @@ created it.
    then creates the account and hands over the generated Rad-Intel ID in
    person or by a channel the clinician already trusts.
 
+If SMTP is not configured, or its password has expired, the email simply does
+not go out — the applicant is told the administrator will be in touch either
+way, which is true, so the failure cannot surface on their side. The console
+is therefore explicit about it: requests that never reached an inbox are
+counted in the warning at the top, marked **not emailed** in the list, and can
+be sent with one button once mail works. **Send myself a test email** checks
+the configuration without inventing an applicant.
+
 ### Logging in
 
 Two factors, two requests, every time:
