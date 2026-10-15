@@ -104,8 +104,8 @@
     $("login-password").required = !clinician;
     $("login-heading").textContent = clinician ? "Log in" : "Administrator log in";
     $("login-blurb").textContent = clinician
-      ? "Your email address and the Rad-Intel ID the administrator gave you. A one-time code is then sent to your registered phone."
-      : "Your email address and password. A one-time code is then sent to your registered phone, same as everybody else.";
+      ? "Your email address and the Rad-Intel ID the administrator gave you. A one-time code is then sent to you \u2014 the next screen says where."
+      : "Your email address and password. A one-time code is then sent to you, same as everybody else.";
     resetToStepOne();
   }
 
@@ -865,14 +865,23 @@
 
       const warning = $("delivery-warning");
       const missing = [];
-      if (!data.delivery.sms_configured) {
-        missing.push(data.delivery.echo_to_server_log
-          ? "No message provider is configured, so login codes are written to the " +
-            "<strong>server log</strong> instead of being sent to anyone's phone. That " +
-            "is a local test mode — configure a provider before anyone else uses this."
-          : "No message provider is configured, so <strong>nobody can log in</strong>: " +
-            "codes cannot be delivered. Run <code>python scripts/manage_clinicians.py " +
-            "delivery</code> to see what to set.");
+      const channel = data.delivery.code_channel;
+      if (channel === "none") {
+        missing.push("Nothing is configured to deliver sign-in codes, so " +
+          "<strong>nobody can log in</strong> — not even you, once this session ends. " +
+          "Configure SMTP (codes by email) or an SMS provider. Run " +
+          "<code>python scripts/manage_clinicians.py delivery</code> for the exact " +
+          "settings.");
+      } else if (channel === "server-log") {
+        missing.push("Sign-in codes are being written to the <strong>server log</strong> " +
+          "rather than sent to anyone. That is a local test mode: nobody but whoever " +
+          "can read this server's terminal is able to log in. Configure SMTP or an SMS " +
+          "provider before anyone else uses this.");
+      } else if (channel === "email") {
+        missing.push("Sign-in codes are sent <strong>by email</strong>, not SMS. That is " +
+          "a working second factor and needs no telecom registration, but a clinician " +
+          "whose mailbox is open on a shared machine is less protected than one holding " +
+          "a phone. Configure an SMS provider to change it.");
       }
       const missed = data.access_requests_unemailed || 0;
       const missedLine = missed
