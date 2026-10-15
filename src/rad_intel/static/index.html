@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=6">
+  <link rel="stylesheet" href="/static/style.css?v=9">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -387,6 +387,10 @@
               Send verification code
             </button>
 
+            <button type="button" class="btn-link" id="btn-have-code">
+              I already have a code
+            </button>
+
             <div id="login-step2" class="code-step" hidden>
               <div class="code-sent" id="code-sent"></div>
               <div class="form-row">
@@ -743,8 +747,12 @@
                 <button class="btn-secondary btn-sm" id="btn-test-email" type="button">
                   Send myself a test email
                 </button>
+                <button class="btn-secondary btn-sm" id="btn-test-sms" type="button">
+                  Send myself a test SMS
+                </button>
               </div>
               <div id="test-email-result" class="fb-result" hidden></div>
+              <p class="muted small" id="delivery-note"></p>
               <div class="scroll-box scroll-tall" id="admin-requests"></div>
             </section>
           </div>
@@ -914,7 +922,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=3"></script>
-  <script src="/static/extras.js?v=6"></script>
-  <script src="/static/workspace.js?v=6"></script>
+  <script src="/static/extras.js?v=9"></script>
+  <script src="/static/workspace.js?v=9"></script>
 </body>
 </html>

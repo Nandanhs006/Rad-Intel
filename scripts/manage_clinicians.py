@@ -25,6 +25,11 @@ link to the workspace, which would put both factors in one place.
     python scripts/manage_clinicians.py delete   --email a@b.org
     python scripts/manage_clinicians.py migrate
     python scripts/manage_clinicians.py delivery
+
+Locked out because SMS or email is not working? This prints a sign-in code
+straight to the terminal, no delivery involved:
+
+    python scripts/manage_clinicians.py code --email you@example.org
 """
 from __future__ import annotations
 
@@ -35,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rad_intel.auth import accounts, notify, session  # noqa: E402
+from rad_intel.auth import accounts, activity, notify, otp, session  # noqa: E402
 
 
 def _temp_password() -> str:
@@ -212,6 +217,44 @@ def cmd_migrate(_args: argparse.Namespace) -> None:
                   f"--phone \"+91 ...\"")
 
 
+def cmd_code(args: argparse.Namespace) -> None:
+    """
+    Mint a sign-in code and print it here, bypassing delivery entirely.
+
+    This is not a back door. Running it needs a shell on the machine the
+    service runs on, and anybody with that can already read the database and
+    change the code; what it does not need is a working SMS provider or mail
+    server. It exists so that an administrator is never locked out of their
+    own study by a telecom regulation or an expired app password.
+
+    The code is an ordinary one: single use, ten minutes, and it goes through
+    the same verification as any other. The act is written to the activity
+    log, so it is visible afterwards rather than silent.
+    """
+    user = accounts.get_by_email(args.email) if args.email else accounts.get_by_radintel_id(args.id)
+    if not user:
+        sys.exit("No matching account.")
+    if user["status"] != "active":
+        sys.exit(f"{user['email']} is disabled. Enable the account first.")
+
+    code, message = otp.issue_code(user["id"], channel="console",
+                                   destination_tail=user.get("phone_tail"),
+                                   rate_limited=False)
+    if not code:
+        sys.exit(message)
+
+    activity.record("login.code_from_console", user=user,
+                    detail="minted with manage_clinicians.py on the server")
+    activity.flush()
+
+    print(f"\nSign-in code for {user['full_name']} <{user['email']}>\n")
+    print(f"    {code}\n")
+    print(f"Valid for {otp.CODE_TTL_SECONDS // 60} minutes, one use only. Type it into")
+    print("the workspace after pressing \"Send verification code\" — or just press that")
+    print("button first and use whichever code is newest, since a new request cancels")
+    print("the previous one.\n")
+
+
 def cmd_delivery(_args: argparse.Namespace) -> None:
     status = notify.delivery_status()
     print("\nHow sign-in codes and emails are delivered\n" + "-" * 62)
@@ -316,6 +359,11 @@ def main() -> None:
     rm.add_argument("--email", required=True)
     rm.add_argument("--yes", action="store_true", help="Skip the confirmation")
     rm.set_defaults(func=cmd_delete)
+
+    c = sub.add_parser("code", help="Print a sign-in code, bypassing SMS and email")
+    c.add_argument("--email")
+    c.add_argument("--id", help="Rad-Intel ID, in full")
+    c.set_defaults(func=cmd_code)
 
     sub.add_parser("migrate", help="Issue IDs to accounts that predate them"
                    ).set_defaults(func=cmd_migrate)

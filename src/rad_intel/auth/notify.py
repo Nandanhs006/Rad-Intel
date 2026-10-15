@@ -82,6 +82,11 @@ def channel_name() -> str:
     otherwise the best configured option wins.
     """
     preference = _env("RAD_INTEL_OTP_CHANNEL").lower()
+    if preference in ("log", "server-log", "console"):
+        # Chosen deliberately, so it wins over a configured provider. The only
+        # people who can read a code are the ones who can already read the
+        # server's terminal, which on a laptop demonstration is the point.
+        return "server-log"
     if preference == "sms" and sms_configured():
         return "sms"
     if preference == "email" and email_configured():
@@ -171,16 +176,33 @@ def _fast2sms_send(to: str, body: str) -> tuple[bool, str]:
     request.add_header("authorization", _env("FAST2SMS_API_KEY"))
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
 
+    def _reason(raw: str) -> str:
+        """
+        Fast2SMS explains itself in the body, including on a 400.
+
+        Worth pulling out: its refusals are account-state problems with
+        specific remedies -- an unverified website, or the free credit not
+        being usable through the API until one payment has been made -- and
+        "the provider refused the message" sends an administrator looking in
+        entirely the wrong place.
+        """
+        try:
+            import json
+            return str(json.loads(raw).get("message") or raw)[:300]
+        except Exception:
+            return raw[:300]
+
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
             raw = response.read().decode("utf-8", "replace")
             if 200 <= response.status < 300 and '"return":true' in raw.replace(" ", ""):
                 return True, "Sent by SMS."
-            logger.error("Fast2SMS refused a verification code: %s", raw[:200])
-            return False, "The SMS provider refused the message."
+            logger.error("Fast2SMS refused a message: %s", _reason(raw))
+            return False, f"Fast2SMS refused it: {_reason(raw)}"
     except urllib.error.HTTPError as exc:
-        logger.error("Fast2SMS rejected a verification code with HTTP %s.", exc.code)
-        return False, f"The SMS provider rejected the request (HTTP {exc.code})."
+        reason = _reason(exc.read().decode("utf-8", "replace"))
+        logger.error("Fast2SMS rejected a message (HTTP %s): %s", exc.code, reason)
+        return False, f"Fast2SMS refused it: {reason}"
     except Exception as exc:
         logger.error("Fast2SMS could not be reached: %s", type(exc).__name__)
         return False, "Could not reach the SMS provider."
@@ -224,7 +246,15 @@ def send_verification_code(phone: str | None, code: str, full_name: str,
         if sent:
             tail = "".join(ch for ch in phone if ch.isdigit())[-4:]
             return True, "sms", f"Code texted to the number ending {tail}."
-        return False, "sms", f"The code could not be sent. {detail}"
+        # The provider's own words can describe the study's billing or
+        # verification state, which is the administrator's business and not
+        # the business of whoever is standing at the login form.
+        logger.error("A sign-in code could not be texted: %s", detail)
+        return False, "sms", (
+            "The code could not be texted to you. This is a problem with the study's "
+            "message provider, not with anything you did — tell the study "
+            "administrator, who can see the reason."
+        )
 
     if channel == "email":
         if not email:
@@ -260,6 +290,22 @@ def send_verification_code(phone: str | None, code: str, full_name: str,
         "Verification codes cannot be sent: this server has no SMS provider and no "
         "email configured. Contact the study administrator."
     )
+
+
+def send_test_sms(phone: str, full_name: str) -> tuple[bool, str]:
+    """
+    Text the administrator, reporting the provider's own words on failure.
+
+    The counterpart to the test email: somewhere the real reason an SMS was
+    refused is visible, rather than only in the server's log.
+    """
+    if not sms_configured():
+        return False, ("No SMS provider is configured. Set FAST2SMS_API_KEY (India) or "
+                       "the TWILIO_* values, and RAD_INTEL_OTP_CHANNEL=sms.")
+    if not phone:
+        return False, "No phone number is on your account to text."
+    return _send_sms(phone, f"Rad-Intel delivery test for {full_name}. "
+                            f"If you are reading this, sign-in codes will arrive.")
 
 
 # --- email -----------------------------------------------------------------

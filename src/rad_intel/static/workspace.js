@@ -112,9 +112,13 @@
   function resetToStepOne() {
     loginStep2.hidden = true;
     $("btn-send-code").hidden = false;
+    $("btn-have-code").hidden = false;
     $("login-code").value = "";
     hide(loginError);
   }
+
+  // setLoginMode decides which first factor is required; it runs before any
+  // code step, so revealCodeStep clears these again afterwards.
 
   document.querySelectorAll("[data-login-mode]").forEach((button) =>
     button.addEventListener("click", () => setLoginMode(button.dataset.loginMode)));
@@ -145,12 +149,9 @@
     hide(loginError);
     try {
       const result = await api(path, asJson(payload));
-      $("code-sent").innerHTML =
+      revealCodeStep(
         `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>` +
-        `<span>${esc(result.detail)}</span>`;
-      loginStep2.hidden = false;
-      button.hidden = true;
-      $("login-code").focus();
+        `<span>${esc(result.detail)}</span>`);
     } catch (error) {
       show(loginError, esc(readable(error)), "error");
     } finally {
@@ -160,6 +161,33 @@
 
   $("btn-send-code").addEventListener("click", sendCode);
   $("btn-resend").addEventListener("click", sendCode);
+
+  /**
+   * Show the code box and stop asking for the first factor.
+   *
+   * Once there is a code, only the email address and the code are submitted:
+   * the Rad-Intel ID or password did their job when the code was issued. They
+   * have to stop being `required` as well as stop being needed, or the
+   * browser's own validation silently refuses to submit a form whose empty
+   * field is no longer being asked for.
+   */
+  function revealCodeStep(message) {
+    loginStep2.hidden = false;
+    $("btn-send-code").hidden = true;
+    $("btn-have-code").hidden = true;
+    $("login-radid").required = false;
+    $("login-password").required = false;
+    $("code-sent").innerHTML = message;
+    $("login-code").focus();
+  }
+
+  // An administrator locked out because mail or SMS is down can mint a code
+  // on the server with `manage_clinicians.py code`. Without this they would
+  // have nowhere to type it, because the box only appeared after a delivery
+  // that is the very thing failing.
+  $("btn-have-code").addEventListener("click", () => revealCodeStep(
+    "<span>Enter the code you were given. If it was printed on the server rather " +
+    "than sent to you, that is the one.</span>"));
 
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -866,37 +894,52 @@
       const warning = $("delivery-warning");
       const missing = [];
       const channel = data.delivery.code_channel;
+      const missed = data.access_requests_unemailed || 0;
+
+      // Only one thing here is an emergency: nobody being able to log in.
       if (channel === "none") {
         missing.push("Nothing is configured to deliver sign-in codes, so " +
           "<strong>nobody can log in</strong> — not even you, once this session ends. " +
-          "Configure SMTP (codes by email) or an SMS provider. Run " +
-          "<code>python scripts/manage_clinicians.py delivery</code> for the exact " +
-          "settings.");
+          "Configure SMS, or set <code>RAD_INTEL_OTP_CHANNEL=log</code> to print codes " +
+          "to the server's terminal. <code>manage_clinicians.py code --email …</code> " +
+          "will print one for you right now either way.");
       } else if (channel === "server-log") {
-        missing.push("Sign-in codes are being written to the <strong>server log</strong> " +
-          "rather than sent to anyone. That is a local test mode: nobody but whoever " +
-          "can read this server's terminal is able to log in. Configure SMTP or an SMS " +
-          "provider before anyone else uses this.");
+        missing.push("Sign-in codes are being written to the <strong>server's " +
+          "terminal</strong> and sent to nobody. Only someone who can read that " +
+          "terminal can log in, which is fine while you are the only one using this " +
+          "and not once a clinician needs to.");
       } else if (channel === "email") {
-        missing.push("Sign-in codes are sent <strong>by email</strong>, not SMS. That is " +
-          "a working second factor and needs no telecom registration, but a clinician " +
-          "whose mailbox is open on a shared machine is less protected than one holding " +
-          "a phone. Configure an SMS provider to change it.");
+        missing.push("Sign-in codes are sent <strong>by email</strong>, not SMS. That " +
+          "works, but a clinician whose mailbox is open on a shared machine is less " +
+          "protected than one holding a phone — and if mail stops working, nobody can " +
+          "log in. " + (data.delivery.sms_configured
+            ? "An SMS provider <em>is</em> configured but not selected: press " +
+              "<strong>Send myself a test SMS</strong> first, and if it arrives, set " +
+              "<code>RAD_INTEL_OTP_CHANNEL=sms</code>."
+            : "Set <code>FAST2SMS_API_KEY</code> (India) or the <code>TWILIO_*</code> " +
+              "values to switch to SMS."));
       }
-      const missed = data.access_requests_unemailed || 0;
-      const missedLine = missed
-        ? ` <strong>${missed} request${missed === 1 ? "" : "s"} never reached your ` +
-          `inbox.</strong> ${missed === 1 ? "It is" : "They are"} listed above marked ` +
-          `"not emailed", and can be sent once mail works.`
-        : "";
-      if (!data.delivery.email_configured) {
-        missing.push(`No SMTP server is configured, so access requests are not emailed ` +
-                     `to ${esc(data.delivery.admin_email)}. They are still recorded and ` +
-                     `appear above.${missedLine}`);
-      } else if (missed) {
-        missing.push(`Mail is configured, but${missedLine} Send yourself a test email to ` +
-                     `check the settings, then send them.`);
+
+      // Mail for access requests is optional: the requests are listed above
+      // either way, so a missing SMTP server is a note, not an alarm. It only
+      // becomes one when mail was configured and still did not arrive.
+      if (data.delivery.email_configured && missed) {
+        missing.push(`Mail is configured, but <strong>${missed} access ` +
+          `request${missed === 1 ? "" : "s"} never reached your inbox.</strong> ` +
+          `${missed === 1 ? "It is" : "They are"} listed above marked "not emailed". ` +
+          `Send yourself a test email to check the settings, then send ` +
+          `${missed === 1 ? "it" : "them"}.`);
       }
+
+      const note = $("delivery-note");
+      if (note) {
+        note.innerHTML = data.delivery.email_configured
+          ? `Access requests are emailed to ${esc(data.delivery.admin_email)} and listed above.`
+          : "Access requests are not emailed anywhere — they appear in the list above, " +
+            "which is all they need to do. Fill in the SMTP settings only if you want " +
+            "to be notified away from this page.";
+      }
+
       warning.hidden = !missing.length;
       warning.innerHTML = missing.length
         ? `<svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -1240,6 +1283,21 @@
       show(result, esc(readable(error)), "error");
     } finally {
       busy($("btn-test-email"), false);
+    }
+  });
+
+  $("btn-test-sms").addEventListener("click", async () => {
+    const result = $("test-email-result");
+    busy($("btn-test-sms"), true);
+    show(result, "Texting\u2026");
+    try {
+      const outcome = await api("/api/v1/admin/test-sms", { method: "POST" });
+      show(result, esc(outcome.detail) + " Check your phone.", "ok");
+    } catch (error) {
+      // The provider's own wording, which usually names the exact remedy.
+      show(result, esc(readable(error)), "error");
+    } finally {
+      busy($("btn-test-sms"), false);
     }
   });
 

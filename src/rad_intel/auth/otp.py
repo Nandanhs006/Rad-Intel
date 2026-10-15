@@ -131,16 +131,24 @@ def seconds_until_next_allowed(user_id: str) -> int:
 
 
 def issue_code(user_id: str, channel: str = "sms",
-               destination_tail: str | None = None) -> tuple[str | None, str]:
+               destination_tail: str | None = None,
+               rate_limited: bool = True) -> tuple[str | None, str]:
     """
     Mint a code for an account.
 
     Returns (code, message). The code is returned exactly once, to be handed
     straight to the delivery channel; it is never recoverable afterwards. On
     refusal the code is None and the message says why.
+
+    `rate_limited` is False only for a code minted on the server's own
+    console. The limit exists to stop the endpoint being used to flood
+    somebody's phone and run up an SMS bill; a console code sends nothing to
+    anybody, and the person running it already has a shell on the machine.
+    Keeping the limit there would mean an administrator locked out by a
+    failing provider gets locked out a second time by the recovery path.
     """
     init()
-    if recent_request_count(user_id) >= MAX_REQUESTS_PER_WINDOW:
+    if rate_limited and recent_request_count(user_id) >= MAX_REQUESTS_PER_WINDOW:
         wait = seconds_until_next_allowed(user_id)
         return None, (
             f"Too many verification codes requested. Try again in about "

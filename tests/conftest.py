@@ -32,3 +32,23 @@ def dummy_cxr_bytes(dummy_cxr_image):
 def dummy_tensor():
     """Generates a (1, 3, 224, 224) dummy PyTorch float tensor."""
     return torch.randn(1, 3, 224, 224)
+
+
+@pytest.fixture(autouse=True)
+def no_live_delivery(monkeypatch):
+    """
+    Keep every test away from the real delivery configuration.
+
+    config.py loads .env into the process environment, so a developer with
+    working SMTP or SMS credentials had them visible to the whole suite --
+    and the tests that exercise the "nothing is configured" paths went ahead
+    and sent live email instead. Delivery is something tests opt into by
+    setting these themselves, never something they inherit.
+    """
+    for name in (
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
+        "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
+        "FAST2SMS_API_KEY", "FAST2SMS_ROUTE",
+        "RAD_INTEL_OTP_CHANNEL", "RAD_INTEL_OTP_ECHO",
+    ):
+        monkeypatch.delenv(name, raising=False)

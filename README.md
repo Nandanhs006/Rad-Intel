@@ -248,8 +248,37 @@ shared laptop.
 
 In India, domestic application-to-person SMS sits behind DLT registration
 under TRAI's TCCCPR rules, and Twilio will not carry it without that
-paperwork, so `FAST2SMS_API_KEY` is the practical route there. Email codes
-need no registration at all and are the sensible default for a study.
+paperwork, so `FAST2SMS_API_KEY` is the practical route there — though
+Fast2SMS will not let its free signup credit be spent through the API until
+one payment of ₹100 or more has been made, and its dedicated OTP route needs
+website verification and carries numeric codes only. Email codes need no
+registration at all and are the sensible default for a study.
+
+**Send myself a test SMS** and **Send myself a test email** in the console
+report the provider's own words on failure. Those words usually name the
+exact remedy, and they never reach the login form: what the study owes its
+SMS provider is not the business of the clinician trying to log in.
+
+### Locked out
+
+If neither SMS nor email is working, nobody can log in — including the
+administrator. Rather than leaving that to be discovered, there is a way back:
+
+```bash
+python scripts/manage_clinicians.py code --email you@example.org
+```
+
+It prints an ordinary sign-in code — single use, ten minutes, same
+verification as any other — and sends it nowhere. In the login form, press
+**I already have a code** instead of **Send verification code**, and type it
+in. Running it needs a shell on the machine the service runs on, and anybody
+with that can already read the database; what it does not need is a working
+provider. It is written to the activity log, and it is the one path that
+ignores the per-account code-request limit, because a code that is delivered
+to nobody cannot flood anybody's phone.
+
+`RAD_INTEL_OTP_CHANNEL=log` does the same thing through the web interface,
+printing codes to the server's terminal.
 
 If a code cannot be delivered the sign-in is refused. It is never shown on
 screen: a system that falls back to displaying the code when its provider is

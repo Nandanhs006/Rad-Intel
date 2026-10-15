@@ -344,6 +344,27 @@ async def send_test_email(request: Request, admin: dict = Depends(require_admin)
     return {"sent": True, "detail": detail}
 
 
+@router.post("/test-sms",
+             dependencies=[Depends(limit("admin-test-sms", 10, 600, "test messages"))])
+async def send_test_sms(request: Request, admin: dict = Depends(require_admin)):
+    """
+    Text the administrator's own number, and report why if it fails.
+
+    SMS providers refuse for account-state reasons with specific remedies --
+    an unverified sender, credit that cannot be spent through the API until
+    one payment has been made. Those reasons are useless in a server log
+    nobody is reading and useless to the clinician at the login form, so they
+    surface here.
+    """
+    sent, detail = await run_in_threadpool(
+        notify.send_test_sms, admin.get("phone"), admin["full_name"])
+    activity.record("admin.test_sms", user=admin, ip=client_address(request),
+                    detail=detail, outcome="ok" if sent else "error")
+    if not sent:
+        raise HTTPException(status_code=502, detail=detail)
+    return {"sent": True, "detail": detail}
+
+
 @router.post("/requests/{request_id}/resend")
 async def resend_request_email(request_id: str, request: Request,
                                admin: dict = Depends(require_admin)):
