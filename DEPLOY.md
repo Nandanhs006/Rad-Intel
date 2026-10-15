@@ -274,34 +274,27 @@ logged out. Give them the new one.
 
 ## Training a better model
 
-There are two ways, and they are different things.
+One way, three steps, all in the console.
 
-**The quick one — fine-tuning, on the server, minutes**
+1. Clinicians review cases (upload, mark right or wrong) and press **Create
+   training export** when a batch is worth keeping. That is their save point,
+   and it is the only part of this they do.
+2. **You** press **Build training bundle** — one zip with every reviewed
+   radiograph and its label.
+3. You train it on a free GPU, then paste the resulting file's share link
+   back into the console.
 
-1. Clinicians review cases (upload, mark right or wrong).
-2. Anyone presses **Create training export** — this freezes those cases. That
-   is their save point, and it is the only part of training they do.
-3. **You** press **Start fine-tuning run**. Clinicians cannot; it is hours of
-   machine time at worst and it freezes everybody's exports while it runs.
-4. It nudges the existing checkpoint with that one batch, produces a new
-   numbered version, and **changes nothing**. You look at its scores.
+This produces the **community model**: a second model kept completely apart
+from the one your paper reports. Each run throws the previous community
+version away and retrains the same architecture *from scratch* on the public
+dataset plus **every** case collected so far, so a version is built from all
+the evidence rather than carrying the drift of every run before it.
 
-**The real one — the community model, on a borrowed GPU, an hour**
+**[COMMUNITY_MODEL.md](COMMUNITY_MODEL.md)** walks through all of it in plain
+language, with the notebook cells to paste.
 
-A second model, kept completely apart from the one your paper reports. Each
-run throws the previous community version away and retrains the same
-architecture *from scratch* on the public dataset plus **every** case
-collected so far, so a version is built from all the evidence rather than
-carrying the drift of every run before it.
-
-It is three steps in the console — build a bundle, train it elsewhere, upload
-the result — and **[COMMUNITY_MODEL.md](COMMUNITY_MODEL.md)** walks through
-all of it with the cells to paste.
-
-> Neither kind of training takes the site down. Training runs as its own
-> process while the web server keeps answering from the model it already has
-> loaded. Visitors see nothing except, during a run on the server, slightly
-> slower predictions.
+> It does not take the site down. The training happens on a borrowed GPU,
+> nowhere near your server, and the server keeps serving throughout.
 
 ## Releasing a model to the public
 

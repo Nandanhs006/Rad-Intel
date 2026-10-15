@@ -28,14 +28,17 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "cryptography>=43.0.0",
     "python-dotenv>=1.0.1",
-    "torchxrayvision>=1.3.0"
+    "torchxrayvision>=1.3.0",
+    # Used at runtime to fetch a community checkpoint from a share link, so
+    # a 136 MB file does not have to go up through the administrator's own
+    # connection. It was a dev-only dependency when only the tests needed it.
+    "httpx>=0.28.0"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
-    "httpx>=0.28.0"
+    "pytest-asyncio>=0.24.0"
 ]
 
 [tool.setuptools.packages.find]

@@ -42,6 +42,7 @@ from rad_intel.api.dependencies import (
 )
 from rad_intel.api.ratelimit import client_address, limit
 from rad_intel.api.schemas import (
+    CommunityFetchRequest,
     FeedbackExportResponse,
     FeedbackItem,
     FeedbackListResponse,
@@ -1216,6 +1217,195 @@ def _validate_checkpoint(path: Path) -> dict:
     }
 
 
+# Where a checkpoint may be fetched from.
+#
+# An allowlist rather than "any https URL", because this endpoint makes the
+# server fetch something an address says is there, and a server that will
+# fetch any address on request is a way to reach things only it can reach --
+# a cloud provider's metadata service, a database on the same private
+# network. These are the places somebody actually puts a 136 MB file to pass
+# it on, and nothing on them is internal to us.
+_FETCH_HOSTS = (
+    "drive.google.com", "drive.usercontent.google.com", "docs.google.com",
+    "dropbox.com", "dropboxusercontent.com",
+    "github.com", "githubusercontent.com",
+    "huggingface.co", "hf.co",
+)
+_FETCH_REDIRECTS = 5
+_DRIVE_ID = re.compile(r"/d/(?P<id>[A-Za-z0-9_-]{10,})|[?&]id=(?P<q>[A-Za-z0-9_-]{10,})")
+
+
+def _allowed_host(url: str) -> str | None:
+    """The host, when this address is one we will fetch from. Otherwise None."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return None
+    host = parsed.hostname.lower()
+    for allowed in _FETCH_HOSTS:
+        if host == allowed or host.endswith("." + allowed):
+            return host
+    return None
+
+
+def _direct_link(url: str) -> str:
+    """
+    Turn a share link into one that returns the file itself.
+
+    A Google Drive link opens a viewer, and a file this size also meets the
+    "can't scan it for viruses" page rather than the bytes. Dropbox's share
+    link renders a preview. Both have a documented form that does not.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+
+    if host.endswith("google.com"):
+        match = _DRIVE_ID.search(url)
+        file_id = match and (match["id"] or match["q"])
+        if file_id:
+            return ("https://drive.usercontent.google.com/download"
+                    f"?id={file_id}&export=download&confirm=t")
+    if host.endswith("dropbox.com"):
+        base = url.split("?", 1)[0]
+        return f"{base}?dl=1"
+    return url
+
+
+def _download_checkpoint(url: str, into: Path) -> Path:
+    """
+    Fetch a checkpoint to a file. Raises ValueError with something readable.
+
+    Redirects are followed by hand so each hop is checked against the
+    allowlist: following them automatically would let an allowed address
+    hand the request on to one that is not.
+    """
+    import httpx
+
+    target = into / "fetched.pt"
+    current = _direct_link(url)
+
+    with httpx.Client(timeout=httpx.Timeout(30.0, read=300.0),
+                      follow_redirects=False) as client:
+        for _ in range(_FETCH_REDIRECTS):
+            if not _allowed_host(current):
+                raise ValueError(
+                    "That link is not one this server will fetch from. Put the file in "
+                    "Google Drive, Dropbox, a GitHub release or Hugging Face, share it "
+                    "so anyone with the link can read it, and paste that link. Or use "
+                    "the file picker above instead."
+                )
+            with client.stream("GET", current) as response:
+                if response.status_code in (301, 302, 303, 307, 308):
+                    current = str(response.headers.get("location") or "")
+                    if not current:
+                        raise ValueError("That link redirected to nowhere.")
+                    continue
+                if response.status_code == 404:
+                    raise ValueError(
+                        "Nothing is there (404). Check the link, and check the file is "
+                        "shared so that anyone with the link can read it."
+                    )
+                if response.status_code >= 400:
+                    raise ValueError(
+                        f"The link answered {response.status_code}. If it is a Google "
+                        f"Drive file, make sure sharing is set to “Anyone with the "
+                        f"link”, not “Restricted”."
+                    )
+
+                written = 0
+                with target.open("wb") as out:
+                    for chunk in response.iter_bytes(4 * 1024 * 1024):
+                        written += len(chunk)
+                        if written > MAX_CHECKPOINT_BYTES:
+                            raise ValueError(
+                                f"That file is larger than the "
+                                f"{MAX_CHECKPOINT_BYTES // (1024 * 1024)} MB limit. A "
+                                f"{SHARED_MODEL} checkpoint is about 136 MB."
+                            )
+                        out.write(chunk)
+                if written < 1024:
+                    raise ValueError(
+                        "That link gave back a few bytes rather than a checkpoint — "
+                        "usually a sharing page instead of the file. Check that anyone "
+                        "with the link can read it."
+                    )
+                return target
+
+    raise ValueError("That link redirected too many times.")
+
+
+def _keep_community_checkpoint(staged: Path) -> tuple[Path, dict]:
+    """Check a staged checkpoint and, if it passes, keep it as the next version."""
+    summary = _validate_checkpoint(staged)
+    target = _next_community_path()
+    shutil.move(str(staged), target)
+    return target, summary
+
+
+def _community_response(target: Path, summary: dict, source: str) -> dict:
+    _meta_cache.clear()
+    return {
+        "file": target.name,
+        "name": _release_name(target.name),
+        "metrics": summary["metrics"],
+        "threshold": summary["threshold"],
+        "size_mb": round(target.stat().st_size / (1024 * 1024), 1),
+        "source": source,
+        "detail": (
+            f"Stored as {target.name}. Nothing is being served from it and nobody can "
+            f"choose it yet — it is now in “Release a model to the public”, where "
+            f"releasing it asks for your password again."
+        ),
+    }
+
+
+@router.post("/community/fetch",
+             dependencies=[Depends(limit("community-upload", 10, 3600,
+                                         "community model uploads"))])
+async def fetch_community_model(req: CommunityFetchRequest, request: Request,
+                                admin: dict = Depends(require_admin)):
+    """
+    Pull a community model in from a share link. Administrator only.
+
+    The alternative to pushing 136 MB up a home connection: the notebook that
+    trained it saves straight to a drive, and the server fetches it from
+    there at the speed those two machines talk to each other.
+    """
+    if not await run_in_threadpool(accounts.identify_admin, admin["email"], req.password):
+        activity.record("community.fetch_refused", user=admin, ip=client_address(request),
+                        detail="wrong password", outcome="refused")
+        raise HTTPException(status_code=403,
+                            detail="Password incorrect. Nothing was fetched.")
+
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    holding = Path(tempfile.mkdtemp(prefix="radintel-fetch-", dir=WEIGHTS_DIR))
+    try:
+        try:
+            staged = await run_in_threadpool(_download_checkpoint, req.url.strip(), holding)
+            target, summary = await run_in_threadpool(_keep_community_checkpoint, staged)
+        except ValueError as exc:
+            activity.record("community.fetch_refused", user=admin,
+                            ip=client_address(request), detail=str(exc)[:200],
+                            outcome="refused")
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            logger.warning("Could not fetch a community checkpoint: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=("The server could not reach that link. Check it opens in your "
+                        "own browser, then try again."),
+            )
+    finally:
+        shutil.rmtree(holding, ignore_errors=True)
+
+    activity.record("community.model_fetched", user=admin, ip=client_address(request),
+                    detail=f"{target.name} acc={summary['metrics'].get('accuracy')}")
+    return _community_response(target, summary, source="link")
+
+
 @router.post("/community/upload",
              dependencies=[Depends(limit("community-upload", 10, 3600,
                                          "community model uploads"))])
@@ -1262,34 +1452,18 @@ async def upload_community_model(
             raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
         try:
-            summary = await run_in_threadpool(_validate_checkpoint, staged)
+            target, summary = await run_in_threadpool(_keep_community_checkpoint, staged)
         except ValueError as exc:
             activity.record("community.upload_refused", user=admin,
                             ip=client_address(request), detail=str(exc)[:200],
                             outcome="refused")
             raise HTTPException(status_code=400, detail=str(exc))
-
-        target = _next_community_path()
-        shutil.move(str(staged), target)
     finally:
         shutil.rmtree(holding, ignore_errors=True)
 
-    _meta_cache.clear()
-    described = _release_name(target.name)
     activity.record("community.model_uploaded", user=admin, ip=client_address(request),
                     detail=f"{target.name} acc={summary['metrics'].get('accuracy')}")
-    return {
-        "file": target.name,
-        "name": described,
-        "metrics": summary["metrics"],
-        "threshold": summary["threshold"],
-        "size_mb": round(target.stat().st_size / (1024 * 1024), 1),
-        "detail": (
-            f"Stored as {target.name}. Nothing is being served from it and nobody can "
-            f"choose it yet — it is now in “Release a model to the public”, where "
-            f"releasing it asks for your password again."
-        ),
-    }
+    return _community_response(target, summary, source="upload")
 
 
 # --- stored images ----------------------------------------------------------

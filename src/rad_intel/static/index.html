@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=22">
+  <link rel="stylesheet" href="/static/style.css?v=23">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -656,34 +656,24 @@
                 What happens to reviewed cases
               </h3>
               <p class="muted small train-note">
-                Reviewed cases become training material through an export, and training
-                itself is run by the study administrator. Neither one changes the
-                checkpoint the project reports, and the held-out test partition is never
+                An export is the save point: it freezes a batch of cases so they keep
+                matching whatever gets trained on them. Training itself is run by the
+                study administrator, on a separate machine, and never changes the
+                checkpoint the project reports. The held-out test partition is never
                 trained on.
+              </p>
+
+              <p class="muted small" id="train-clinician-note" hidden>
+                So there is nothing else for you to do here. Upload and correct cases, and
+                press <strong>Create training export</strong> when a batch is worth
+                keeping.
               </p>
 
               <div id="train-controls" hidden>
                 <div class="fb-actions">
-                  <button class="btn-primary" id="fb-train" type="button">Start fine-tuning run</button>
                   <button class="btn-danger" id="fb-train-cancel" type="button" hidden>Cancel run</button>
                 </div>
-                <p class="caution" id="train-caution">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-                  <span>One run at a time. While it is going, everybody can keep uploading
-                  and correcting cases, but exporting is held. The public tool keeps working
-                  throughout — it serves its own loaded copy of the model. <strong>Leave
-                  this tab open</strong>: if the browser that started the run stops reporting
-                  in for half an hour the run cancels itself, because nobody would be left to
-                  read the result. Cancelling writes no new version and leaves the current
-                  model alone.</span>
-                </p>
               </div>
-
-              <p class="muted small" id="train-clinician-note" hidden>
-                You do not need to do anything here. Upload and correct cases, and press
-                <strong>Create training export</strong> when a batch is worth keeping —
-                that is the save point. The administrator trains from it.
-              </p>
 
               <pre id="fb-train-log" class="train-log" hidden></pre>
 
@@ -826,10 +816,23 @@
                   </p>
                   <form id="cm-upload-form" class="auth-form">
                     <div class="form-row">
-                      <label class="field-label" for="cm-file">Checkpoint file</label>
-                      <input type="file" id="cm-file" class="input" accept=".pt" required>
+                      <label class="field-label" for="cm-link">Share link
+                        <span class="opt-tag">the easy way</span></label>
+                      <input type="url" id="cm-link" class="input"
+                             placeholder="https://drive.google.com/file/d/…/view">
+                      <span class="field-hint">Save the <code>.pt</code> to your Google
+                      Drive from the notebook — that is Google to Google, so it takes
+                      seconds — share it so <strong>anyone with the link</strong> can
+                      read it, and paste the link here. The server fetches it itself, so
+                      nothing goes up through your own connection. Dropbox, a GitHub
+                      release and Hugging Face work too.</span>
+                    </div>
+                    <div class="form-row">
+                      <label class="field-label" for="cm-file">…or the file itself</label>
+                      <input type="file" id="cm-file" class="input" accept=".pt">
                       <span class="field-hint">The <code>best_community_hybrid_v…_model.pt</code>
-                      the notebook wrote. About 136 MB.</span>
+                      the notebook wrote, about 136 MB, sent from this browser. Fine on a
+                      fast connection; slow on a home one.</span>
                     </div>
                     <div class="form-row">
                       <label class="field-label" for="cm-password">Your administrator password</label>
@@ -837,7 +840,7 @@
                              autocomplete="current-password" required>
                     </div>
                     <button class="btn-primary btn-block" type="submit" id="cm-upload">
-                      Upload this version
+                      Bring this version in
                     </button>
                     <div id="cm-upload-result" class="fb-result" hidden></div>
                   </form>
@@ -1103,7 +1106,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=5"></script>
-  <script src="/static/extras.js?v=22"></script>
-  <script src="/static/workspace.js?v=22"></script>
+  <script src="/static/extras.js?v=23"></script>
+  <script src="/static/workspace.js?v=23"></script>
 </body>
 </html>

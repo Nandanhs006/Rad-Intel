@@ -142,25 +142,51 @@ Now wait. On a T4 this is roughly **30–60 minutes**. You will see:
 **Do not close the tab.** Colab disconnects an idle notebook and you lose the
 run. Leave it in front of you.
 
-### Cell 6 — download the result
+### Cell 6 — get the result out
+
+**The easy way — save it to your Google Drive.** Google to Google, so it is
+seconds rather than minutes, and you never move 136 MB through your own
+connection at all.
+
+```
+from google.colab import drive
+import glob, shutil, os
+drive.mount("/content/drive")
+out = sorted(glob.glob("weights/best_community_hybrid_v*_model.pt"))[-1]
+dest = "/content/drive/MyDrive/" + os.path.basename(out)
+shutil.copy(out, dest)
+print("saved to", dest)
+```
+
+Then in Drive: right-click the file → **Share** → **Anyone with the link** →
+**Copy link**. That link is what you paste in Step 3.
+
+> **Anyone with the link** matters. On **Restricted** the server gets a
+> sharing page instead of the file, and says so.
+
+**Or download it to your laptop** if you would rather:
 
 ```
 from google.colab import files
 import glob
-out = sorted(glob.glob("weights/best_community_hybrid_v*_model.pt"))[-1]
-print(out)
-files.download(out)
+files.download(sorted(glob.glob("weights/best_community_hybrid_v*_model.pt"))[-1])
 ```
-
-A `.pt` file of about **136 MB** lands in your downloads.
 
 ---
 
-## Step 3 — Upload it back
+## Step 3 — Bring it back to the site
 
 On the site: **Administrator console → The community model → Upload the
-result**. Choose the `.pt` file, type your administrator password, press
-**Upload this version**.
+result**. Two ways, pick one:
+
+- **Paste the share link** from Cell 6. The server fetches the file itself,
+  at the speed two datacentres talk to each other. Nothing goes up through
+  your connection. This is the one to use.
+- **Choose the file** from your laptop, if you downloaded it. Fine on fibre,
+  slow on a home connection, and some hosts refuse a body that large.
+
+Either way, type your administrator password and press **Bring this version
+in**.
 
 It is checked before it is kept. It is refused if the weights do not fit the
 architecture, if it carries no operating threshold, or if it reports no
@@ -240,6 +266,19 @@ community version will not contain it.
 **Do I have to use Colab?**
 No. Anything with a GPU and Python works — Kaggle Notebooks, a university
 machine, a rented GPU for an hour. The command in Cell 5 is the whole recipe.
+
+**Which links will the server fetch from?**
+Google Drive, Dropbox, a GitHub release, and Hugging Face. Not any address
+you like — a server that fetches whatever it is handed is a way to reach
+things only it can reach, so it only fetches from places people actually put
+a file to pass it on.
+
+**There used to be a 'Start fine-tuning run' button. Where did it go?**
+Gone, deliberately. It did a different thing — nudged the project's own
+checkpoint with the latest batch — and having two training buttons meant
+explaining which was which every time. One story now: bundle, train, bring it
+back, release. The old script is still there as
+`scripts/finetune_from_feedback.py` if you ever want it from a terminal.
 
 **Can I run it with no GPU at all?**
 Yes, and it will take the better part of a day. `--epochs 20
