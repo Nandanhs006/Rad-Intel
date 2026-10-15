@@ -167,6 +167,20 @@ def test_duplicate_radintel_id_is_refused():
 
 # --- verification codes ----------------------------------------------------
 
+def _past_cooldown() -> None:
+    """
+    Age every issued code past the resend cooldown.
+
+    Tests about what a code *is* -- single use, never repeated, superseded by
+    the next one -- have to ask for two in a row, which real use does not.
+    They step over the cooldown rather than switching off the rate limiting
+    they are not the subject of.
+    """
+    import sqlite3
+
+    with sqlite3.connect(otp.DB_PATH) as conn:
+        conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds');")
+
 def test_a_code_is_twelve_characters_from_the_specified_alphabet():
     code = otp.generate_code()
     assert len(code) == 12
@@ -221,6 +235,7 @@ def test_requesting_a_new_code_cancels_the_previous_one():
     """Two live codes in a phone's message list would be two chances to guess."""
     user = _clinician()
     first, _ = otp.issue_code(user["id"])
+    _past_cooldown()
     second, _ = otp.issue_code(user["id"])
     assert not otp.verify_code(user["id"], first)[0]
     assert otp.verify_code(user["id"], second)[0]
@@ -237,6 +252,7 @@ def test_no_code_is_ever_issued_twice_to_the_same_account(monkeypatch):
     monkeypatch.setattr(otp, "generate_code", lambda: "Fixed-Code1!")
     first, _ = otp.issue_code(user["id"])
     assert first == "Fixed-Code1!"
+    _past_cooldown()
     second, message = otp.issue_code(user["id"])
     assert second is None, "a repeat of a previously issued code must be refused"
     assert "could not generate" in message.lower()
@@ -245,12 +261,13 @@ def test_no_code_is_ever_issued_twice_to_the_same_account(monkeypatch):
 def test_code_requests_are_rate_limited():
     user = _clinician()
     for _ in range(otp.MAX_REQUESTS_PER_WINDOW):
-        code, _ = otp.issue_code(user["id"])
+        code, _ = otp.issue_code(user["id"], channel="sms")
         assert code
-    code, message = otp.issue_code(user["id"])
+        _past_cooldown()
+    code, message = otp.issue_code(user["id"], channel="sms")
     assert code is None
     assert "too many" in message.lower()
-    assert otp.seconds_until_next_allowed(user["id"]) > 0
+    assert otp.seconds_until_next_allowed(user["id"], "sms") > 0
 
 
 def test_codes_are_bound_to_one_account():
@@ -525,3 +542,69 @@ def test_an_entry_is_written_to_the_database_it_was_made_against(monkeypatch, tm
     with sqlite3.connect(scratch) as conn:
         actors = [r[0] for r in conn.execute("SELECT actor FROM activity_log;")]
     assert actors == ["someone@scratch.test"], "the entry must follow its own database"
+
+
+# --- not making ordinary use feel like abuse --------------------------------
+
+def test_pressing_send_again_straight_away_does_not_burn_the_allowance():
+    """
+    Impatience is not abuse. A second press within the cooldown is declined
+    without minting anything and without counting, and says to look in the
+    inbox rather than quoting a limit.
+    """
+    user = _clinician()
+    first, _ = otp.issue_code(user["id"], channel="email")
+    assert first
+
+    blocked, message = otp.issue_code(user["id"], channel="email")
+    assert blocked is None
+    assert "check your inbox" in message.lower()
+    assert "spam" in message.lower()
+    assert otp.recent_request_count(user["id"]) == 1, \
+        "a refused resend must not count against the allowance"
+
+
+def test_the_cooldown_lets_go_after_a_minute():
+    import sqlite3
+
+    user = _clinician()
+    otp.issue_code(user["id"], channel="email")
+    with sqlite3.connect(otp.DB_PATH) as conn:
+        conn.execute("UPDATE login_codes SET created_at = '2020-01-01T00:00:00+00:00';")
+    code, _ = otp.issue_code(user["id"], channel="email")
+    assert code, "once the cooldown has passed a new code must be issued"
+
+
+def test_email_gets_a_larger_allowance_than_sms():
+    """
+    The limit exists to stop somebody's phone being flooded and an SMS bill
+    run up. An emailed code costs nothing, so the same tight number only gets
+    in the way.
+    """
+    assert otp.allowance_for("email") > otp.allowance_for("sms")
+    assert otp.allowance_for(None) == otp.MAX_REQUESTS_PER_WINDOW
+
+
+def test_the_allowance_is_still_enforced_on_email():
+    import sqlite3
+
+    user = _clinician()
+    for _ in range(otp.MAX_REQUESTS_PER_WINDOW_EMAIL):
+        code, message = otp.issue_code(user["id"], channel="email")
+        assert code, message
+        # Step past the cooldown without leaving the rate-limit window.
+        with sqlite3.connect(otp.DB_PATH) as conn:
+            conn.execute("UPDATE login_codes SET created_at = datetime('now', '-70 seconds')"
+                         " WHERE state = 'live';")
+    code, message = otp.issue_code(user["id"], channel="email")
+    assert code is None
+    assert "too many" in message.lower()
+    assert "administrator can issue a code" in message.lower(), \
+        "somebody locked out needs to be told there is a way in"
+
+
+def test_an_administrator_minted_code_ignores_both_limits():
+    user = _clinician()
+    for _ in range(otp.MAX_REQUESTS_PER_WINDOW_EMAIL + 4):
+        code, message = otp.issue_code(user["id"], channel="console", rate_limited=False)
+        assert code, message

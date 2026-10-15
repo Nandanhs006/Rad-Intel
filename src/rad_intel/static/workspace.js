@@ -913,17 +913,10 @@
           "terminal</strong> and sent to nobody. Only someone who can read that " +
           "terminal can log in, which is fine while you are the only one using this " +
           "and not once a clinician needs to.");
-      } else if (channel === "email") {
-        missing.push("Sign-in codes are sent <strong>by email</strong>, not SMS. That " +
-          "works, but a clinician whose mailbox is open on a shared machine is less " +
-          "protected than one holding a phone — and if mail stops working, nobody can " +
-          "log in. " + (data.delivery.sms_configured
-            ? "An SMS provider <em>is</em> configured but not selected: press " +
-              "<strong>Send myself a test SMS</strong> first, and if it arrives, set " +
-              "<code>RAD_INTEL_OTP_CHANNEL=sms</code>."
-            : "Set <code>FAST2SMS_API_KEY</code> (India) or the <code>TWILIO_*</code> " +
-              "values to switch to SMS."));
       }
+      // Email is the configured design here rather than a fallback, so it is
+      // not an alarm. The one thing worth saying is what it rests on: if mail
+      // stops working, nobody can log in.
 
       // Mail for access requests is optional: the requests are listed above
       // either way, so a missing SMTP server is a note, not an alarm. It only
@@ -938,11 +931,16 @@
 
       const note = $("delivery-note");
       if (note) {
-        note.innerHTML = data.delivery.email_configured
+        const requests = data.delivery.email_configured
           ? `Access requests are emailed to ${esc(data.delivery.admin_email)} and listed above.`
           : "Access requests are not emailed anywhere — they appear in the list above, " +
             "which is all they need to do. Fill in the SMTP settings only if you want " +
             "to be notified away from this page.";
+        const codes = channel === "email"
+          ? " Sign-in codes go to each person's own email address, so mail working is " +
+            "what logging in rests on — test it after changing anything."
+          : "";
+        note.innerHTML = requests + codes;
       }
 
       warning.hidden = !missing.length;
