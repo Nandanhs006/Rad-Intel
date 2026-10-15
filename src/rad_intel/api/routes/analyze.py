@@ -100,7 +100,7 @@ async def analyze_xray(
                 status_code=400,
                 detail=f"Could not decode the uploaded file as an image: {decode_error}",
             )
-        selected_model = manager.require_trained(model_name)
+        selected_model = manager.require_trained(model_name, request)
 
         # 2. Prediction
         pred_class, confidence, prob_dict, inf_ms = manager.predict(

@@ -209,6 +209,17 @@ class ModelManager:
             self._parameter_counts[target] = total
         return total
 
+    def is_loaded(self, model_name: str | None = None) -> bool:
+        """
+        Whether this model is in memory, so asking for it costs nothing.
+
+        What the rate limiter needs to know: a request that would make the
+        server read a different set of weights off disk is the expensive one,
+        and a request for what is already there is not, however many of them
+        arrive.
+        """
+        return self._clean_model_name(model_name) in self._models
+
     def has_checkpoint(self, model_name: str) -> bool:
         """
         Whether this server actually has weights for a model.
@@ -232,12 +243,19 @@ class ModelManager:
         self.get_model(target_name)
         return self._trained.get(target_name, False)
 
-    def require_trained(self, model_name: str | None = None) -> str:
+    def require_trained(self, model_name: str | None = None,
+                        request=None) -> str:
         """
         Reject a request for a model with no trained weights.
 
         Serving an untrained network is worse than serving an error: it returns
         a plausible probability and a Grad-CAM map that look like results.
+
+        Given a `request`, this is also where a model *switch* is rationed.
+        Every public endpoint that takes a model name comes through here --
+        /predict, /explain, /analyze -- so the limit lives at the one place
+        all of them pass rather than being copied into each and forgotten in
+        the next one somebody adds.
         """
         from fastapi import HTTPException
 
@@ -254,6 +272,21 @@ class ModelManager:
                         f"are: {', '.join(known)}."),
             )
 
+        # Before is_trained, which loads the model to answer.
+        #
+        # Two things are never rationed. The model already in memory, because
+        # asking for it costs nothing. And the default, named explicitly --
+        # it is what nearly every request wants, and it was previously spared
+        # only by the accident of being resident, so a cold process could
+        # have refused the one model everybody uses.
+        if (request is not None
+                and target_name != self.active_model_name
+                and target_name not in self._models):
+            from rad_intel.api.ratelimit import check_model_load
+            from rad_intel.auth.dependencies import current_clinician
+
+            check_model_load(request, current_clinician(request), target_name)
+
         if not self.is_trained(target_name):
             raise HTTPException(
                 status_code=503,
@@ -264,6 +297,7 @@ class ModelManager:
                     f"or select a model that has weights."
                 ),
             )
+
         return target_name
 
     def get_threshold(self, model_name: str | None = None) -> float:

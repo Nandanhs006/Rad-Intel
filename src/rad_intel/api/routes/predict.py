@@ -2,7 +2,7 @@
 Prediction API route for chest radiograph classification.
 """
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from rad_intel.api.dependencies import (
     ModelManager,
     get_model_manager,
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/v1", tags=["Prediction"])
              dependencies=[Depends(limit("public-predict", 60, 300,
                                          "predictions"))])
 async def predict_xray(
+    request: Request,
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG, or DICOM-derived)"),
     model_name: str | None = Form(
         None, description="Model architecture to use (optional, defaults to config)"
@@ -43,7 +44,7 @@ async def predict_xray(
                 status_code=400,
                 detail=f"Could not decode the uploaded file as an image: {decode_error}",
             )
-        selected_model = manager.require_trained(model_name)
+        selected_model = manager.require_trained(model_name, request)
 
         pred_class, confidence, prob_dict, latency_ms = manager.predict(
             tensor, model_name=selected_model
