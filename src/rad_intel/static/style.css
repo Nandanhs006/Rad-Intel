@@ -2516,3 +2516,11 @@ code.id-reveal {
   box-shadow: none;
   transform: none;
 }
+
+.session-until {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-light);
+  white-space: nowrap;
+}
+@media (max-width: 640px) { .session-until { display: none; } }

@@ -363,10 +363,13 @@ What is in place:
   is recoverable from the database.
 - Rad-Intel IDs and phone numbers are AES-256-GCM encrypted at rest, with a
   keyed blind index so exact lookup still works without decrypting the table.
-- Sessions are server-side. The cookie carries a random token, `HttpOnly` and
-  `SameSite=Lax`, with no `Max-Age`, so it dies when the browser closes. The
-  server closes a session after an hour idle or twelve hours absolute, and
-  disabling an account or rotating an ID ends its sessions immediately.
+- Sessions are server-side. The cookie carries a random token, `HttpOnly`,
+  `SameSite=Lax`, and lasts **thirty days from the sign-in** — not a sliding
+  window, so a one-time code is needed about once a month. An account is
+  signed in on **one device at a time**: logging in anywhere closes the
+  session that was open elsewhere, the person is told so, and it is written
+  to the activity log. Logging out, being disabled, or having a Rad-Intel ID
+  rotated all end a session immediately and require a fresh code.
 - Every action against shared data is logged against a name and readable only
   by the administrator.
 - Rate limits on sign-in, code requests, access requests, submissions,
@@ -378,6 +381,12 @@ What is **not** in place, and should be before this is anything but a study:
 - No encryption of the stored radiographs themselves, and no automatic
   de-identification. That is the uploading clinician's responsibility, and the
   consent panel says so.
+- **No idle timeout.** A session survives closing the browser for its full
+  thirty days, which is the deliberate price of not asking for a code every
+  time. An unlocked workstation is therefore an open account; the consent
+  panel says that in as many words. The thirty-day ceiling, the one-device
+  rule and the administrator's ability to close any session from the console
+  are what bound it.
 - No hardware tokens, no IP allow-list, no intrusion detection.
 - Rate-limit counters live in the process, which is correct for one Uvicorn
   worker and would need shared storage before running several.

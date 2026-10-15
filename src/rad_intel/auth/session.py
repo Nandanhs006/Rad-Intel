@@ -1,50 +1,53 @@
 """
-Server-side sessions.
+Server-side sessions: one device per account, thirty days.
 
 The cookie carries nothing but a random 256-bit token. Everything that
 matters -- which account it belongs to, when it was opened, when it was last
 used -- lives in a row on the server, and only a hash of the token is stored,
 so a copy of the database cannot be used to log in as anybody.
 
-Holding the state server-side buys three things a self-contained signed token
-cannot give:
+The rules, and what each one costs and buys:
 
-* **Revocation.** Deleting the row ends the session on the next request.
-  A signed token stays valid until it expires, whatever the server thinks.
-* **Idle expiry.** A session left open on a shared workstation closes itself
-  after IDLE_TIMEOUT of no activity.
-* **Visibility.** The administrator can see who currently has a session open
-  and close any of them.
-
-The cookie is a session cookie -- no Max-Age, no Expires -- so the browser
-discards it when it closes, which is the "log out when the site is closed"
-behaviour the workspace is specified to have. The server-side idle timeout is
-the backstop, because a browser that restores its previous tabs will also
-restore session cookies.
+* **One account, one device.** Logging in anywhere displaces the session that
+  was open somewhere else. Two clinicians cannot quietly share one Rad-Intel
+  ID and work in parallel, and if an ID is passed around, the person it was
+  issued to finds themselves logged out -- which is a far better alarm than a
+  line in a log nobody reads.
+* **Thirty days, measured from the sign-in.** Not a sliding window: a session
+  opened on the first expires on the thirty-first however much it was used,
+  so a one-time code is needed once a month rather than never again.
+* **No idle timeout and no browser-close logout.** The cookie carries an
+  expiry, so it survives closing the browser and restarting the machine. That
+  is the point -- a clinician reviewing a handful of cases a week should not
+  be made to find a code every time -- and it is a deliberate trade: a
+  workstation left unlocked stays logged in. The thirty-day ceiling and the
+  administrator's ability to close any session are what bound it.
+* **Revocation is immediate.** Deleting the row ends the session on the next
+  request. A self-contained signed token would stay valid until its own
+  expiry whatever the server thought, which is why none is used here.
 """
 from __future__ import annotations
 
 import secrets
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from rad_intel.auth.crypto import fast_hash
 from rad_intel.auth import store
+from rad_intel.auth.crypto import fast_hash
 from rad_intel.config import BASE_DIR
 
 DB_PATH = BASE_DIR / "rad_intel.db"
 
 COOKIE_NAME = "radintel_session"
 
-# An absolute ceiling on one session, regardless of activity.
-SESSION_TTL_SECONDS = 12 * 60 * 60
-# Inactivity after which a session is closed even if the browser stayed open.
-IDLE_TIMEOUT_SECONDS = 60 * 60
-# How stale last_seen_at may get before it is written again. Without this,
-# every request -- including the background status poll -- took a write lock
-# on the shared database purely to move a timestamp a few seconds, and the
-# parallel requests a page load makes were enough to collide.
-TOUCH_INTERVAL_SECONDS = 60
+# Thirty days from the sign-in, after which a fresh one-time code is needed.
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+
+# How stale last_seen_at may get before it is written again. It no longer
+# governs expiry -- it is only what the administrator's view shows -- and
+# without the throttle every request took a write lock on the shared database
+# purely to move a timestamp a few seconds, which the parallel requests a page
+# load makes were enough to collide over.
+TOUCH_INTERVAL_SECONDS = 5 * 60
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -84,13 +87,38 @@ def _parse(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def active_for_user(user_id: str) -> list[dict]:
+    """
+    The account's live sessions. Normally none or one.
+
+    Read before issuing, so the caller can tell the person signing in that
+    they are about to displace a device they still have open.
+    """
+    init()
+    purge_expired()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent"
+            " FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC;",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def issue(user_id: str, ttl: int = SESSION_TTL_SECONDS, ip: str | None = None,
-          user_agent: str | None = None) -> str:
-    """Open a session and return the opaque token to put in the cookie."""
+          user_agent: str | None = None, single_device: bool = True) -> str:
+    """
+    Open a session and return the opaque token to put in the cookie.
+
+    With `single_device`, every other session this account holds is closed
+    first, so the account is signed in on exactly one device at a time.
+    """
     init()
     token = secrets.token_urlsafe(32)
     now = _now()
     with _connect() as conn:
+        if single_device:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?;", (user_id,))
         conn.execute(
             "INSERT INTO sessions (id, token_hash, user_id, created_at, last_seen_at,"
             " expires_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
@@ -104,8 +132,9 @@ def verify(token: str | None) -> str | None:
     """
     Return the user id for a live session, else None.
 
-    Touches last_seen_at, which is what makes the idle timeout a timeout on
-    inactivity rather than on age.
+    Expiry is absolute: a session is over thirty days after it was opened,
+    however recently it was used. Using it keeps last_seen_at fresh for the
+    administrator's view and nothing else.
     """
     if not token:
         return None
@@ -125,7 +154,7 @@ def verify(token: str | None) -> str | None:
             conn.execute("DELETE FROM sessions WHERE id = ?;", (row["id"],))
             return None
 
-        if now >= expires_at or (now - last_seen).total_seconds() > IDLE_TIMEOUT_SECONDS:
+        if now >= expires_at:
             conn.execute("DELETE FROM sessions WHERE id = ?;", (row["id"],))
             return None
 
@@ -135,8 +164,19 @@ def verify(token: str | None) -> str | None:
         return row["user_id"]
 
 
+def expires_at(token: str | None) -> str | None:
+    """When this session ends, so the interface can say so."""
+    if not token:
+        return None
+    init()
+    with _connect() as conn:
+        row = conn.execute("SELECT expires_at FROM sessions WHERE token_hash = ?;",
+                           (fast_hash(token),)).fetchone()
+    return row["expires_at"] if row else None
+
+
 def destroy(token: str | None) -> None:
-    """End one session. Signing out must not end the user's other sessions."""
+    """End one session. Logging out requires a new code to come back."""
     if not token:
         return
     init()
@@ -153,13 +193,13 @@ def destroy_all_for_user(user_id: str) -> int:
 
 
 def list_active() -> list[dict]:
-    """Live sessions, newest first, for the administrator's view."""
+    """Live sessions, most recently used first, for the administrator's view."""
     init()
     purge_expired()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, user_id, created_at, last_seen_at, ip, user_agent FROM sessions"
-            " ORDER BY datetime(last_seen_at) DESC;"
+            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent"
+            " FROM sessions ORDER BY last_seen_at DESC;"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -172,14 +212,11 @@ def destroy_by_id(session_id: str) -> bool:
 
 
 def purge_expired() -> int:
-    """Drop rows that are past their ceiling or idle. Cheap; called opportunistically."""
+    """Drop sessions past their thirty days. Cheap; called opportunistically."""
     init()
-    now = _now()
-    cutoff = _iso(now - timedelta(seconds=IDLE_TIMEOUT_SECONDS))
     with _connect() as conn:
         cur = conn.execute(
-            "DELETE FROM sessions WHERE datetime(expires_at) <= datetime(?)"
-            " OR datetime(last_seen_at) <= datetime(?);",
-            (_iso(now), cutoff),
+            "DELETE FROM sessions WHERE datetime(expires_at) <= datetime(?);",
+            (_iso(_now()),),
         )
         return cur.rowcount

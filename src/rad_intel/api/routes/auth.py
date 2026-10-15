@@ -57,9 +57,12 @@ def _cookie_secure() -> bool:
     return os.environ.get("RAD_INTEL_COOKIE_SECURE", "").strip() in ("1", "true", "yes")
 
 
-def _me(user: dict) -> AuthMeResponse:
+def _me(user: dict, displaced: int = 0,
+        session_expires_at: str | None = None) -> AuthMeResponse:
     return AuthMeResponse(
         authenticated=True,
+        displaced_other_device=bool(displaced),
+        session_expires_at=session_expires_at,
         id=user["id"],
         email=user["email"],
         full_name=user["full_name"],
@@ -146,25 +149,38 @@ async def login(req: VerifyCodeRequest, request: Request, response: Response):
                         ip=client_address(request), outcome="refused")
         raise HTTPException(status_code=401, detail=message)
 
-    def _open_session() -> str:
+    def _open_session() -> tuple[str, int, str | None]:
+        # Read before issuing: issuing closes them, and the person signing in
+        # should be told they have just signed something else out rather than
+        # discovering it when their other machine stops working.
+        displaced = len(session.active_for_user(user["id"]))
         accounts.note_successful_login(user["id"])
-        return session.issue(user["id"], ip=client_address(request),
-                             user_agent=request.headers.get("user-agent"))
+        token = session.issue(user["id"], ip=client_address(request),
+                              user_agent=request.headers.get("user-agent"))
+        return token, displaced, session.expires_at(token)
 
-    token = await run_in_threadpool(_open_session)
+    token, displaced, ends_at = await run_in_threadpool(_open_session)
     response.set_cookie(
         key=session.COOKIE_NAME,
         value=token,
-        # No max_age and no expires: a session cookie, which the browser
-        # discards when it closes. The server-side idle timeout is the
-        # backstop for browsers that restore their previous tabs.
+        # Thirty days, so the cookie survives closing the browser and
+        # restarting the machine and a code is needed once a month rather
+        # than every time. The server row carries the same expiry and is what
+        # actually decides; this only stops the browser holding a cookie the
+        # server has already forgotten.
+        max_age=session.SESSION_TTL_SECONDS,
         httponly=True,       # not readable from JavaScript
         samesite="lax",      # not sent on cross-site requests
         secure=_cookie_secure(),
         path="/",
     )
-    activity.record("login.success", user=user, ip=client_address(request))
-    return _me(user)
+    activity.record("login.success", user=user, ip=client_address(request),
+                    detail=f"displaced={displaced}")
+    if displaced:
+        activity.record("login.displaced_other_device", user=user,
+                        ip=client_address(request),
+                        detail="the account's previous device was signed out")
+    return _me(user, displaced=displaced, session_expires_at=ends_at)
 
 
 @router.post("/logout")
@@ -180,7 +196,8 @@ async def logout(response: Response, request: Request,
 
 
 @router.get("/me", response_model=AuthMeResponse)
-async def me(user: dict | None = Depends(current_clinician)):
+async def me(user: dict | None = Depends(current_clinician),
+             token: str | None = Depends(session_token)):
     """
     The signed-in account's own details.
 
@@ -190,7 +207,7 @@ async def me(user: dict | None = Depends(current_clinician)):
     """
     if not user:
         return AuthMeResponse(authenticated=False)
-    return _me(user)
+    return _me(user, session_expires_at=await run_in_threadpool(session.expires_at, token))
 
 
 @router.post("/password")
