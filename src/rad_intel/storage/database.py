@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS clinician_feedback (
     corrected_label TEXT,
     note TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    exported_in TEXT
+    exported_in TEXT,
+    drive_file_id TEXT
 );
 """
 
@@ -90,7 +91,11 @@ class DatabaseManager:
             # are therefore administrator-only, which is the safe default.
             async with db.execute("PRAGMA table_info(clinician_feedback);") as cur:
                 columns = {row[1] for row in await cur.fetchall()}
-            for column, decl in (("institution", "TEXT"), ("owner_id", "TEXT")):
+            # `drive_file_id` is where the durable copy of the radiograph is.
+            # A row without one has never reached Drive; that is what the
+            # administrator's "back up what is missing" sweep looks for.
+            for column, decl in (("institution", "TEXT"), ("owner_id", "TEXT"),
+                                 ("drive_file_id", "TEXT")):
                 if column not in columns:
                     await db.execute(
                         f"ALTER TABLE clinician_feedback ADD COLUMN {column} {decl};"
@@ -206,6 +211,7 @@ class DatabaseManager:
         image_path: str | None = None,
         institution: str | None = None,
         owner_id: str | None = None,
+        drive_file_id: str | None = None,
     ) -> str:
         """Inserts a feedback record and returns its UUID."""
         await self._ensure_db()
@@ -215,14 +221,15 @@ class DatabaseManager:
         INSERT INTO clinician_feedback (
             id, created_at, updated_at, reviewer, model_version, preprocessing_version,
             image_sha256, image_path, institution, predicted_label, predicted_probability,
-            threshold, verdict, corrected_label, note, status, exported_in, owner_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?);
+            threshold, verdict, corrected_label, note, status, exported_in, owner_id,
+            drive_file_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?);
         """
         params = (
             rec_id, now, now, reviewer, model_version, preprocessing_version,
             image_sha256, image_path, institution, predicted_label,
             float(predicted_probability), float(threshold), verdict, corrected_label, note,
-            owner_id,
+            owner_id, drive_file_id,
         )
         async with self._open() as db:
             await db.execute(query, params)
@@ -307,6 +314,36 @@ class DatabaseManager:
             )
             await db.commit()
             return cur.rowcount > 0
+
+    async def set_drive_file_id(self, record_id: str, drive_file_id: str) -> bool:
+        """
+        Record where a radiograph's durable copy is.
+
+        Separate from update_feedback, which is the clinician editing their
+        own review and touches updated_at. This changes nothing a person
+        wrote, so it must not make a record look freshly edited.
+        """
+        await self._ensure_db()
+        async with self._open() as db:
+            cur = await db.execute(
+                "UPDATE clinician_feedback SET drive_file_id = ? WHERE id = ?;",
+                (drive_file_id, record_id),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def feedback_without_drive_copy(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Reviews whose radiograph has never reached Drive. Oldest first."""
+        await self._ensure_db()
+        async with self._open() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM clinician_feedback "
+                "WHERE (drive_file_id IS NULL OR drive_file_id = '') "
+                "AND image_path IS NOT NULL ORDER BY created_at ASC LIMIT ?;",
+                (limit,),
+            ) as cur:
+                return [dict(row) for row in await cur.fetchall()]
 
     async def delete_feedback(self, record_id: str) -> bool:
         """Removes one review. Returns False when the id is unknown."""
