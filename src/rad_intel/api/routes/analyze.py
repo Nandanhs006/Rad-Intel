@@ -17,7 +17,6 @@ from rad_intel.api.dependencies import (
     ClinicalReportGenerator,
     get_report_generator,
 )
-from rad_intel.models.factory import ModelType
 from rad_intel.api.schemas import (
     AnalysisResponse,
     PredictionResponse,
@@ -54,7 +53,7 @@ async def analyze_xray(
     request: Request,
     response: Response,
     file: UploadFile = File(..., description="Chest X-Ray image file (PNG, JPEG)"),
-    model_name: ModelType | None = Form(
+    model_name: str | None = Form(
         None, description="Model architecture (defaults to config default: hybrid)"
     ),
     patient_id: str | None = Form("Anonymous", description="Patient identifier"),

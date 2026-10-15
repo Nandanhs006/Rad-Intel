@@ -1511,3 +1511,135 @@ async def test_every_response_carries_the_browser_side_protections():
     csp = headers["content-security-policy"]
     assert "frame-ancestors 'none'" in csp
     assert "default-src 'self'" in csp
+
+
+# --- releasing a model to the public ----------------------------------------
+
+@pytest.fixture
+def fake_checkpoint(tmp_path, monkeypatch):
+    """A versioned checkpoint on disk, with scores, in a scratch weights dir."""
+    import torch
+
+    from rad_intel.models import registry
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    path = weights / "best_hybrid_v2_model.pt"
+    torch.save({
+        "model_type": "hybrid",
+        "optimal_threshold": 0.5574,
+        "model_state_dict": {},
+        "metrics_after": {"accuracy": 0.9295, "auroc": 0.9741, "precision": 0.94,
+                          "sensitivity": 0.95, "specificity": 0.8761, "f1": 0.945},
+        "provenance": {"reviewed_cases": 12, "created_at": "2026-10-15T00:00:00+00:00",
+                       "base_checkpoint": "best_hybrid_model.pt"},
+    }, path)
+    monkeypatch.setattr(registry, "WEIGHTS_DIR", weights)
+    monkeypatch.setattr(registry, "REGISTRY_PATH", weights / "released_models.json")
+    monkeypatch.setattr("rad_intel.api.routes.feedback.WEIGHTS_DIR", weights)
+    return path
+
+
+async def test_releasing_needs_the_password_every_time(fake_checkpoint):
+    admin = _make_admin()
+    async with _client() as client:
+        wrong = await client.post("/api/v1/admin/models/release", cookies=_signed_in(admin),
+                                  json={"file": fake_checkpoint.name, "password": "nope"})
+        assert wrong.status_code == 403
+        assert "Nothing was released" in wrong.json()["detail"]
+
+        right = await client.post("/api/v1/admin/models/release", cookies=_signed_in(admin),
+                                  json={"file": fake_checkpoint.name,
+                                        "password": "a-long-enough-password"})
+    assert right.status_code == 200
+    assert right.json()["released"] == "hybrid_v2"
+
+
+async def test_a_released_version_appears_on_the_public_model_list(fake_checkpoint):
+    from rad_intel.models import registry
+
+    registry.release(fake_checkpoint.name, released_by="boss@study.org",
+                     metrics={"accuracy": 0.9295, "auroc": 0.9741})
+    async with _client() as client:
+        res = await client.get("/api/v1/models")
+    names = {m["name"]: m for m in res.json()["available_models"]}
+    assert "hybrid_v2" in names, "a released version must be offered to everybody"
+    entry = names["hybrid_v2"]
+    assert entry["is_released"] is True
+    assert "acc" in entry["label"] and "AUC 0.974" in entry["label"]
+    assert entry["metrics"]["accuracy"] == pytest.approx(0.9295)
+    # The built-in models are still there and still unreleased.
+    assert names["hybrid"]["is_released"] is False
+
+
+async def test_a_version_with_no_scores_cannot_be_released(tmp_path, monkeypatch):
+    """Releasing a model nobody can judge is worse than not releasing one."""
+    import torch
+
+    from rad_intel.models import registry
+
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    path = weights / "best_hybrid_v9_model.pt"
+    torch.save({"model_type": "hybrid", "model_state_dict": {}}, path)
+    monkeypatch.setattr(registry, "WEIGHTS_DIR", weights)
+    monkeypatch.setattr(registry, "REGISTRY_PATH", weights / "released_models.json")
+    monkeypatch.setattr("rad_intel.api.routes.feedback.WEIGHTS_DIR", weights)
+
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post("/api/v1/admin/models/release", cookies=_signed_in(admin),
+                                json={"file": path.name, "password": "a-long-enough-password"})
+    assert res.status_code == 400
+    assert "no scores" in res.json()["detail"]
+
+
+async def test_a_base_checkpoint_is_not_releasable(fake_checkpoint):
+    """They are built in, always offered, and not something to publish or retract."""
+    from rad_intel.models import registry
+
+    for name in ("best_hybrid_model.pt", "../rad_intel.db", "/etc/passwd"):
+        with pytest.raises(ValueError):
+            registry.release(name, released_by="boss@study.org", metrics={"accuracy": 1.0})
+
+
+async def test_withdrawing_removes_it_from_the_list_but_keeps_the_file(fake_checkpoint):
+    from rad_intel.models import registry
+
+    registry.release(fake_checkpoint.name, released_by="boss@study.org",
+                     metrics={"accuracy": 0.9})
+    admin = _make_admin()
+    async with _client() as client:
+        res = await client.post("/api/v1/admin/models/withdraw", cookies=_signed_in(admin),
+                                json={"file": "hybrid_v2",
+                                      "password": "a-long-enough-password"})
+        listing = await client.get("/api/v1/models")
+    assert res.status_code == 200
+    assert "hybrid_v2" not in {m["name"] for m in listing.json()["available_models"]}
+    assert fake_checkpoint.is_file(), "the checkpoint itself must be kept"
+
+
+async def test_only_an_administrator_session_can_release(fake_checkpoint):
+    user = _make_clinician()
+    admin = _make_admin()
+    body = {"file": fake_checkpoint.name, "password": "a-long-enough-password"}
+    async with _client() as client:
+        anon = await client.post("/api/v1/admin/models/release", json=body)
+        clinician = await client.post("/api/v1/admin/models/release",
+                                      cookies=_signed_in(user), json=body)
+        wrong_door = await client.post("/api/v1/admin/models/release",
+                                       cookies=_signed_in(admin, mode="clinician"),
+                                       json=body)
+    assert anon.status_code == 401
+    assert clinician.status_code == 403
+    assert wrong_door.status_code == 403
+
+
+async def test_an_unknown_model_name_is_refused_clearly(dummy_cxr_bytes):
+    """The field accepts any string now, so this is where a bad one stops."""
+    async with _client() as client:
+        res = await client.post("/api/v1/predict",
+                                files={"file": ("x.png", dummy_cxr_bytes, "image/png")},
+                                data={"model_name": "hybrid_v99"})
+    assert res.status_code == 400
+    assert "no model called 'hybrid_v99'" in res.json()["detail"]

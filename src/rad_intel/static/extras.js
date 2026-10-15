@@ -284,3 +284,53 @@ document.addEventListener("click", (e) => {
   });
   document.body.appendChild(box);
 });
+
+
+/* ------------------------------------------------------- model chooser
+ * The list on the Analyse tab is filled in from the server rather than
+ * written into the page, so a version an administrator releases from
+ * reviewed cases appears without the page having to be edited -- and the
+ * scores beside each name come from one place instead of being copied into
+ * the markup where they can drift.
+ */
+document.addEventListener("DOMContentLoaded", async () => {
+  "use strict";
+  const select = document.getElementById("select-model");
+  if (!select) return;
+
+  const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const NAMES = {
+    hybrid: "Hybrid (DenseNet + Swin + CBAM)",
+    hybrid_no_cbam: "Fusion without CBAM",
+    densenet121: "DenseNet121",
+    swin_t: "Swin-T",
+    resnet50: "ResNet50",
+  };
+
+  try {
+    const data = await fetch("/api/v1/models").then((r) => r.json());
+    if (!data.available_models || !data.available_models.length) return;
+
+    const chosen = select.value || "hybrid";
+    select.innerHTML = data.available_models.map((m) => {
+      const name = NAMES[m.name] || m.name;
+      const released = m.is_released ? " · released from reviewed cases" : "";
+      const label = m.label ? ` — ${m.label}` : "";
+      return `<option value="${esc(m.name)}">${esc(name + label + released)}</option>`;
+    }).join("");
+    select.value = data.available_models.some((m) => m.name === chosen) ? chosen : "hybrid";
+
+    const released = data.available_models.filter((m) => m.is_released);
+    const hint = document.getElementById("model-hint");
+    if (hint && released.length) {
+      hint.textContent = `${released.length} version` +
+        `${released.length === 1 ? "" : "s"} released from clinician-reviewed cases ` +
+        `${released.length === 1 ? "is" : "are"} available here, shown with the scores ` +
+        `measured on the same held-out set as the rest.`;
+    }
+  } catch {
+    /* Leave the list as the page shipped it: the tool still works. */
+  }
+});

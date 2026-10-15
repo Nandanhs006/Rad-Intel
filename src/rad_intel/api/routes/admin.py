@@ -20,11 +20,20 @@ Two guards are enforced rather than left to care:
   reason.
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from rad_intel.api.ratelimit import client_address, limit
-from rad_intel.api.schemas import AdminProfileUpdate, AdminUserCreate, AdminUserUpdate
+from rad_intel.api.dependencies import ModelManager, get_model_manager
+from rad_intel.api.schemas import (
+    AdminProfileUpdate,
+    AdminUserCreate,
+    AdminUserUpdate,
+    ModelReleaseRequest,
+)
+from rad_intel.models import registry
 from rad_intel.auth import accounts, activity, notify, session
 from rad_intel.auth.dependencies import require_admin
 
@@ -314,6 +323,100 @@ async def list_requests(status: str | None = None, admin: dict = Depends(require
             "emailed_to_admin": bool(r.get("notified")),
         } for r in rows],
     }
+
+
+# --- releasing a model ------------------------------------------------------
+
+@router.get("/models/releasable")
+async def releasable_models(admin: dict = Depends(require_admin)):
+    """
+    Fine-tuned checkpoints on disk, their scores, and whether each is public.
+
+    The base checkpoints are not here: they are built in, always offered, and
+    cannot be released or withdrawn.
+    """
+    from rad_intel.api.routes.feedback import WEIGHTS_DIR, _checkpoint_meta
+
+    rows = []
+    for item in registry.candidates():
+        meta = await run_in_threadpool(_checkpoint_meta, WEIGHTS_DIR / item["file"])
+        after = meta.get("metrics_after") or {}
+        provenance = meta.get("provenance") or {}
+        rows.append({
+            **item,
+            "metrics": {k: v for k, v in after.items() if isinstance(v, (int, float))},
+            "reviewed_cases": provenance.get("reviewed_cases"),
+            "created_at": provenance.get("created_at"),
+            "base_checkpoint": provenance.get("base_checkpoint"),
+        })
+    return {"candidates": rows, "released": registry.released()}
+
+
+@router.post("/models/release",
+             dependencies=[Depends(limit("admin-release", 20, 3600, "releases"))])
+async def release_model(req: ModelReleaseRequest, request: Request,
+                        manager: ModelManager = Depends(get_model_manager),
+                        admin: dict = Depends(require_admin)):
+    """
+    Put a fine-tuned version on the public model list.
+
+    The password is asked for every time, not once per session. Everything
+    else an administrator does affects the study; this one puts a model in
+    front of whoever visits the site, so it should take a deliberate act
+    rather than a click on a page that happened to be left open.
+    """
+    if not await run_in_threadpool(accounts.identify_admin, admin["email"], req.password):
+        activity.record("model.release_refused", user=admin, ip=client_address(request),
+                        detail="wrong password", outcome="refused")
+        raise HTTPException(status_code=403, detail="Password incorrect. Nothing was released.")
+
+    from rad_intel.api.routes.feedback import WEIGHTS_DIR, _checkpoint_meta
+
+    meta = await run_in_threadpool(_checkpoint_meta, WEIGHTS_DIR / Path(req.file).name)
+    metrics = {k: v for k, v in (meta.get("metrics_after") or {}).items()
+               if isinstance(v, (int, float))}
+    if not metrics:
+        raise HTTPException(
+            status_code=400,
+            detail=("That checkpoint carries no scores, so there is nothing to show "
+                    "people about it. Releasing a model nobody can judge is worse "
+                    "than not releasing one."),
+        )
+
+    try:
+        entry = registry.release(req.file, released_by=admin["email"],
+                                 metrics=metrics, note=req.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    manager.forget(entry["name"])
+    activity.record("model.released", user=admin, ip=client_address(request),
+                    detail=f"{entry['file']} as {entry['name']}")
+    return {
+        "released": entry["name"],
+        "detail": (f"{entry['name']} is now on the public model list on the Analyse "
+                   f"tab, shown with the scores it was measured at. The model the "
+                   f"site uses by default has not changed."),
+        "entry": entry,
+    }
+
+
+@router.post("/models/withdraw",
+             dependencies=[Depends(limit("admin-release", 20, 3600, "releases"))])
+async def withdraw_model(req: ModelReleaseRequest, request: Request,
+                         manager: ModelManager = Depends(get_model_manager),
+                         admin: dict = Depends(require_admin)):
+    """Take a released version off the public list. The checkpoint is kept."""
+    if not await run_in_threadpool(accounts.identify_admin, admin["email"], req.password):
+        raise HTTPException(status_code=403, detail="Password incorrect. Nothing changed.")
+
+    name = req.file
+    if not registry.withdraw(name):
+        raise HTTPException(status_code=404, detail=f"{name} is not on the public list.")
+    manager.forget(name)
+    activity.record("model.withdrawn", user=admin, ip=client_address(request), detail=name)
+    return {"withdrawn": name,
+            "detail": f"{name} is no longer offered. Its checkpoint is still on disk."}
 
 
 @router.post("/test-email",

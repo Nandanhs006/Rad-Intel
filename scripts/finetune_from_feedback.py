@@ -117,18 +117,27 @@ def evaluate(model, loader, device, threshold):
     tn = int(((pred == 0) & (labels == 0)).sum())
     fp = int(((pred == 1) & (labels == 0)).sum())
     fn = int(((pred == 0) & (labels == 1)).sum())
+    # The same measures the project reports for its own models, so a version
+    # released from reviewed cases can be read beside them rather than being
+    # a number nobody can place.
+    precision = tp / max(tp + fp, 1)
+    sensitivity = tp / max(tp + fn, 1)
     return {
         "accuracy": (tp + tn) / max(len(labels), 1),
         "auroc": float(roc_auc_score(labels, probs)) if len(set(labels)) > 1 else float("nan"),
-        "sensitivity": tp / max(tp + fn, 1),
+        "precision": precision,
+        "sensitivity": sensitivity,
+        "recall": sensitivity,
         "specificity": tn / max(tn + fp, 1),
+        "f1": 2 * precision * sensitivity / max(precision + sensitivity, 1e-9),
         "confusion": f"{tn}/{fp}/{fn}/{tp}",
     }
 
 
 def show(tag: str, m: dict) -> None:
     print(f"  {tag:<22s} acc {m['accuracy']:.4f}  auroc {m['auroc']:.4f}  "
-          f"sens {m['sensitivity']:.4f}  spec {m['specificity']:.4f}  "
+          f"prec {m['precision']:.4f}  sens {m['sensitivity']:.4f}  "
+          f"spec {m['specificity']:.4f}  F1 {m['f1']:.4f}  "
           f"TN/FP/FN/TP {m['confusion']}")
 
 

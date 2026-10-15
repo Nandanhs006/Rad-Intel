@@ -878,12 +878,120 @@
       loadAdminRequests(),
       loadAdminSessions(),
       loadAdminActivity(),
+      loadReleasable(),
     ]);
     $("ap-name").value = me.full_name || "";
     $("ap-institution").value = me.institution || "";
     $("ap-email").value = me.email || "";
     $("ap-phone").value = me.phone || "";
   }
+
+  /**
+   * The versions that could be put in front of the public, and the ones
+   * already there.
+   *
+   * Releasing asks for the password every time. Everything else here
+   * affects the study; this one affects whoever visits the site, so it
+   * should take a deliberate act rather than a click on a page somebody
+   * left open.
+   */
+  async function loadReleasable() {
+    const panel = $("release-list");
+    if (!panel) return;
+    try {
+      const data = await api("/api/v1/admin/models/releasable");
+      if (!data.candidates.length) {
+        panel.innerHTML = "<p class='muted small'>No fine-tuned versions yet. " +
+          "Review some cases, create an export, and run a fine-tuning job — the " +
+          "version it produces will appear here.</p>";
+        return;
+      }
+      panel.innerHTML = data.candidates.map((c) => {
+        const m = c.metrics || {};
+        const show = (v, d = 3) => (typeof v === "number" ? v.toFixed(d) : "—");
+        return `<div class="version-row ${c.is_released ? "is-live" : ""}">
+          <div class="version-head">
+            <code>${esc(c.file)}</code>
+            ${c.is_released
+              ? '<span class="badge badge-ok">on the public list</span>'
+              : '<span class="badge badge-neutral">not released</span>'}
+          </div>
+          <div class="version-label">
+            offered as <strong>${esc(c.name)}</strong>${c.reviewed_cases
+              ? ` · from ${c.reviewed_cases} reviewed case${c.reviewed_cases === 1 ? "" : "s"}` : ""}
+            ${c.created_at ? ` · ${stamp(c.created_at)}` : ""}
+          </div>
+          ${m.accuracy != null ? `<div class="version-metrics">
+            <span>acc ${show(m.accuracy)}</span>
+            <span>AUROC ${show(m.auroc)}</span>
+            <span>prec ${show(m.precision)}</span>
+            <span>sens ${show(m.sensitivity)}</span>
+            <span>spec ${show(m.specificity)}</span>
+            <span>F1 ${show(m.f1)}</span>
+          </div>` : `<div class="version-label">No scores recorded — this cannot be
+            released, because nobody could judge it.</div>`}
+          <div class="fb-actions">
+            ${c.is_released
+              ? `<button class="btn-secondary btn-sm" data-withdraw="${esc(c.name)}">Withdraw from public</button>`
+              : (m.accuracy != null
+                  ? `<button class="btn-primary btn-sm" data-release="${esc(c.file)}">Release to public</button>`
+                  : "")}
+          </div>
+        </div>`;
+      }).join("");
+    } catch (error) {
+      if (error.status === 401) applySession(null);
+    }
+  }
+
+  async function confirmWithPassword(message) {
+    const password = window.prompt(
+      `${message}\n\nConfirm with your administrator password:`);
+    return password === null || !password.trim() ? null : password;
+  }
+
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-release]");
+    if (!button) return;
+    const password = await confirmWithPassword(
+      "Release this version to the public?\n\n" +
+      "It will appear in the model list on the Analyse X-ray tab, with the scores " +
+      "it was measured at. The model the site uses by default does not change.");
+    if (password === null) return;
+
+    busy(button, true);
+    try {
+      const outcome = await api("/api/v1/admin/models/release",
+        asJson({ file: button.dataset.release, password }));
+      show($("release-result"), esc(outcome.detail), "ok");
+      loadReleasable();
+    } catch (error) {
+      show($("release-result"), esc(readable(error)), "error");
+    } finally {
+      busy(button, false);
+    }
+  });
+
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-withdraw]");
+    if (!button) return;
+    const password = await confirmWithPassword(
+      "Take this version off the public list?\n\n" +
+      "Nobody will be able to choose it. The checkpoint itself is kept.");
+    if (password === null) return;
+
+    busy(button, true);
+    try {
+      const outcome = await api("/api/v1/admin/models/withdraw",
+        asJson({ file: button.dataset.withdraw, password }));
+      show($("release-result"), esc(outcome.detail), "ok");
+      loadReleasable();
+    } catch (error) {
+      show($("release-result"), esc(readable(error)), "error");
+    } finally {
+      busy(button, false);
+    }
+  });
 
   async function loadAdminOverview() {
     try {
