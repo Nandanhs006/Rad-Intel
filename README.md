@@ -240,40 +240,43 @@ and nothing to phish out of them with a password form. The code is twelve
 characters, single-use, expires in ten minutes, is never issued twice to the
 same person, and is stored only as a hash.
 
-The code goes **by email**, to the address on the account. SMS is supported
-and switched off: it is optional infrastructure with real costs, and email
-needs no provider, no telecom registration and no payment. Codes are never
-sent over WhatsApp — a phone number on a record is for the administrator to
-reach that clinician personally, and a one-time code does not belong in a
-chat account that may be open on a shared laptop.
+The code goes **by email**, to the address on the account. There is no SMS:
+India's DLT rules put domestic application-to-person messaging behind weeks
+of registration, and it bought nothing email does not already do here. Codes
+are never sent over WhatsApp either — the phone number on a record is how the
+administrator reaches that clinician personally, and a one-time code does not
+belong in a chat account that may be open on a shared laptop.
 
 Pressing *Send verification code* again within a minute does not mint a
 second code or count against the allowance; it says to look in the inbox.
-Beyond that an account may ask for twelve codes in fifteen minutes on email,
-five on SMS — tighter there because the limit exists to stop somebody's phone
-being flooded and a bill run up, which an emailed code cannot do.
+Beyond that an account may ask for twelve codes in fifteen minutes.
 
-To use SMS instead, set `RAD_INTEL_OTP_CHANNEL=sms` and a provider. In India
-that means `FAST2SMS_API_KEY`: domestic application-to-person SMS sits behind
-DLT registration under TRAI's TCCCPR rules and Twilio will not carry it
-without that paperwork. Fast2SMS will not let its own free signup credit be
-spent through the API until one payment of ₹100 or more has been made, and
-its dedicated OTP route needs website verification and carries numeric codes
-only — which cannot hold a twelve-character one. None of that applies to
-email, which is why email is the default.
+**Which door you come in by decides what you can do.** An administrator who
+signs in with their Rad-Intel ID holds a *clinician* session and sees the
+clinician workspace; the console needs a session opened with the
+administrator password. A Rad-Intel ID is written down and handed over, so it
+must not reach the controls that read and delete everybody's data. The mode
+is recorded when the code is issued, where the first factor was checked, so
+submitting the code cannot upgrade the session.
 
-**Send myself a test SMS** and **Send myself a test email** in the console
-report the provider's own words on failure. Those words usually name the
-exact remedy, and they never reach the login form: what the study owes its
-SMS provider is not the business of the clinician trying to log in.
+If mail breaks, nobody can log in — including the administrator. Set
+`RAD_INTEL_OTP_CHANNEL=log` to print codes to the server's own terminal, or
+use the console command below.
+
+**Send myself a test email** in the console reports the mail server's own
+words on failure. Those words usually name the exact remedy — a Gmail
+rejection says in as many terms that it wants a 16-character App Password —
+and they never reach the login form: the study's mail configuration is not
+the business of the clinician trying to log in.
 
 ### Locked out
 
-If neither SMS nor email is working, nobody can log in — including the
-administrator. Rather than leaving that to be discovered, there is a way back:
+If mail is not working, nobody can log in — including the administrator.
+Rather than leaving that to be discovered, there is a way back:
 
 ```bash
 python scripts/manage_clinicians.py code --email you@example.org
+python scripts/manage_clinicians.py code --email you@example.org --admin
 ```
 
 It prints an ordinary sign-in code — single use, ten minutes, same
@@ -372,12 +375,12 @@ What is in place:
 - Rad-Intel IDs and phone numbers are AES-256-GCM encrypted at rest, with a
   keyed blind index so exact lookup still works without decrypting the table.
 - Sessions are server-side. The cookie carries a random token, `HttpOnly`,
-  `SameSite=Lax`, and lasts **thirty days from the sign-in** — not a sliding
-  window, so a one-time code is needed about once a month. An account is
-  signed in on **one device at a time**: logging in anywhere closes the
-  session that was open elsewhere, the person is told so, and it is written
-  to the activity log. Logging out, being disabled, or having a Rad-Intel ID
-  rotated all end a session immediately and require a fresh code.
+  `SameSite=Lax`, and **no Max-Age**, so it goes when the browser closes; the
+  server keeps a twelve-hour ceiling for browsers that restore their tabs. An
+  account is signed in on **one device at a time**: logging in anywhere closes
+  the session open elsewhere, the person is told, and it is logged. Logging
+  out, being disabled, or having a Rad-Intel ID rotated all end a session
+  immediately and require a fresh code.
 - Every action against shared data is logged against a name and readable only
   by the administrator.
 - Rate limits on sign-in, code requests, access requests, submissions,
@@ -389,12 +392,10 @@ What is **not** in place, and should be before this is anything but a study:
 - No encryption of the stored radiographs themselves, and no automatic
   de-identification. That is the uploading clinician's responsibility, and the
   consent panel says so.
-- **No idle timeout.** A session survives closing the browser for its full
-  thirty days, which is the deliberate price of not asking for a code every
-  time. An unlocked workstation is therefore an open account; the consent
-  panel says that in as many words. The thirty-day ceiling, the one-device
-  rule and the administrator's ability to close any session from the console
-  are what bound it.
+- **No second factor beyond the mailbox.** A code to an account's email is
+  only as strong as that mailbox; somebody who can read it, and who has the
+  Rad-Intel ID, is in. The one-device rule makes that visible — the real
+  owner gets logged out — but it does not prevent it.
 - No hardware tokens, no IP allow-list, no intrusion detection.
 - Rate-limit counters live in the process, which is correct for one Uvicorn
   worker and would need shared storage before running several.
@@ -415,14 +416,17 @@ list with comments.
 RAD_INTEL_SECRET_KEY=        # signs sessions, encrypts phone numbers
 RAD_INTEL_COOKIE_SECURE=     # 1 behind HTTPS
 
-# one-time codes. SMS when a provider is set, otherwise email, otherwise
-# (with the echo below) the server's own log. Never WhatsApp.
-RAD_INTEL_OTP_CHANNEL=       # pin to "sms" or "email"
-FAST2SMS_API_KEY=            # India: Twilio needs DLT, Fast2SMS does not
-FAST2SMS_ROUTE=q
-TWILIO_ACCOUNT_SID=          # outside India
-TWILIO_AUTH_TOKEN=
-TWILIO_FROM=
+# one-time codes and notifications: email, through one mail server.
+RAD_INTEL_ADMIN_EMAIL=       # where access requests are sent
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=               # a 16-character Gmail App Password
+SMTP_FROM=
+
+# "log" prints codes to the server's own terminal and sends them nowhere:
+# for a demonstration, and for getting back in when mail has broken.
+RAD_INTEL_OTP_CHANNEL=
 
 # LOCAL TESTING ONLY: with nothing else set, write codes to the server's log
 RAD_INTEL_OTP_ECHO=

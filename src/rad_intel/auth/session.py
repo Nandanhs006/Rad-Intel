@@ -1,27 +1,28 @@
 """
-Server-side sessions: one device per account, thirty days.
+Server-side sessions: one device, for as long as the browser is open.
 
 The cookie carries nothing but a random 256-bit token. Everything that
-matters -- which account it belongs to, when it was opened, when it was last
-used -- lives in a row on the server, and only a hash of the token is stored,
-so a copy of the database cannot be used to log in as anybody.
+matters -- which account it belongs to, which door they came in by, when it
+was opened -- lives in a row on the server, and only a hash of the token is
+stored, so a copy of the database cannot be used to log in as anybody.
 
 The rules, and what each one costs and buys:
 
+* **It ends when the browser closes.** No Max-Age on the cookie, so the
+  browser discards it. A code by email is quick enough that making people
+  get one again is a small price for a workstation that does not stay
+  logged in. The absolute ceiling below is the backstop, because a browser
+  told to restore its previous tabs restores session cookies with them.
 * **One account, one device.** Logging in anywhere displaces the session that
   was open somewhere else. Two clinicians cannot quietly share one Rad-Intel
-  ID and work in parallel, and if an ID is passed around, the person it was
-  issued to finds themselves logged out -- which is a far better alarm than a
-  line in a log nobody reads.
-* **Thirty days, measured from the sign-in.** Not a sliding window: a session
-  opened on the first expires on the thirty-first however much it was used,
-  so a one-time code is needed once a month rather than never again.
-* **No idle timeout and no browser-close logout.** The cookie carries an
-  expiry, so it survives closing the browser and restarting the machine. That
-  is the point -- a clinician reviewing a handful of cases a week should not
-  be made to find a code every time -- and it is a deliberate trade: a
-  workstation left unlocked stays logged in. The thirty-day ceiling and the
-  administrator's ability to close any session are what bound it.
+  ID, and if an ID is passed around, the person it was issued to finds
+  themselves logged out -- a far better alarm than a line in a log nobody
+  reads.
+* **The session remembers which door was used.** An administrator who signed
+  in with their Rad-Intel ID holds a clinician session and gets clinician
+  powers; the console needs a session opened with the administrator password.
+  So an ID read off a notepad cannot reach the controls that can delete
+  everybody's data, even when it belongs to an administrator.
 * **Revocation is immediate.** Deleting the row ends the session on the next
   request. A self-contained signed token would stay valid until its own
   expiry whatever the server thought, which is why none is used here.
@@ -39,8 +40,10 @@ DB_PATH = BASE_DIR / "rad_intel.db"
 
 COOKIE_NAME = "radintel_session"
 
-# Thirty days from the sign-in, after which a fresh one-time code is needed.
-SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+# A ceiling for a browser that restores its tabs, and so its session cookies,
+# rather than a lifetime anybody should notice. Normal use ends the session
+# by closing the browser long before this.
+SESSION_TTL_SECONDS = 12 * 60 * 60
 
 # How stale last_seen_at may get before it is written again. It no longer
 # governs expiry -- it is only what the administrator's view shows -- and
@@ -58,7 +61,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_seen_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     ip TEXT,
-    user_agent TEXT
+    user_agent TEXT,
+    mode TEXT NOT NULL DEFAULT 'clinician'
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
@@ -69,9 +73,26 @@ def _connect():
     return store.transaction(DB_PATH)
 
 
+def _build(conn) -> None:
+    """
+    Create the tables, and add columns to a database made before them.
+
+    SQLite has no "ADD COLUMN IF NOT EXISTS", and CREATE TABLE IF NOT
+    EXISTS silently does nothing to a table that is already there, so a
+    new column has to be applied by comparing against PRAGMA table_info.
+    Without this an existing deployment keeps its old schema and fails on
+    the first insert.
+    """
+    conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions);")}
+    if "mode" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL"
+                     " DEFAULT 'clinician';")
+
+
 def init() -> None:
     """Build the tables, once per process: see auth/store.py."""
-    store.ensure_schema(DB_PATH, "sessions", lambda conn: conn.executescript(SCHEMA))
+    store.ensure_schema(DB_PATH, "sessions", _build)
 
 
 def _now() -> datetime:
@@ -98,20 +119,24 @@ def active_for_user(user_id: str) -> list[dict]:
     purge_expired()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent"
-            " FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC;",
+            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent,"
+            " mode FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC;",
             (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 def issue(user_id: str, ttl: int = SESSION_TTL_SECONDS, ip: str | None = None,
-          user_agent: str | None = None, single_device: bool = True) -> str:
+          user_agent: str | None = None, single_device: bool = True,
+          mode: str = "clinician") -> str:
     """
     Open a session and return the opaque token to put in the cookie.
 
     With `single_device`, every other session this account holds is closed
     first, so the account is signed in on exactly one device at a time.
+
+    `mode` is the door that was used. It is fixed here, from the code that
+    was just consumed, and never taken from the request afterwards.
     """
     init()
     token = secrets.token_urlsafe(32)
@@ -121,20 +146,20 @@ def issue(user_id: str, ttl: int = SESSION_TTL_SECONDS, ip: str | None = None,
             conn.execute("DELETE FROM sessions WHERE user_id = ?;", (user_id,))
         conn.execute(
             "INSERT INTO sessions (id, token_hash, user_id, created_at, last_seen_at,"
-            " expires_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            " expires_at, ip, user_agent, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
             (secrets.token_hex(8), fast_hash(token), user_id, _iso(now), _iso(now),
-             _iso(now + timedelta(seconds=ttl)), ip, (user_agent or "")[:200] or None),
+             _iso(now + timedelta(seconds=ttl)), ip, (user_agent or "")[:200] or None,
+             mode),
         )
     return token
 
 
-def verify(token: str | None) -> str | None:
+def lookup(token: str | None) -> dict | None:
     """
-    Return the user id for a live session, else None.
+    Return {user_id, mode} for a live session, else None.
 
-    Expiry is absolute: a session is over thirty days after it was opened,
-    however recently it was used. Using it keeps last_seen_at fresh for the
-    administrator's view and nothing else.
+    Using a session keeps last_seen_at fresh for the administrator's view and
+    nothing else: the expiry does not slide.
     """
     if not token:
         return None
@@ -161,7 +186,13 @@ def verify(token: str | None) -> str | None:
         if (now - last_seen).total_seconds() >= TOUCH_INTERVAL_SECONDS:
             conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?;",
                          (_iso(now), row["id"]))
-        return row["user_id"]
+        return {"user_id": row["user_id"], "mode": row["mode"] or "clinician"}
+
+
+def verify(token: str | None) -> str | None:
+    """The user id for a live session, else None. See lookup for the mode."""
+    found = lookup(token)
+    return found["user_id"] if found else None
 
 
 def expires_at(token: str | None) -> str | None:
@@ -198,8 +229,8 @@ def list_active() -> list[dict]:
     purge_expired()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent"
-            " FROM sessions ORDER BY last_seen_at DESC;"
+            "SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent,"
+            " mode FROM sessions ORDER BY last_seen_at DESC;"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -212,7 +243,7 @@ def destroy_by_id(session_id: str) -> bool:
 
 
 def purge_expired() -> int:
-    """Drop sessions past their thirty days. Cheap; called opportunistically."""
+    """Drop sessions past the ceiling. Cheap; called opportunistically."""
     init()
     with _connect() as conn:
         cur = conn.execute(

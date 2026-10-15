@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rad-Intel | Automated Pneumonia Detection & Reporting</title>
   <meta name="description" content="Research and education interface for automated pneumonia detection and evidence-constrained reporting from chest X-rays. Not for clinical use.">
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=13">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫁</text></svg>">
 </head>
 <body>
@@ -325,9 +325,9 @@
                   authorised to share, de-identified, with whatever approval your
                   institution requires. Nothing here de-identifies an image for you.</li>
               <li><strong>One device at a time.</strong> Logging in here logs you out
-                  wherever else you were. A session lasts 30 days and then asks for a
-                  fresh code, and it survives closing the browser — so lock your
-                  machine, because anyone who can use it can open your account.</li>
+                  wherever else you were, and closing the browser logs you out. Each
+                  sign-in needs a fresh code, emailed to the address on your
+                  account.</li>
               <li><strong>What is logged.</strong> Logins, uploads, edits, deletions,
                   exports and training runs are recorded against your name, and the
                   administrator can read that log. It is what makes "everyone can see
@@ -364,7 +364,7 @@
             <h3 class="auth-heading" id="login-heading">Log in</h3>
             <p class="muted small" id="login-blurb">
               Your email address and the Rad-Intel ID the administrator gave you. A
-              one-time code is then sent to you — the next screen says where.
+              one-time code is then emailed to you.
             </p>
 
             <div class="form-row">
@@ -464,9 +464,8 @@
                        placeholder="+91 98765 43210">
                 <span class="field-hint">
                   With the country code. This is how the administrator reaches you
-                  personally — WhatsApp is easiest — and, if the study is using SMS for
-                  sign-in, where your login codes are texted. Give a number you keep
-                  with you. Codes are never sent over WhatsApp.
+                  personally to verify who you are — WhatsApp is easiest. Sign-in codes
+                  go to your email address, never to a phone or a chat app.
                 </span>
               </div>
               <div class="form-row">
@@ -501,8 +500,18 @@
             <span class="badge badge-neutral" id="session-site">—</span>
             <span class="badge badge-accent" id="session-role" hidden>administrator</span>
             <span class="session-until" id="session-until"></span>
+            <span class="badge badge-neutral" id="session-mode" hidden>clinician view</span>
           </span>
           <button class="btn-link" id="btn-signout" type="button">Log out</button>
+        </div>
+
+        <div id="admin-hint" class="notice notice-amber" hidden>
+          <svg class="notice-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>You are an administrator, but you logged in through <strong>Clinician</strong>
+          with your Rad-Intel ID, so this is the clinician workspace and the console is
+          not here. That is deliberate: an ID gets written down and handed over, and it
+          should not be able to reach the controls that read and delete everybody's
+          data. Log out and choose <strong>Administrator</strong> to manage accounts.</span>
         </div>
 
         <div id="displaced-notice" class="notice notice-amber" hidden>
@@ -721,7 +730,7 @@
                 </div>
                 <div class="form-row">
                   <label class="field-label" for="nu-phone">Phone number
-                    <span class="opt-tag">codes are sent here</span></label>
+                    <span class="opt-tag">to reach them personally</span></label>
                   <input type="tel" id="nu-phone" class="input" maxlength="24" required
                          placeholder="+91 98765 43210">
                 </div>
@@ -760,9 +769,6 @@
                 <button class="btn-secondary btn-sm" id="btn-test-email" type="button">
                   Send myself a test email
                 </button>
-                <button class="btn-secondary btn-sm" id="btn-test-sms" type="button">
-                  Send myself a test SMS
-                </button>
               </div>
               <div id="test-email-result" class="fb-result" hidden></div>
               <p class="muted small" id="delivery-note"></p>
@@ -799,8 +805,9 @@
                 Open sessions <span class="count-pill" id="session-count">—</span>
               </h3>
               <p class="card-subtitle">
-                One device per account, 30 days each. Closing one forces that person to
-                enter a fresh code next time, without disabling their account.
+                One device per account. A session ends when that browser closes;
+                closing one here does the same immediately, without disabling the
+                account.
               </p>
               <div class="scroll-box" id="admin-sessions"></div>
             </section>
@@ -822,7 +829,7 @@
                 </div>
                 <div class="form-row">
                   <label class="field-label" for="ap-phone">Phone number
-                    <span class="opt-tag">your own login codes go here</span></label>
+                    <span class="opt-tag">how people reach you</span></label>
                   <input type="tel" id="ap-phone" class="input" maxlength="24">
                 </div>
                 <button class="btn-secondary" type="submit">Save details</button>
@@ -935,7 +942,7 @@
   <div id="toast" class="toast">Copied to clipboard</div>
 
   <script src="/static/app.js?v=3"></script>
-  <script src="/static/extras.js?v=11"></script>
-  <script src="/static/workspace.js?v=11"></script>
+  <script src="/static/extras.js?v=13"></script>
+  <script src="/static/workspace.js?v=13"></script>
 </body>
 </html>

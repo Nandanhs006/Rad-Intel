@@ -37,7 +37,12 @@ from rad_intel.api.schemas import (
     VerifyCodeRequest,
 )
 from rad_intel.auth import accounts, activity, notify, otp, session
-from rad_intel.auth.dependencies import current_clinician, require_clinician, session_token
+from rad_intel.auth.dependencies import (
+    current_clinician,
+    is_admin_session,
+    require_clinician,
+    session_token,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
@@ -68,16 +73,24 @@ def _me(user: dict, displaced: int = 0,
         full_name=user["full_name"],
         institution=user["institution"],
         role=user["role"],
+        session_mode=user.get("session_mode", "clinician"),
+        is_admin_session=is_admin_session(user),
         radintel_id=user.get("radintel_id"),
         phone=user.get("phone"),
         must_change_password=bool(user.get("must_change_password")),
     )
 
 
-async def _issue_and_send(user: dict, request: Request) -> CodeRequestResponse:
-    """Mint a code for an identified account and deliver it, or refuse."""
+async def _issue_and_send(user: dict, request: Request,
+                          mode: str) -> CodeRequestResponse:
+    """
+    Mint a code for an identified account and deliver it, or refuse.
+
+    `mode` records which door was used, so that an administrator who proved
+    only their Rad-Intel ID cannot end up with an administrator session.
+    """
     code, message = await run_in_threadpool(
-        otp.issue_code, user["id"], notify.channel_name(), user.get("phone_tail"),
+        otp.issue_code, user["id"], notify.channel_name(), None, True, mode,
     )
     if not code:
         activity.record("login.code_throttled", user=user, ip=client_address(request),
@@ -85,8 +98,7 @@ async def _issue_and_send(user: dict, request: Request) -> CodeRequestResponse:
         raise HTTPException(status_code=429, detail=message)
 
     delivered, channel, detail = await run_in_threadpool(
-        notify.send_verification_code, user.get("phone"), code, user["full_name"],
-        user["email"],
+        notify.send_verification_code, code, user["full_name"], user["email"],
     )
     if not delivered:
         # Do not leave a live code behind that nobody received.
@@ -113,7 +125,7 @@ async def request_clinician_code(req: ClinicianCodeRequest, request: Request):
                         ip=client_address(request), outcome="refused",
                         detail="clinician email + Rad-Intel ID")
         raise HTTPException(status_code=401, detail=_NO_MATCH)
-    return await _issue_and_send(user, request)
+    return await _issue_and_send(user, request, mode="clinician")
 
 
 @router.post("/admin/code", response_model=CodeRequestResponse,
@@ -126,7 +138,7 @@ async def request_admin_code(req: AdminCodeRequest, request: Request):
         activity.record("login.admin_identify_failed", actor=req.email.strip().lower(),
                         ip=client_address(request), outcome="refused")
         raise HTTPException(status_code=401, detail=_NO_MATCH_ADMIN)
-    return await _issue_and_send(user, request)
+    return await _issue_and_send(user, request, mode="admin")
 
 
 @router.post("/login", response_model=AuthMeResponse,
@@ -143,7 +155,7 @@ async def login(req: VerifyCodeRequest, request: Request, response: Response):
                         ip=client_address(request), outcome="refused")
         raise HTTPException(status_code=401, detail=_NO_MATCH)
 
-    ok, message = await run_in_threadpool(otp.verify_code, user["id"], req.code)
+    ok, message, mode = await run_in_threadpool(otp.verify_code, user["id"], req.code)
     if not ok:
         activity.record("login.code_rejected", user=user, detail=message,
                         ip=client_address(request), outcome="refused")
@@ -156,31 +168,30 @@ async def login(req: VerifyCodeRequest, request: Request, response: Response):
         displaced = len(session.active_for_user(user["id"]))
         accounts.note_successful_login(user["id"])
         token = session.issue(user["id"], ip=client_address(request),
-                              user_agent=request.headers.get("user-agent"))
+                              user_agent=request.headers.get("user-agent"),
+                              mode=mode or "clinician")
         return token, displaced, session.expires_at(token)
 
     token, displaced, ends_at = await run_in_threadpool(_open_session)
     response.set_cookie(
         key=session.COOKIE_NAME,
         value=token,
-        # Thirty days, so the cookie survives closing the browser and
-        # restarting the machine and a code is needed once a month rather
-        # than every time. The server row carries the same expiry and is what
-        # actually decides; this only stops the browser holding a cookie the
-        # server has already forgotten.
-        max_age=session.SESSION_TTL_SECONDS,
+        # No max_age and no expires: a session cookie, which the browser
+        # discards when it closes. The server-side ceiling is the backstop
+        # for browsers that restore their previous tabs.
         httponly=True,       # not readable from JavaScript
         samesite="lax",      # not sent on cross-site requests
         secure=_cookie_secure(),
         path="/",
     )
     activity.record("login.success", user=user, ip=client_address(request),
-                    detail=f"displaced={displaced}")
+                    detail=f"as={mode or 'clinician'} displaced={displaced}")
     if displaced:
         activity.record("login.displaced_other_device", user=user,
                         ip=client_address(request),
                         detail="the account's previous device was signed out")
-    return _me(user, displaced=displaced, session_expires_at=ends_at)
+    return _me({**user, "session_mode": mode or "clinician"},
+               displaced=displaced, session_expires_at=ends_at)
 
 
 @router.post("/logout")
@@ -226,6 +237,12 @@ async def change_password(req: ChangePasswordRequest, request: Request,
             detail=("Clinician accounts have no password. Your first factor is your "
                     "Rad-Intel ID, which the study administrator issues and can "
                     "replace if it is lost."),
+        )
+    if user.get("session_mode") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail=("You are logged in as a clinician. Log out and log back in through "
+                    "Administrator to change the password."),
         )
     ok, message = await run_in_threadpool(accounts.change_own_password, user["id"],
                                           req.current_password, req.new_password)

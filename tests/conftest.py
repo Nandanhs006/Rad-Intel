@@ -40,15 +40,13 @@ def no_live_delivery(monkeypatch):
     Keep every test away from the real delivery configuration.
 
     config.py loads .env into the process environment, so a developer with
-    working SMTP or SMS credentials had them visible to the whole suite --
-    and the tests that exercise the "nothing is configured" paths went ahead
-    and sent live email instead. Delivery is something tests opt into by
-    setting these themselves, never something they inherit.
+    working SMTP credentials had them visible to the whole suite -- and the
+    tests that exercise the "nothing is configured" paths went ahead and sent
+    live email instead. Delivery is something tests opt into by setting these
+    themselves, never something they inherit.
     """
     for name in (
         "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
-        "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM",
-        "FAST2SMS_API_KEY", "FAST2SMS_ROUTE",
-        "RAD_INTEL_OTP_CHANNEL", "RAD_INTEL_OTP_ECHO",
+        "RAD_INTEL_OTP_CHANNEL", "RAD_INTEL_OTP_ECHO", "RAD_INTEL_ADMIN_EMAIL",
     ):
         monkeypatch.delenv(name, raising=False)

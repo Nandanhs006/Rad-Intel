@@ -246,6 +246,11 @@ class AuthMeResponse(BaseModel):
     full_name: str | None = None
     institution: str | None = None
     role: str | None = None
+    # Which door this session was opened by, and whether it carries the
+    # console. An administrator signed in with their Rad-Intel ID holds a
+    # clinician session and sees the clinician workspace only.
+    session_mode: str | None = None
+    is_admin_session: bool = False
     radintel_id: str | None = None
     phone: str | None = None
     must_change_password: bool = False
