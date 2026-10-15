@@ -2759,3 +2759,38 @@ code.id-reveal {
   background: var(--bg-orange-soft);
 }
 .stat.is-waiting .stat-value { color: var(--primary-orange-active); }
+
+/* --- when an analysis could not be done ------------------------------ */
+/*
+   Said where the answer would have been, rather than in an alert box. An
+   alert stops the page, reads as a crash, and puts "Analysis Error:" in
+   front of a message that is often not an error at all -- a rate limit is
+   the service working.
+*/
+.results-problem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-5);
+  min-height: 280px;
+}
+.results-problem-icon svg {
+  width: 34px; height: 34px;
+  stroke: var(--primary-orange); fill: none; stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.results-problem-title {
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--text-main);
+}
+.results-problem-text {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 44ch;
+}

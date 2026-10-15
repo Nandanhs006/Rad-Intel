@@ -87,6 +87,14 @@ async def security_headers(request, call_next):
     # Nothing here needs a camera, a microphone or a location.
     response.headers.setdefault(
         "Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    # Only where HTTPS is known to be in front, which is the same thing that
+    # decides whether the session cookie is marked secure. Sent otherwise it
+    # would lock a plain-HTTP development machine out of its own browser.
+    # Six months, this host only: no includeSubDomains, because the host may
+    # be a subdomain of somebody else's, and no preload, which cannot be
+    # undone quickly.
+    if os.environ.get("RAD_INTEL_COOKIE_SECURE", "").strip() in ("1", "true", "yes"):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=15552000")
     # Scripts and styles come from this origin and the few CDNs the page
     # uses; frames come from nowhere. 'unsafe-inline' is still needed for the
     # inline handlers the original page was written with.

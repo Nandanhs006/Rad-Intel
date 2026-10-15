@@ -846,17 +846,32 @@ async def model_versions(manager: ModelManager = Depends(get_model_manager),
     }
 
 
-@router.post("/models/activate")
+@router.post("/models/activate",
+             dependencies=[Depends(limit("admin-activate", 20, 3600,
+                                         "model changes"))])
 async def activate_version(request: Request, file: str = Form(...),
+                           password: str = Form(...),
                            manager: ModelManager = Depends(get_model_manager),
                            admin: dict = Depends(require_admin)):
     """
     Choose which version of the shared model the service serves. Administrator only.
 
+    The password is asked for every time, as it is for a release. This one
+    reaches further than a release does: releasing adds a version to the list
+    for people who go looking, while this changes what everybody is served
+    without choosing anything. The more consequential of the two should not
+    be the easier one.
+
     Implemented as a pointer file rather than by copying over the base
     checkpoint, so the version the project's reported results describe stays
     byte-identical on disk and "go back to the base model" cannot fail.
     """
+    if not await run_in_threadpool(accounts.identify_admin, admin["email"], password):
+        activity.record("model.activate_refused", user=admin, ip=client_address(request),
+                        detail="wrong password", outcome="refused")
+        raise HTTPException(status_code=403,
+                            detail="Password incorrect. Nothing changed.")
+
     candidate = (WEIGHTS_DIR / Path(file).name).resolve()
     if not str(candidate).startswith(str(WEIGHTS_DIR.resolve())) or not candidate.is_file():
         raise HTTPException(status_code=404, detail="No such checkpoint.")
