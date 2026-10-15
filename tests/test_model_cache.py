@@ -38,14 +38,14 @@ class _Stub(ModelManager):
         return self._models[target]
 
 
-def test_the_limit_is_three_unless_told_otherwise(monkeypatch):
+def test_one_at_a_time_unless_told_otherwise(monkeypatch):
     monkeypatch.delenv("RAD_INTEL_MODEL_CACHE", raising=False)
-    assert _cache_limit() == 3
+    assert _cache_limit() == 1
     monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "8")
     assert _cache_limit() == 8
     # Nonsense does not take the service down, and nor does zero.
     monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "lots")
-    assert _cache_limit() == 3
+    assert _cache_limit() == 1
     monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "0")
     assert _cache_limit() == 1
 
@@ -97,8 +97,14 @@ def test_the_least_recently_used_is_the_one_that_goes(monkeypatch):
     assert {"hybrid", "densenet121", "resnet50"} == set(manager._models)
 
 
-def test_a_cache_of_one_still_serves_everything(monkeypatch):
-    """The smallest setting a tiny host might want, and it must still work."""
+def test_one_at_a_time_still_serves_everything(monkeypatch):
+    """
+    The default. Every model stays usable; only one non-default is resident.
+
+    This is the whole bargain: the chooser keeps offering everything, and
+    choosing something costs a few hundred milliseconds rather than a
+    permanent slice of the machine.
+    """
     monkeypatch.setenv("RAD_INTEL_MODEL_CACHE", "1")
     manager = _Stub()
     for name in ("hybrid", "swin_t", "resnet50"):
@@ -106,6 +112,10 @@ def test_a_cache_of_one_still_serves_everything(monkeypatch):
     # The default plus whichever was asked for last.
     assert "hybrid" in manager._models
     assert len(manager._models) <= 2
+    # And a model dropped earlier loads again when it is asked for.
+    manager.get_model("swin_t")
+    assert manager.loaded.count("swin_t") == 2
+    assert manager.get_model("swin_t") is manager._models["swin_t"]
 
 
 # --- listing the models must not load them ----------------------------------
