@@ -1,84 +1,149 @@
 # Putting Rad-Intel online
 
-You are hosting this yourself, on the spare MacBook, and reaching it through
-a free tunnel. No card, no monthly bill, no server to administer.
+You are deploying to a small Azure server, paid for with the **Azure for
+Students** credit. No credit card, no bill, a real HTTPS address, and it runs
+on its own.
 
 Follow this top to bottom. Every step says what to do and how to tell it
 worked. Nothing here needs you to understand the code.
 
-Budget about **two hours** the first time.
+Budget about **two and a half hours** the first time.
 
 ---
 
-## Why this way
+## What the credit buys, honestly
 
-The free tiers that could have carried this have mostly closed. Render's
-free plan gives 512 MB of memory and this needs about 870 MB. Fly.io and
-Koyeb stopped offering free plans to new accounts. Hugging Face now requires
-a paid plan for the kind of Space this would be. What is left is a machine
-you already own.
+**$100, which must be spent within 12 months.** When it runs out Azure
+**disables the subscription** — it does not charge you, and there is no card
+on file for it to charge. You cannot wake up to a bill.
 
-That turns out to be a decent answer rather than a consolation. The disk is
-permanent, so nothing is wiped on a redeploy and there is no volume to
-configure. There is no monthly cost to forget about. And the model files
-never have to be uploaded anywhere — they are already on the machine.
+The one thing people get wrong: **Azure bills for every hour the machine is
+switched on, not per visit.** Three people using it costs exactly what three
+hundred would. So the way to stretch the credit is not to use it less — it is
+to switch the machine off when nobody needs it, which Step 6 sets up for you.
 
-**The one real cost:** the site is up only while that MacBook is on, awake
-and online. For a study with a handful of clinicians, that is usually fine.
-It is not a service other people can depend on at three in the morning, and
-you should tell them so.
+Roughly, per month:
 
----
+| | running 24/7 | off 10 hours a night |
+|---|---|---|
+| The machine (B1ms, 2 GB) | ~$15 | ~$9 |
+| Disk and address | ~$6 | ~$6 |
+| **Total** | **~$21** | **~$15** |
+| **$100 lasts** | **~5 months** | **~7 months** |
 
-## What you need
+Bandwidth is free up to 100 GB a month, which this will not approach.
 
-- The **spare Intel MacBook**, on its charger, on your wifi.
-- About **3 GB free disk**, and the project copied onto it.
-- A free **Tailscale** account — no card.
+> **Why 2 GB and not the cheaper 1 GB.** Measured, this needs about 870 MB,
+> so 1 GB leaves nothing for the operating system. The smaller machine is
+> also much slower in a way that bites exactly here: these are *burstable*
+> machines, and the 1 GB one gets about a tenth of a processor once its
+> saved-up credit is gone. The 2 GB one banks credit while nobody is using
+> it and spends it on the occasional analysis, which is precisely your
+> pattern.
 
-### A word about 4 GB
-
-Measured: Rad-Intel sits at about **870 MB** once started. macOS itself wants
-roughly 2 GB. That leaves the machine working, with some swapping, and it
-will hold.
-
-Two things keep it there:
-
-- **Put only `best_hybrid_model.pt` on it.** Models without a checkpoint are
-  simply not offered, so the chooser shows one model and nothing ever gets
-  loaded and unloaded. Step 2 says where to put it.
-- **Leave `RAD_INTEL_MODEL_CACHE` empty.** The default already holds one
-  model at a time.
-
-Analyses will take a few seconds rather than under one, because the
-processor is old. That is the trade, and it is a fair one.
+**Put a reminder in your phone for five months from today.** That is when you
+decide: renew the student credit if you are still enrolled, move to a
+department machine, or pay roughly ₹350 a month elsewhere. Deciding then is
+calm; discovering it is not.
 
 ---
 
-## Step 1 — Get the project onto that MacBook
+## Step 1 — Make the server
 
-On the spare machine, install the tools, then the project:
+1. Go to **portal.azure.com** and sign in with your college email.
+2. Search for **Virtual machines** → **Create** → **Azure virtual machine**.
+3. Fill in only these; leave everything else alone:
 
-```bash
-xcode-select --install
+| Field | What to put |
+|---|---|
+| Resource group | **Create new** → `rad-intel` |
+| Virtual machine name | `radintel` |
+| Region | **(Asia Pacific) Central India** |
+| Image | **Ubuntu Server 24.04 LTS - x64 Gen2** |
+| Size | **See below** |
+| Authentication type | **SSH public key** |
+| Username | `azureuser` |
+| SSH public key source | **Generate new key pair** |
+| Public inbound ports | **Allow selected ports** |
+| Select inbound ports | **SSH (22)**, **HTTP (80)**, **HTTPS (443)** |
+
+For **Size**, click *See all sizes*, search `B1ms`, and pick
+**B1ms — 1 vcpu, 2 GiB memory**. It is not in the short list by default.
+
+4. Go to the **Disks** tab. Change **OS disk type** to **Standard SSD**. The
+   default is Premium and costs about three times as much for no benefit
+   here.
+
+5. **Review + create** → **Create**. It offers to download a private key
+   file — **download it and keep it.** It is the only way into the machine
+   and it is not offered twice.
+
+**How to tell it worked:** the VM page shows *Running* after a minute or two.
+
+---
+
+## Step 2 — Give it a name and let yourself in
+
+**The name.** On the VM's **Overview** page, next to *DNS name*, click
+**Configure** → under *DNS name label* type something like `radintel-mce` →
+**Save**.
+
+Your address is now:
+
+```
+radintel-mce.centralindia.cloudapp.azure.com
 ```
 
-Install Python 3.12 or newer from [python.org](https://www.python.org/downloads/macos/)
-if `python3 --version` shows anything older. Then:
+That is the real, permanent, public address of your site. Write it down.
+
+**Letting yourself in.** On your own machine, in the folder where the key
+downloaded:
 
 ```bash
-mkdir -p ~/Documents/GitHub && cd ~/Documents/GitHub
+chmod 600 radintel_key.pem
+ssh -i radintel_key.pem azureuser@radintel-mce.centralindia.cloudapp.azure.com
+```
+
+Say `yes` when it asks about the fingerprint.
+
+> Every command from here until Step 7 runs **on the server**, inside that
+> SSH session. If you get disconnected, run the `ssh` line again.
+
+---
+
+## Step 3 — Set the server up
+
+Paste these one block at a time.
+
+**The basics, and some swap.** 2 GB is enough but not generous, and swap
+means a brief spike slows things down instead of killing them:
+
+```bash
+sudo apt update && sudo apt -y upgrade
+sudo apt -y install python3-venv python3-pip git unzip
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h
+```
+
+`free -h` should show 2 GB of swap.
+
+**The project:**
+
+```bash
+cd ~
 git clone https://github.com/YOUR_USERNAME/Rad-Intel.git
 cd Rad-Intel
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-deploy.txt
 ```
 
-That last line takes ten to twenty minutes and downloads about a gigabyte.
-It installs the **CPU** build of PyTorch, which is the right one here and
-several gigabytes smaller than the default.
+That takes fifteen to twenty-five minutes on this machine and downloads about
+a gigabyte. It installs the **CPU** build of PyTorch, which is the right one
+here and several gigabytes smaller than the default.
 
-**How to tell it worked**
+**How to tell it worked:**
 
 ```bash
 .venv/bin/python -c "import torch; print(torch.__version__)"
@@ -86,80 +151,38 @@ several gigabytes smaller than the default.
 
 ---
 
-## Step 2 — Put the model file in place
+## Step 3b — Put the model file on it
 
-The model is not in git — it is too big for GitHub. Copy
-`weights/best_hybrid_model.pt` across from your main machine: AirDrop, a USB
-stick, or your Google Drive. It goes in `~/Documents/GitHub/Rad-Intel/weights/`.
-
-**How to tell it worked**
+The model is not in git — GitHub refuses files that big. Send it from **your
+own machine**, in a second terminal window:
 
 ```bash
-ls -lh ~/Documents/GitHub/Rad-Intel/weights/
+scp -i radintel_key.pem weights/best_hybrid_model.pt \
+  azureuser@radintel-mce.centralindia.cloudapp.azure.com:~/Rad-Intel/weights/
+```
+
+136 MB, so give it a few minutes.
+
+**How to tell it worked**, back on the server:
+
+```bash
+ls -lh ~/Rad-Intel/weights/
 ```
 
 You want `best_hybrid_model.pt` at about **136M**.
 
-> You can copy the other four `.pt` files too, and the Analyse tab will then
-> offer those models as well. On 4 GB, start with just the one. You can
-> always add them later.
-
----
-
-## Step 3 — Give it a public address
-
-[Tailscale](https://tailscale.com) will carry traffic from the internet to
-this machine without opening a single port on your router — which also means
-it works on a home connection that has no public address of its own.
-
-1. Make a free account at **tailscale.com** and install Tailscale on the
-   MacBook. Sign in.
-2. In the Tailscale admin console → **DNS**, note your tailnet name. It looks
-   like `tail1234.ts.net`.
-3. Still in the admin console → **Access controls**, make sure `funnel` is
-   enabled for your devices. On a new tailnet it usually already is.
-4. On the MacBook:
-
-```bash
-tailscale funnel --bg 8000
-```
-
-> **If `tailscale` is not found**, the Mac app keeps its command somewhere
-> the shell does not look. Add it once:
->
-> ```bash
-> echo 'alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"' \
->   >> ~/.zshrc
-> source ~/.zshrc
-> ```
-
-It prints your public address:
-
-```
-https://that-macbook.tail1234.ts.net
-```
-
-**That address is yours and it does not change.** Write it down — it is what
-you give clinicians.
-
-**How to tell it worked:** open that address on your *phone, with wifi off*.
-You should reach the site. (Nothing is running yet, so expect an error page —
-what matters is that it is *your* machine answering, not a timeout.)
-
-> Tailscale Funnel is free, needs no domain and no card. Two things to know:
-> it only carries ports 443, 8443 and 10000 on the public side, which is
-> handled for you, and its bandwidth is capped at a level that is generous
-> for this and not configurable.
+> You can send the other four `.pt` files the same way and the Analyse tab
+> will offer those models too. They cost disk, not memory — only one model is
+> ever held at a time. Start with the one; add them later if you want.
 
 ---
 
 ## Step 4 — Fill in the settings
 
-Settings live in a file called `.env`, beside the code. Start from the
-example and edit it:
+On the server:
 
 ```bash
-cd ~/Documents/GitHub/Rad-Intel
+cd ~/Rad-Intel
 cp .env.example .env
 nano .env
 ```
@@ -167,8 +190,8 @@ nano .env
 `nano` saves with **Ctrl+O**, Enter, then **Ctrl+X**.
 
 **Where your data lives.** Leave `RAD_INTEL_FEEDBACK_DIR` and `DATABASE_URL`
-**empty**. On your own machine the defaults — a folder beside the code and
-`rad_intel.db` next to it — are exactly right, and nothing wipes them.
+**empty**. The defaults — a folder beside the code, and `rad_intel.db` next
+to it — are right here, and nothing wipes them.
 
 **Security.** Generate a key:
 
@@ -176,28 +199,22 @@ nano .env
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-and put it in, along with the two below:
-
 ```
 RAD_INTEL_SECRET_KEY=<the long string you just generated>
 RAD_INTEL_COOKIE_SECURE=1
-RAD_INTEL_TRUSTED_PROXY=
+RAD_INTEL_TRUSTED_PROXY=1
 ```
 
-> **Write that key down somewhere safe.** If you lose it, every stored phone
-> number becomes permanently unreadable.
+> **Write that key down somewhere off the server.** Lose it and every stored
+> phone number becomes permanently unreadable.
 
-> `RAD_INTEL_COOKIE_SECURE=1` is right even though this process speaks plain
-> HTTP: the address people actually use is HTTPS, and that is what the
-> browser decides on.
+> `RAD_INTEL_TRUSTED_PROXY=1` is correct here and I can say so without you
+> having to test it. Step 5 puts Caddy in front, Caddy *writes* the
+> `X-Forwarded-For` header itself and overwrites anything a visitor claimed,
+> and Rad-Intel itself only listens on the loopback — so that header is the
+> truth and nothing else can reach the app to lie about it.
 
-> Leave `RAD_INTEL_TRUSTED_PROXY` **empty for now**. It decides whether the
-> `X-Forwarded-For` header is believed. Believe it when nothing sets it and
-> anybody can claim any address, so the rate limits stop meaning anything;
-> ignore it when a tunnel *does* set it and every visitor looks like the same
-> one person. Step 7 has a one-minute test that tells you which you have.
-
-**Email** — the same values you already use. For Gmail, `SMTP_PASSWORD` is a
+**Email** — the values you already use. For Gmail, `SMTP_PASSWORD` is a
 16-character App Password, not your account password:
 
 ```
@@ -212,11 +229,10 @@ SMTP_FROM=poorabng@gmail.com
 **Reports:**
 
 ```
-GEMINI_API_KEY=<copy from your main machine's .env>
+GEMINI_API_KEY=<copy from your own machine's .env>
 ```
 
-**Google Drive** — where reviewed radiographs go so they outlive this
-machine. See Step 4b below for how to get these three.
+**Google Drive** — Step 4b fills these in.
 
 ```
 GOOGLE_DRIVE_CLIENT_ID=
@@ -224,8 +240,8 @@ GOOGLE_DRIVE_CLIENT_SECRET=
 GOOGLE_DRIVE_REFRESH_TOKEN=
 ```
 
-**Leave these empty.** They are for development only, and on a machine the
-public can reach they are actively harmful:
+**Leave these empty.** They are for development, and on a machine the public
+can reach they are actively harmful:
 
 ```
 RAD_INTEL_ENABLE_DOCS=
@@ -243,14 +259,15 @@ RAD_INTEL_MODEL_CACHE=
 ## Step 4b — Put the radiographs somewhere permanent
 
 **Skip this and the site still works. Do not skip it.** Reviewed radiographs
-are kept on this MacBook's disk. The disk is permanent — but the MacBook is
-not. It can be dropped, stolen, or simply stop one morning, and a radiograph
-a clinician uploaded is the one thing here that **cannot be made again**. The
+are kept on this server's disk. That disk lives as long as the subscription
+does — and the subscription has about five months of credit in it. When it
+is disabled, the machine and its disk go with it, and a radiograph a
+clinician uploaded is the one thing here that **cannot be made again**. The
 model can be retrained. The database can be rebuilt. A lost radiograph is
 lost.
 
-Self-hosting makes this step *more* important than it would be on a rented
-server, not less: there is no datacentre keeping a copy for you.
+A credit with a deadline on it makes this step *more* important, not less.
+Do it now, not in month four.
 
 So each one is also copied into **your** Google Drive, and fetched back from
 there if the server ever comes up with an empty disk.
@@ -280,7 +297,9 @@ is the entire world it has.
    > review and no verification — it is one button.
 4. **Credentials → Create credentials → OAuth client ID → Desktop app.**
    Copy the client ID and client secret.
-5. On the MacBook, in the project folder:
+5. This one runs on **your own machine**, not the server — it opens a
+   browser window, and the server has no browser. Clone the project locally
+   if you have not already, then:
 
 ```bash
 .venv/bin/python scripts/connect_drive.py --client-id YOUR_ID --client-secret YOUR_SECRET
@@ -288,10 +307,11 @@ is the entire world it has.
 
 A browser opens on that machine. Sign in as the account whose Drive should
 hold the radiographs, allow the one permission, and it prints three lines.
-Paste them into `.env`, as in Step 4, and restart:
+It prints three lines. Put them into the **server's** `.env`, as in Step 4,
+then restart it:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.radintel.server
+sudo systemctl restart radintel
 ```
 
 **How to tell it worked:** the console gets a card, *Where reviewed radiographs
@@ -305,69 +325,102 @@ yours.
 
 ---
 
-## Step 5 — Make it start by itself, and stay up
+## Step 5 — Make it run on its own, with a real certificate
 
-Two things have to be true: it starts again after a reboot or a power cut,
-and the MacBook does not fall asleep underneath it.
+Two pieces. **systemd** keeps Rad-Intel running and starts it again if it
+stops or the machine reboots. **Caddy** sits in front, holds the HTTPS
+certificate, and is the only thing the outside world can reach.
 
-Both are handled by a small service. Install it:
-
-```bash
-cd ~/Documents/GitHub/Rad-Intel
-sed "s|YOUR_USERNAME|$USER|g" deploy/com.radintel.server.plist \
-  > ~/Library/LaunchAgents/com.radintel.server.plist
-launchctl load -w ~/Library/LaunchAgents/com.radintel.server.plist
-```
-
-It runs `deploy/run-rad-intel.sh`, which reads your `.env`, starts the server
-on port 8000, and wraps it in `caffeinate` so macOS will not sleep while it
-is running. If it ever stops, launchd starts it again.
-
-After editing `.env`, restart it with:
+**Rad-Intel as a service:**
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.radintel.server
+cd ~/Rad-Intel
+sudo cp deploy/radintel.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now radintel
 ```
 
-**One worker, deliberately.** The rate limits and the one-training-run-at-a-
-time lock are counted inside a single process. Two workers would be two
-separate sets of both, and every limit would be twice as generous as it
-reads.
-
-Now set the machine itself:
-
-- **System Settings → Lock Screen** → *Turn display off on power adapter when
-  inactive*: set it to a short time. The screen may sleep; the machine must
-  not.
-- **System Settings → Energy** → turn **on** *Start up automatically after a
-  power failure*, and **off** any "put hard disks to sleep".
-- Leave it **plugged in**, and leave the **lid open**. A closed lid sleeps a
-  MacBook unless a display is attached, and a sleeping MacBook serves nothing.
-
-**How to tell it worked**
+Give it two minutes — the first start loads the model — then:
 
 ```bash
 curl -s localhost:8000/api/v1/health
-tail -f ~/Library/Logs/rad-intel.log
 ```
 
-The first start takes a minute or two while the model loads. That is normal,
-not a hang.
+If that is quiet, read the log: `journalctl -u radintel -n 50`.
 
-To stop it:
+**Caddy, and the certificate:**
 
 ```bash
-launchctl unload -w ~/Library/LaunchAgents/com.radintel.server.plist
+sudo apt -y install debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt -y install caddy
 ```
+
+Now put your own address in its config:
+
+```bash
+sudo cp ~/Rad-Intel/deploy/Caddyfile /etc/caddy/Caddyfile
+sudo nano /etc/caddy/Caddyfile
+```
+
+Change the **first line** to your address from Step 2, keeping the `{`:
+
+```
+radintel-mce.centralindia.cloudapp.azure.com {
+```
+
+Then:
+
+```bash
+sudo systemctl restart caddy
+```
+
+Caddy fetches a free Let's Encrypt certificate for that name, by itself,
+within about thirty seconds — and renews it by itself for ever after. There
+is nothing to buy and nothing to remember.
+
+**How to tell it worked:** on your own machine, open
+
+```
+https://radintel-mce.centralindia.cloudapp.azure.com
+```
+
+A padlock and the Rad-Intel page. If the browser complains about the
+certificate, wait a minute and reload — it was still being issued.
+
+> If Caddy cannot get a certificate, nine times out of ten port 80 is closed.
+> In the portal: your VM → **Networking** → make sure inbound rules allow
+> **80** and **443**.
+
+---
+
+## Step 5b — Switch it off at night (optional, and worth it)
+
+This is the difference between the credit lasting about five months and about
+seven. Skip it if the clinicians genuinely use it at odd hours.
+
+In the portal: your VM → **Auto-shutdown** (left menu, under *Operations*) →
+**On** → pick a time, say **1:00 AM**, set your time zone to **India
+Standard Time** → **Save**.
+
+Starting it again is manual: the VM's **Overview** page → **Start**. It is
+serving again about two minutes later.
+
+> Switching the machine off stops the compute charge. The disk and the
+> address keep costing their ~$6 a month either way.
 
 ---
 
 ## Step 6 — Make yourself the administrator on the server
 
-Your admin account exists in your main machine's database, not this one's.
-On the MacBook:
+Your admin account exists in your own machine's database, not this one's.
+On the server:
 
 ```bash
+cd ~/Rad-Intel
 .venv/bin/python scripts/manage_clinicians.py add \
   --email poorabng@gmail.com \
   --name "Poorab N G" \
@@ -380,9 +433,10 @@ It prints a password and a Rad-Intel ID. **Copy both** — you sign in with
 the password through the **Administrator** door, which the next step checks.
 
 If anything goes wrong and you cannot log in, this always works on the
-MacBook itself:
+server itself:
 
 ```bash
+cd ~/Rad-Intel
 .venv/bin/python scripts/manage_clinicians.py code --email poorabng@gmail.com --admin
 ```
 
@@ -393,10 +447,10 @@ it in. No email needed.
 
 ## Step 7 — Check it actually works
 
-**First, one command.** On the MacBook:
+**First, one command.** On the server:
 
 ```bash
-.venv/bin/python scripts/preflight.py
+cd ~/Rad-Intel && .venv/bin/python scripts/preflight.py
 ```
 
 It goes through everything that can quietly be wrong at the same time — the
@@ -425,7 +479,7 @@ CXR → Analyze Radiograph**. You should get a verdict, a heat map and a
 written report.
 
 > If you get *"Model has no trained checkpoint"* — the file from Step 2 is
-> missing or misnamed. Check `ls -lh ~/Documents/GitHub/Rad-Intel/weights/`.
+> missing or misnamed. Check `ls -lh ~/Rad-Intel/weights/`.
 
 **3. Can you log in?** **Clinician Feedback → Administrator →** your email and
 password → a code arrives in your Gmail → paste it in.
@@ -439,24 +493,19 @@ email**. It should say it was sent.
 **5. Is it private?** Visit `your-url/docs` — you should get **404**. If you
 see a page of API documentation, `RAD_INTEL_ENABLE_DOCS` is set; empty it.
 
-**6. Does it see who is calling?** This is the `RAD_INTEL_TRUSTED_PROXY`
-question from Step 4, and one minute settles it.
+**6. Does it see who is calling?** You set `RAD_INTEL_TRUSTED_PROXY=1` in
+Step 4; this confirms it. Open the site **from your phone with wifi off**,
+sign in, then in the console: **Administrator → Activity**. Find that sign-in
+and look at the address beside it.
 
-On your **phone, with wifi off**, open the site and sign in. Then on the
-MacBook, in the console: **Administrator → Activity**. Find that sign-in and
-look at the address beside it.
+It should be **your phone's own address** — something public, not
+`127.0.0.1`. That means Caddy is passing the real caller through, which is
+what makes the rate limits count people rather than counting everybody as
+one.
 
-- It shows **your phone's address** (something public, not starting `127.`) —
-  the tunnel is passing the caller through. Set `RAD_INTEL_TRUSTED_PROXY=1`
-  in `.env` and restart.
-- It shows **`127.0.0.1`** — the tunnel is not passing it through. Leave
-  `RAD_INTEL_TRUSTED_PROXY` empty.
-
-Getting this wrong is quiet rather than loud, which is why it is worth the
-minute: set it when nothing sets the header and anyone can claim any address,
-so the rate limits stop meaning anything. Leave it unset when the header *is*
-set, and every visitor counts as the same person, so one of them can lock out
-all the others.
+> If it does say `127.0.0.1`, Caddy is not setting the header. Check you
+> copied `deploy/Caddyfile` rather than writing your own, and restart both:
+> `sudo systemctl restart caddy radintel`.
 
 ---
 
@@ -554,6 +603,10 @@ anything is always the one your paper describes.
 
 # Things to know, not things to do
 
+- **The credit runs out in about five months.** Azure disables the
+  subscription rather than charging you, but the machine and its disk go with
+  it. Put the reminder in your phone now. A backup (below) is what makes that
+  a move rather than a loss.
 - **If Gmail breaks, nobody can log in.** The `manage_clinicians.py code`
   command at the end of Step 6 is your way back in. Keep it somewhere you can
   find it.
@@ -564,29 +617,40 @@ anything is always the one your paper describes.
   a time — logging in somewhere else logs out the old one.
 - **There is no idle timeout.** An unlocked laptop is an open account until
   the browser closes.
-- **The MacBook is on your home network.** Tailscale exposes one port and
-  nothing else — no router change, no open ports — so the rest of the machine
-  stays unreachable. Keep macOS's firewall on anyway, and do not use that
-  machine for anything else.
+- **Only three ports are open, and only one thing answers.** Rad-Intel itself
+  listens on the loopback, so the only way in is through Caddy on 443. Leave
+  the Azure network rules as Step 1 set them, and do not add more.
+- **Keep the server patched.** Once a month:
+  ```bash
+  sudo apt update && sudo apt -y upgrade && sudo reboot
+  ```
+  It comes back on its own — that is what `systemctl enable` was for.
 - **Run preflight after any settings change.** `.venv/bin/python scripts/preflight.py`.
   It is the quickest way to find out that something you changed last week
   broke sign-in for everybody.
-- **Back up the project folder.** `rad_intel.db` holds every account and
-  every review; `.radintel_key` is what makes the stored phone numbers
-  readable. With Step 4b done the radiographs themselves are already safe in
-  Drive, so this is a small copy. Once a month onto a USB stick or your main
-  machine is enough at this scale:
+- **Back up, once a month.** `rad_intel.db` holds every account and every
+  review; `.radintel_key` is what makes the stored phone numbers readable.
+  With Step 4b done the radiographs are already safe in Drive, so this is a
+  small file. On the **server**:
 
   ```bash
-  cd ~/Documents/GitHub/Rad-Intel
-  zip -r ~/Desktop/rad-intel-backup-$(date +%Y%m%d).zip \
-    rad_intel.db .radintel_key .env feedback_store
+  cd ~/Rad-Intel
+  tar czf ~/radintel-backup-$(date +%Y%m%d).tar.gz \
+    rad_intel.db .radintel_key .env
   ```
 
-- **The site is up only while that MacBook is.** Power cut, closed lid,
-  someone unplugging it, your internet dropping — any of those and the
-  address stops answering until it is back. Say so to the clinicians rather
-  than letting them discover it.
-- **Check on it now and then.** `tail ~/Library/Logs/rad-intel.log` and the
-  Activity log in the console will both tell you whether anything has been
-  happening.
+  Then, from **your own machine**, pull it down:
+
+  ```bash
+  scp -i radintel_key.pem \
+    azureuser@YOUR-NAME.centralindia.cloudapp.azure.com:~/radintel-backup-*.tar.gz .
+  ```
+
+  That file plus the Drive folder is the whole study. With both, month five is
+  an afternoon's work on a new machine.
+- **Watch it when you want to.** `journalctl -u radintel -f` for the server,
+  `sudo journalctl -u caddy -f` for the certificate and traffic, and the
+  Activity log in the console for who has actually been using it.
+- **Keep an eye on the credit.** Portal → **Subscriptions** → your
+  subscription → **Overview** shows what is left. Check it monthly, not on
+  the last day.

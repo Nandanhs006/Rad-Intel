@@ -1,15 +1,18 @@
 #!/bin/bash
 #
-# Start Rad-Intel and keep the machine awake while it runs.
+# Start Rad-Intel. Used by both services in this folder -- systemd on a Linux
+# server, launchd on a Mac -- and runnable by hand to see what it does.
 #
-# Called by the launchd job in this folder, and runnable by hand to see what
-# it does. It deliberately does not daemonise: launchd wants a process that
-# stays in the foreground so it can restart it when it dies.
+# It deliberately does not daemonise. Both service managers want a process
+# that stays in the foreground, so they can tell when it dies and start it
+# again.
 
 set -euo pipefail
 
-# Where the project is. Change this if you put it somewhere else.
-PROJECT="${RAD_INTEL_HOME:-$HOME/Documents/GitHub/Rad-Intel}"
+# Where the project is. The service file sets this; the fallback is for
+# running it by hand.
+PROJECT="${RAD_INTEL_HOME:-$HOME/Rad-Intel}"
+[ -d "$PROJECT" ] || PROJECT="$HOME/Documents/GitHub/Rad-Intel"
 
 cd "$PROJECT"
 
@@ -30,9 +33,20 @@ fi
 # Order of preference: what the caller asked for, then .env, then 8000.
 PORT="${RAD_INTEL_PORT:-${PORT:-8000}}"
 
+# Listen on the loopback only. On a server something in front of this -- Caddy
+# -- holds the certificate and forwards to it, and on a laptop a tunnel does.
+# Either way nothing should be able to reach this port from outside the
+# machine, whatever the firewall happens to say.
+#
 # One worker. The rate limits and the one-training-run-at-a-time lock are
 # counted inside a single process; two workers would be two separate sets of
-# both, so a limit would be twice as generous as it reads.
-exec caffeinate -i -s \
-  .venv/bin/python -m uvicorn rad_intel.api.main:app \
-    --host 127.0.0.1 --port "$PORT" --workers 1
+# both, so every limit would be twice as generous as it reads.
+SERVE=(.venv/bin/python -m uvicorn rad_intel.api.main:app
+       --host 127.0.0.1 --port "$PORT" --workers 1)
+
+# A Mac has to be told not to fall asleep underneath it. A server does not,
+# and has no such command.
+if command -v caffeinate >/dev/null 2>&1; then
+  exec caffeinate -i -s "${SERVE[@]}"
+fi
+exec "${SERVE[@]}"

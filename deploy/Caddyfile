@@ -1,0 +1,43 @@
+# The public face of the server: a real certificate, and a door that only
+# opens onto Rad-Intel.
+#
+# Install:
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo nano /etc/caddy/Caddyfile      # put your own address on the first line
+#   sudo systemctl restart caddy
+#
+# Replace the address below with the DNS name Azure gave your machine. Caddy
+# gets a free Let's Encrypt certificate for it by itself, renews it by
+# itself, and redirects http to https by itself. Nothing to buy, and no
+# certificate to remember to replace.
+#
+# Deliberately short. Every directive here is one that can be wrong, and the
+# defaults are already right for this: no response timeout, http to https
+# redirect, and a certificate fetched on first start.
+
+radintel.centralindia.cloudapp.azure.com {
+
+	# Rad-Intel listens on the loopback only, so this is the one way in.
+	#
+	# reverse_proxy sets X-Forwarded-For itself and *ignores* whatever the
+	# client claimed, which is what makes RAD_INTEL_TRUSTED_PROXY=1 safe to
+	# switch on: that header is written here and cannot be forged from
+	# outside.
+	reverse_proxy 127.0.0.1:8000
+
+	# A radiograph is capped at 20 MB inside the application. Saying so here
+	# too means an oversized one is refused at the door rather than carried
+	# the whole way first.
+	request_body {
+		max_size 25MB
+	}
+
+	encode gzip
+
+	log {
+		output file /var/log/caddy/radintel.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}
