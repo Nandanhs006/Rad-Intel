@@ -7,7 +7,10 @@ name = "rad-intel"
 version = "0.1.0"
 description = "Research and education framework for automated pneumonia detection from chest radiographs. Not for clinical use."
 readme = "README.md"
-requires-python = ">=3.14"
+# 3.11 is the floor the code actually needs; it uses nothing newer. Written
+# as the real minimum rather than the version it happens to be developed on,
+# because a host that offers 3.12 should not be refused by metadata.
+requires-python = ">=3.11"
 dependencies = [
     "torch>=2.14.0",
     "torchvision>=0.29.0",
