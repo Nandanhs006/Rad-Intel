@@ -40,6 +40,6 @@ for name in ["densenet121","hybrid"]:
     hits=sum(1 for a,b in zip(got,target) if a==b)
     print(f"{name:14s} exact positional matches {hits}/30")
     if hits>=28:
-        with open('/private/tmp/claude-501/-Users-poorabng-Documents-GitHub-Rad-Intel/46389b50-a553-4b39-802c-64b4189379a6/scratchpad/review_files.txt','w') as fh:
+        with open(Path(__file__).resolve().parent.parent / "review_files.txt", "w") as fh:
             for x in c: fh.write(f"{x['file']}\t{x['truth']}\t{x['pred']}\t{x['p']:.6f}\n")
         print("  -> wrote review_files.txt")
