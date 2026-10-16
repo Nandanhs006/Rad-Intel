@@ -1,7 +1,9 @@
 # Keeps Rad-Intel running on a Linux server.
 #
-# Install:
-#   sudo cp deploy/radintel.service /etc/systemd/system/
+# Install (the sed fills in your username and folder, so this same file
+# works on the Azure server and on any other Linux machine you move to):
+#   sed -e "s|__USER__|$USER|g" -e "s|__HOME__|$HOME/Rad-Intel|g" \
+#     deploy/radintel.service | sudo tee /etc/systemd/system/radintel.service
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now radintel
 #
@@ -9,7 +11,6 @@
 # Restart it:  sudo systemctl restart radintel
 # Stop it:     sudo systemctl stop radintel
 #
-# Change User= and the two paths if your username or folder differ.
 
 [Unit]
 Description=Rad-Intel
@@ -23,10 +24,10 @@ StartLimitIntervalSec=300
 
 [Service]
 Type=exec
-User=azureuser
-WorkingDirectory=/home/azureuser/Rad-Intel
-Environment=RAD_INTEL_HOME=/home/azureuser/Rad-Intel
-ExecStart=/home/azureuser/Rad-Intel/deploy/run-rad-intel.sh
+User=__USER__
+WorkingDirectory=__HOME__
+Environment=RAD_INTEL_HOME=__HOME__
+ExecStart=__HOME__/deploy/run-rad-intel.sh
 
 # Loading the model takes a minute or two on a small machine, and systemd
 # must not decide it has hung and kill it.
@@ -42,7 +43,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/azureuser/Rad-Intel
+ReadWritePaths=__HOME__
 
 StandardOutput=journal
 StandardError=journal

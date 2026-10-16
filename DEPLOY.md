@@ -41,10 +41,15 @@ Bandwidth is free up to 100 GB a month, which this will not approach.
 > it and spends it on the occasional analysis, which is precisely your
 > pattern.
 
-**Put a reminder in your phone for five months from today.** That is when you
-decide: renew the student credit if you are still enrolled, move to a
-department machine, or pay roughly ₹350 a month elsewhere. Deciding then is
-calm; discovering it is not.
+**Put a reminder in your phone for four months from today.** That is when you
+decide what happens next: renew the student credit if you are still enrolled,
+move to the 2013 Mac, or pay roughly ₹350 a month elsewhere.
+
+**[MIGRATE.md](MIGRATE.md)** is the move to the Mac, written out and ready.
+It has one thing in it you should read before then rather than on the day:
+that Mac has to run Ubuntu, because PyTorch stopped building for Intel macOS
+three years ago. Read it at month four and do the dress rehearsal it
+describes; the switch is then an afternoon rather than a bad night.
 
 ---
 
@@ -335,10 +340,15 @@ certificate, and is the only thing the outside world can reach.
 
 ```bash
 cd ~/Rad-Intel
-sudo cp deploy/radintel.service /etc/systemd/system/
+sed -e "s|__USER__|$USER|g" -e "s|__HOME__|$HOME/Rad-Intel|g" \
+  deploy/radintel.service | sudo tee /etc/systemd/system/radintel.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now radintel
 ```
+
+> The `sed` fills in your username and folder. The same file therefore works
+> unchanged on any other Linux machine you move to later — see
+> **[MIGRATE.md](MIGRATE.md)**.
 
 Give it two minutes — the first start loads the model — then:
 
