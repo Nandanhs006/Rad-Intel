@@ -65,14 +65,30 @@ class _Catcher(http.server.BaseHTTPRequestHandler):
     state: str = ""
     error: str | None = None
 
-    def do_GET(self):  # noqa: N802
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        if query.get("state", [""])[0] != _Catcher.state:
-            _Catcher.error = "The reply did not match the request. Nothing was saved."
+    @classmethod
+    def _record_callback(cls, path: str) -> bool:
+        """Record Google's redirect; return False for unrelated browser requests."""
+        parsed = urllib.parse.urlparse(path)
+        # A browser commonly asks for /favicon.ico immediately after Google
+        # returns to /. It is not another OAuth response and must not replace
+        # the successful callback with a missing-state error.
+        if parsed.path != "/":
+            return False
+
+        query = urllib.parse.parse_qs(parsed.query)
+        if query.get("state", [""])[0] != cls.state:
+            cls.error = "The reply did not match the request. Nothing was saved."
         elif "error" in query:
-            _Catcher.error = query["error"][0]
+            cls.error = query["error"][0]
         else:
-            _Catcher.code = query.get("code", [None])[0]
+            cls.code = query.get("code", [None])[0]
+        return True
+
+    def do_GET(self):  # noqa: N802
+        if not _Catcher._record_callback(self.path):
+            self.send_response(204)
+            self.end_headers()
+            return
 
         done = _Catcher.code is not None
         body = (
