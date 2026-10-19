@@ -97,6 +97,24 @@ def test_the_connection_asks_for_one_narrow_permission():
         assert "drive.readonly" not in text
 
 
+def test_drive_oauth_callback_ignores_the_browser_favicon_request():
+    """
+    Google returns the code at /, then browsers often immediately request a
+    favicon. The second request is not an OAuth reply and must not turn a
+    successful connection into a state-mismatch failure.
+    """
+    import scripts.connect_drive as connect
+
+    connect._Catcher.code = None
+    connect._Catcher.error = None
+    connect._Catcher.state = "expected-state"
+    assert connect._Catcher._record_callback(
+        "/?state=expected-state&code=issued-code") is True
+    assert connect._Catcher._record_callback("/favicon.ico") is False
+    assert connect._Catcher.code == "issued-code"
+    assert connect._Catcher.error is None
+
+
 def test_nothing_is_attempted_when_drive_is_not_set_up(monkeypatch):
     for name in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
                  "GOOGLE_DRIVE_REFRESH_TOKEN"):

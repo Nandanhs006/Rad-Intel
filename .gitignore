@@ -70,3 +70,12 @@ Rad-Intel paper/*.out
 
 # Clinician feedback store (reviewed images and export manifests)
 feedback_store/
+
+# Which checkpoint this particular server is told to serve. Deployment
+# state, like .env -- committing it means every machine inherits whatever
+# was last activated on somebody's laptop, pointing at a file that is not
+# there.
+weights/active_models.json
+weights/released_models.json
+DEPLOY.md
+MIGRATE.md

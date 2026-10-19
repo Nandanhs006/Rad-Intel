@@ -63,14 +63,19 @@ describes; the switch is then an afternoon rather than a bad night.
 |---|---|
 | Resource group | **Create new** → `rad-intel` |
 | Virtual machine name | `radintel` |
-| Region | **(Asia Pacific) Central India** |
+| Region | **any India region** — Central India, South India, whichever it offers |
 | Image | **Ubuntu Server 24.04 LTS - x64 Gen2** |
 | Size | **See below** |
 | Authentication type | **SSH public key** |
 | Username | `azureuser` |
 | SSH public key source | **Generate new key pair** |
+| Key pair name | `radintel_key` |
 | Public inbound ports | **Allow selected ports** |
 | Select inbound ports | **SSH (22)**, **HTTP (80)**, **HTTPS (443)** |
+
+> **Whichever region you pick is fine** — but remember which, because it
+> becomes part of your web address. Do not assume it is Central India just
+> because this guide says so.
 
 For **Size**, click *See all sizes*, search `B1ms`, and pick
 **B1ms — 1 vcpu, 2 GiB memory**. It is not in the short list by default.
@@ -79,49 +84,96 @@ For **Size**, click *See all sizes*, search `B1ms`, and pick
    default is Premium and costs about three times as much for no benefit
    here.
 
-5. **Review + create** → **Create**. It offers to download a private key
-   file — **download it and keep it.** It is the only way into the machine
-   and it is not offered twice.
+5. **Review + create** → **Create**. A box appears offering a private key
+   file — **Download private key and create resource.**
+
+   On a Mac it lands in **`~/Downloads/radintel_key.pem`**. It is the only
+   way into the machine and it is **never offered again**. If you lose it you
+   delete the VM and start this step over.
 
 **How to tell it worked:** the VM page shows *Running* after a minute or two.
 
 ---
 
-## Step 2 — Give it a name and let yourself in
+## Step 2 — Give it a name, and set up one-word access
 
-**The name.** On the VM's **Overview** page, next to *DNS name*, click
-**Configure** → under *DNS name label* type something like `radintel-mce` →
-**Save**.
+### The address
 
-Your address is now:
+On the VM's **Overview** page, find **DNS name** → click **Configure** →
+under *DNS name label* type `radintel-mce` → **Save**.
+
+Go back to **Overview**. There is now a full address next to *DNS name*.
+**Copy it from the page — do not type it from memory.** It looks like:
 
 ```
-radintel-mce.centralindia.cloudapp.azure.com
+radintel-mce.indiasouthcentral.cloudapp.azure.com
 ```
 
-That is the real, permanent, public address of your site. Write it down.
+but the middle part is whatever region you actually chose, and getting it
+wrong is the commonest way to lose twenty minutes here.
 
-**Letting yourself in.** On your own machine, in the folder where the key
-downloaded:
+Check it resolves, on **your own machine**:
 
 ```bash
-chmod 600 radintel_key.pem
-ssh -i radintel_key.pem azureuser@radintel-mce.centralindia.cloudapp.azure.com
+ping -c 2 PASTE-YOUR-ADDRESS-HERE
 ```
 
-Say `yes` when it asks about the fingerprint.
+Replies mean the name is right. *"cannot resolve"* means it is not — go back
+and copy it again.
+
+### One-word access
+
+Rather than retyping a key path and a long hostname every time, tell SSH
+about the machine once. On **your own machine**:
+
+```bash
+chmod 600 ~/Downloads/radintel_key.pem
+```
+
+```bash
+cat >> ~/.ssh/config <<'END'
+
+Host radintel
+  HostName PASTE-YOUR-ADDRESS-HERE
+  User azureuser
+  IdentityFile ~/Downloads/radintel_key.pem
+  ServerAliveInterval 60
+END
+```
+
+Replace `PASTE-YOUR-ADDRESS-HERE` with the address you copied —
+`nano ~/.ssh/config` if you need to edit it afterwards.
+
+Now:
+
+```bash
+ssh radintel
+```
+
+Say `yes` at the fingerprint prompt. You are on the server.
+
+> **If it says `Permission denied (publickey)`** the key file is not where
+> SSH is looking. Check it is really there:
+> ```bash
+> ls -l ~/Downloads/radintel_key.pem
+> ```
+> *No such file or directory* means it downloaded somewhere else — find it
+> with `ls ~/Downloads/*.pem` and put that path in `~/.ssh/config`.
+
+> **`ServerAliveInterval 60`** stops the connection dropping while a long
+> install runs. Worth having.
 
 > Every command from here until Step 7 runs **on the server**, inside that
-> SSH session. If you get disconnected, run the `ssh` line again.
+> SSH session. Disconnected? Just `ssh radintel` again.
 
 ---
 
 ## Step 3 — Set the server up
 
-Paste these one block at a time.
+On the server. Paste these one block at a time.
 
 **The basics, and some swap.** 2 GB is enough but not generous, and swap
-means a brief spike slows things down instead of killing them:
+means a brief spike slows things down instead of killing the process:
 
 ```bash
 sudo apt update && sudo apt -y upgrade
@@ -138,15 +190,15 @@ free -h
 
 ```bash
 cd ~
-git clone https://github.com/YOUR_USERNAME/Rad-Intel.git
+git clone https://github.com/Nandanhs006/Rad-Intel.git
 cd Rad-Intel
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-deploy.txt
 ```
 
-That takes fifteen to twenty-five minutes on this machine and downloads about
-a gigabyte. It installs the **CPU** build of PyTorch, which is the right one
-here and several gigabytes smaller than the default.
+That takes fifteen to twenty-five minutes and downloads about a gigabyte. It
+installs the **CPU** build of PyTorch, which is the right one here and several
+gigabytes smaller than the default.
 
 **How to tell it worked:**
 
@@ -156,17 +208,44 @@ here and several gigabytes smaller than the default.
 
 ---
 
-## Step 3b — Put the model file on it
+## Step 3b — Send the model files
 
-The model is not in git — GitHub refuses files that big. Send it from **your
-own machine**, in a second terminal window:
+**Send all five.** The model files are not in git — GitHub refuses files that
+big — and **the Analyse tab only offers models whose file is actually on the
+server.** Send one and your site offers one model; send five and it offers
+the five your About page describes.
+
+| File | Size | What it is |
+|---|---|---|
+| `best_hybrid_model.pt` | 136 MB | **the default** — required |
+| `best_hybrid_no_cbam_model.pt` | 136 MB | the ablation |
+| `best_swin_t_model.pt` | 105 MB | Swin-T baseline |
+| `best_resnet50_model.pt` | 90 MB | ResNet50 baseline |
+| `best_densenet121_model.pt` | 27 MB | DenseNet121 baseline |
+
+**494 MB in total** — though `best_densenet121_model.pt` is small enough to
+live in the repository, so it arrives with the clone and only about 467 MB
+actually travels. Sending all five anyway is simplest; the one already there
+is just overwritten with itself.
+
+On **your own machine**, in a second terminal window:
 
 ```bash
-scp -i radintel_key.pem weights/best_hybrid_model.pt \
-  azureuser@radintel-mce.centralindia.cloudapp.azure.com:~/Rad-Intel/weights/
+cd ~/Documents/GitHub/Rad-Intel
+scp weights/*.pt radintel:~/Rad-Intel/weights/
 ```
 
-136 MB, so give it a few minutes.
+That is the whole command — the `radintel` shortcut from Step 2 carries the
+key and the address. Expect **twenty minutes to an hour** depending on your
+upload speed; it shows a progress bar per file.
+
+> **In a hurry, or on a slow connection?** Send the default alone first and
+> the site works:
+> ```bash
+> scp weights/best_hybrid_model.pt radintel:~/Rad-Intel/weights/
+> ```
+> Send the rest whenever. They appear in the chooser after a restart:
+> `sudo systemctl restart radintel`.
 
 **How to tell it worked**, back on the server:
 
@@ -174,11 +253,11 @@ scp -i radintel_key.pem weights/best_hybrid_model.pt \
 ls -lh ~/Rad-Intel/weights/
 ```
 
-You want `best_hybrid_model.pt` at about **136M**.
+Five files, sizes matching the table above.
 
-> You can send the other four `.pt` files the same way and the Analyse tab
-> will offer those models too. They cost disk, not memory — only one model is
-> ever held at a time. Start with the one; add them later if you want.
+> **Having all five costs disk, not memory.** A model is loaded only when
+> somebody picks it, and the previous choice is dropped to make room — the
+> server sits at about 870 MB however many files are there.
 
 ---
 
@@ -376,11 +455,16 @@ sudo cp ~/Rad-Intel/deploy/Caddyfile /etc/caddy/Caddyfile
 sudo nano /etc/caddy/Caddyfile
 ```
 
-Change the **first line** to your address from Step 2, keeping the `{`:
+Change the **first line** to **your own address from Step 2** — the one you
+copied from the portal — keeping the `{` at the end:
 
 ```
 radintel-mce.centralindia.cloudapp.azure.com {
 ```
+
+> It must match exactly, region and all. Caddy asks Let's Encrypt for a
+> certificate for whatever name is on that line, and a name that is not
+> really yours is refused.
 
 Then:
 
@@ -395,7 +479,7 @@ is nothing to buy and nothing to remember.
 **How to tell it worked:** on your own machine, open
 
 ```
-https://radintel-mce.centralindia.cloudapp.azure.com
+https://YOUR-ADDRESS-FROM-STEP-2
 ```
 
 A padlock and the Rad-Intel page. If the browser complains about the
@@ -652,8 +736,7 @@ anything is always the one your paper describes.
   Then, from **your own machine**, pull it down:
 
   ```bash
-  scp -i radintel_key.pem \
-    azureuser@YOUR-NAME.centralindia.cloudapp.azure.com:~/radintel-backup-*.tar.gz .
+  scp radintel:~/radintel-backup-*.tar.gz .
   ```
 
   That file plus the Drive folder is the whole study. With both, month five is

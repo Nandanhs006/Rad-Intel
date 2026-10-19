@@ -327,7 +327,7 @@ class ModelManager:
             model = create_model(
                 model_name=architecture,  # type: ignore
                 num_classes=settings.NUM_CLASSES,
-                pretrained=True,
+                pretrained=False,
                 weights_path=weights_to_load,
                 device=self.device,
             )

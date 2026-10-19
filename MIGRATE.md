@@ -128,9 +128,10 @@ copied.
 From your own machine:
 
 ```bash
-scp -i radintel_key.pem \
-  azureuser@YOUR-NAME.centralindia.cloudapp.azure.com:~/radintel-final.tar.gz .
+scp radintel:~/radintel-final.tar.gz .
 ```
+
+(`radintel` is the SSH shortcut from DEPLOY.md Step 2.)
 
 ### 2. Set the Mac up
 
@@ -155,7 +156,14 @@ it run.
 
 ### 3. Put the data back
 
-Copy `radintel-final.tar.gz` across, then:
+From **your own machine**, send the backup across (the Mac's address is the
+one you found after installing Ubuntu):
+
+```bash
+scp radintel-final.tar.gz yourusername@192.168.1.xx:~/
+```
+
+Then **on the Mac**:
 
 ```bash
 cd ~/Rad-Intel
@@ -166,11 +174,16 @@ ls -la rad_intel.db .radintel_key .env
 All three must be there. `.radintel_key` especially — without the exact same
 key, every stored phone number becomes unreadable and everyone is signed out.
 
-**The model file:**
+**The model files — all of them you were serving.** From your own machine:
 
 ```bash
-scp weights/best_hybrid_model.pt yourusername@192.168.1.xx:~/Rad-Intel/weights/
+cd ~/Documents/GitHub/Rad-Intel
+scp weights/*.pt yourusername@192.168.1.xx:~/Rad-Intel/weights/
 ```
+
+494 MB, but over your own network rather than the internet, so it is quick.
+Send only `best_hybrid_model.pt` if you were only offering the one — whatever
+is not there is not offered.
 
 **The radiographs come back by themselves.** You do not need to copy
 `feedback_store/`. Every reviewed radiograph is in your Google Drive, and the
@@ -229,6 +242,20 @@ the address beside that sign-in.
 - **Your phone's own public address** → set `RAD_INTEL_TRUSTED_PROXY=1` in
   `.env` and `sudo systemctl restart radintel`.
 - **`127.0.0.1`** → leave it empty. Correct as it stands.
+
+### 6b. Does it actually have everything?
+
+Before you tell anybody the new address:
+
+```bash
+cd ~/Rad-Intel
+ls -lh weights/*.pt          # the models you expect, right sizes
+ls -la rad_intel.db .env .radintel_key
+.venv/bin/python scripts/preflight.py
+```
+
+Then sign in as yourself and check the **Analyse** tab's model list shows the
+same models it did on Azure. If one is missing, its file did not arrive.
 
 ### 7. Check, and only then let Azure go
 
