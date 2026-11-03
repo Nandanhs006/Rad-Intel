@@ -14,6 +14,8 @@ it, which is where the decisions are:
   see what this app itself made.
 """
 
+import base64
+import json
 import re
 
 import httpx
@@ -117,14 +119,26 @@ def test_drive_oauth_callback_ignores_the_browser_favicon_request():
 
 def test_nothing_is_attempted_when_drive_is_not_set_up(monkeypatch):
     for name in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
-                 "GOOGLE_DRIVE_REFRESH_TOKEN"):
+                 "GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64",
+                 "GOOGLE_DRIVE_FOLDER_ID"):
         monkeypatch.delenv(name, raising=False)
     assert drive.configured() is False
     status = drive.DriveStore().check()
     assert status["configured"] is False
     assert "disk" in status["detail"]
-    with pytest.raises(drive.DriveError, match="connect_drive"):
+    with pytest.raises(drive.DriveError, match="service account"):
         drive.DriveStore()._access_token()
+
+
+def test_a_shared_folder_service_account_is_a_complete_connection(monkeypatch):
+    """A key is useless without the exact Drive folder it was shared on."""
+    info = {"client_email": "backup@example.iam.gserviceaccount.com",
+            "private_key": "not-a-real-key"}
+    encoded = base64.b64encode(json.dumps(info).encode("utf-8")).decode("ascii")
+    monkeypatch.setenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64", encoded)
+    monkeypatch.setenv("GOOGLE_DRIVE_FOLDER_ID", "folder-123")
+    assert drive.configured() is True
+    assert drive._service_account_info()["client_email"] == info["client_email"]
 
 
 def test_a_revoked_credential_says_what_to_do(monkeypatch):

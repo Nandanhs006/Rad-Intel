@@ -319,9 +319,8 @@ GEMINI_API_KEY=<copy from your own machine's .env>
 **Google Drive** — Step 4b fills these in.
 
 ```
-GOOGLE_DRIVE_CLIENT_ID=
-GOOGLE_DRIVE_CLIENT_SECRET=
-GOOGLE_DRIVE_REFRESH_TOKEN=
+GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64=
+GOOGLE_DRIVE_FOLDER_ID=
 ```
 
 **Leave these empty.** They are for development, and on a machine the public
@@ -356,56 +355,49 @@ Do it now, not in month four.
 So each one is also copied into **your** Google Drive, and fetched back from
 there if the server ever comes up with an empty disk.
 
-### What it can see
+### The permanent free setup
 
-One permission: `drive.file` — access to files the app created itself.
+This uses a Google **service account**, not a user OAuth connection. A service
+account key does not carry the seven-day Testing expiry that a user refresh
+token does. The service account can access only the private folder you share
+with its email address.
 
-That is not a promise to behave. Google's API **will not return** anything
-else. Your documents, your photos, the `.pt` checkpoints you keep in the same
-Drive: this connection cannot read them, cannot list them, cannot tell they
-exist. It makes one folder, *Rad-Intel reviewed radiographs*, and that folder
-is the entire world it has.
-
-### Setting it up, once
-
-1. **console.cloud.google.com** → new project, any name.
-2. **APIs & Services → Library** → search *Google Drive API* → **Enable**.
-3. **APIs & Services → OAuth consent screen**:
-   - User type **External**
-   - App name, your email, your email again → **Save**
-   - **Publish app** → Confirm.
-
-   > **Publishing matters.** An app left in *Testing* has its token expired by
-   > Google after **seven days**, so uploads start failing a week after you
-   > deploy. `drive.file` is not a sensitive scope, so publishing needs no
-   > review and no verification — it is one button.
-4. **Credentials → Create credentials → OAuth client ID → Desktop app.**
-   Copy the client ID and client secret.
-5. This one runs on **your own machine**, not the server — it opens a
-   browser window, and the server has no browser. Clone the project locally
-   if you have not already, then:
+1. In Google Cloud, enable **Google Drive API**.
+2. Go to **IAM & Admin → Service Accounts → Create service account**. Give it
+   any name, give it **no IAM role**, and finish.
+3. Open that service account, use **Keys → Add key → Create new key → JSON**,
+   and download the key. Keep it private; it is a password.
+4. In your Google Drive, create a private folder named *Rad-Intel reviewed
+   radiographs*. Share only that folder with the JSON file's `client_email`
+   value as **Editor**. Do not make it link-accessible.
+5. Copy the folder id from the text after `/folders/` in the folder URL.
+6. On your own computer, encode the downloaded JSON file into one line:
 
 ```bash
-.venv/bin/python scripts/connect_drive.py --client-id YOUR_ID --client-secret YOUR_SECRET
+base64 < /path/to/service-account.json | tr -d '\n'
 ```
 
-A browser opens on that machine. Sign in as the account whose Drive should
-hold the radiographs, allow the one permission, and it prints three lines.
-It prints three lines. Put them into the **server's** `.env`, as in Step 4,
-then restart it:
+7. Put that output and the folder id into the server's `.env`:
+
+```ini
+GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64=<the one-line Base64 output>
+GOOGLE_DRIVE_FOLDER_ID=<the folder id>
+```
+
+8. Restart the service:
 
 ```bash
 sudo systemctl restart radintel
 ```
 
-**How to tell it worked:** the console gets a card, *Where reviewed radiographs
-are kept*, saying they are copied to your Drive, with a link to the folder.
+**How to tell it worked:** run `.venv/bin/python scripts/preflight.py`. It
+reports the Drive backup as OK, and the console card links to the shared folder.
 
 **If you connect it after people have already reviewed cases:** that card
 offers **Copy what is missing**. Press it once.
 
-**To disconnect:** myaccount.google.com/permissions. The files stay; they are
-yours.
+**To disconnect:** remove the service account from the folder's Share dialog,
+then delete its JSON key in Google Cloud. The files remain in your Drive.
 
 ---
 
