@@ -16,24 +16,20 @@ written down again. Drive is the record, the disk is the cache.
 
 What this can and cannot see
 ----------------------------
-It holds one scope, `drive.file`, which Google defines as per-file access to
-files the app itself created. Not "files it promises only to touch" -- the
-API will not return anything else, so the same Drive can hold the
-administrator's own documents, the trained checkpoints, everything, and this
-can neither read nor list any of it. It makes one folder, puts radiographs in
-it, and that folder is the entire world it has.
+The preferred connection is a Google service account shared on one private
+folder in the administrator's Drive. It has no OAuth consent flow and no
+seven-day testing-token expiry. The service account can access only folders
+or files explicitly shared with its email address; this application requires
+one folder id and writes reviewed radiographs only there.
 
-It also means the files belong to the administrator's own account rather than
-to a service account, which is what "accessible forever and from wherever"
-actually requires: they are in a Drive a person owns and can open in a
-browser, not in storage attached to a credential that stops existing when the
-project does.
-
-Setting it up is `scripts/connect_drive.py`, once, and three environment
-variables after that.
+The older OAuth connection remains supported for an existing deployment. It
+holds `drive.file`, Google's per-file access to files the app created. A
+service account is preferred because it has no user refresh token to expire.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -67,10 +63,39 @@ def _env(name: str) -> str:
     return os.environ.get(name, "").strip()
 
 
-def configured() -> bool:
+def _service_account_configured() -> bool:
+    """The key and the one folder it may use must be supplied together."""
+    return bool(_env("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64")
+                and _env("GOOGLE_DRIVE_FOLDER_ID"))
+
+
+def _oauth_configured() -> bool:
+    """Legacy user-consent connection, retained for a gentle migration."""
     return bool(_env("GOOGLE_DRIVE_CLIENT_ID")
                 and _env("GOOGLE_DRIVE_CLIENT_SECRET")
                 and _env("GOOGLE_DRIVE_REFRESH_TOKEN"))
+
+
+def configured() -> bool:
+    return _service_account_configured() or _oauth_configured()
+
+
+def _service_account_info() -> dict:
+    """Decode the one-line environment value without writing a key to disk."""
+    try:
+        raw = base64.b64decode(_env("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64"), validate=True)
+        info = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DriveError(
+            "The Google Drive service-account value is not valid Base64 JSON. "
+            "Create it from the downloaded JSON key again."
+        ) from exc
+    if not isinstance(info, dict) or not info.get("client_email") or not info.get("private_key"):
+        raise DriveError(
+            "The Google Drive service-account key is incomplete. Download a new JSON key "
+            "from Google Cloud and encode that file again."
+        )
+    return info
 
 
 class DriveStore:
@@ -100,10 +125,33 @@ class DriveStore:
 
         if not configured():
             raise DriveError(
-                "Google Drive is not set up on this server. Run "
-                "scripts/connect_drive.py once and put the three values it prints "
-                "into the environment."
+                "Google Drive is not set up. Share one private Drive folder with the "
+                "Rad-Intel service account, then set its Base64 JSON key and folder id."
             )
+
+        if _service_account_configured():
+            try:
+                from google.auth.transport.requests import Request
+                from google.oauth2 import service_account
+
+                credentials = service_account.Credentials.from_service_account_info(
+                    _service_account_info(), scopes=[SCOPE])
+                credentials.refresh(Request())
+                token = credentials.token
+                expiry = credentials.expiry.timestamp() if credentials.expiry else time.time() + 3600
+            except DriveError:
+                raise
+            except Exception as exc:
+                raise DriveError(
+                    "Could not authenticate the Google Drive service account. Check that "
+                    "the JSON key is current and that this server can reach Google."
+                ) from exc
+            if not token:
+                raise DriveError("Google did not return an access token for the Drive service account.")
+            with self._lock:
+                self._token = token
+                self._expires_at = expiry
+            return token
 
         try:
             response = httpx.post(TOKEN_URL, timeout=TIMEOUT, data={
@@ -142,8 +190,8 @@ class DriveStore:
         """
         The folder radiographs go in, made if it is not there yet.
 
-        A fixed id can be pinned with GOOGLE_DRIVE_FOLDER_ID, which is what to
-        do when the folder already exists -- after restoring a server, say.
+        A fixed id is required for the service-account connection: the
+        administrator creates and shares that exact folder deliberately.
         Otherwise it is looked up by name and created once. The lookup only
         ever sees folders this app made, so it cannot adopt one of the
         administrator's own.
@@ -235,9 +283,8 @@ class DriveStore:
             return {"configured": False,
                     "detail": ("If this disk is wiped — which most hosts do on every "
                                "redeploy — they are gone, and a radiograph somebody "
-                               "uploaded cannot be made again. Run "
-                               "scripts/connect_drive.py to copy them to your Drive "
-                               "as well; see Step 4b in DEPLOY.md.")}
+                               "uploaded cannot be made again. Configure the Drive "
+                               "service-account backup described in Step 4b of DEPLOY.md.")}
         try:
             folder = self.folder_id()
         except DriveError as exc:
@@ -248,9 +295,11 @@ class DriveStore:
             "folder_id": folder,
             "folder_name": FOLDER_NAME,
             "folder_url": f"https://drive.google.com/drive/folders/{folder}",
-            "detail": (f"Reviewed radiographs are copied to “{FOLDER_NAME}” in your "
-                       f"Drive. This connection can see that folder and nothing else "
-                       f"in your account."),
+            "detail": (
+                f"Reviewed radiographs are copied to “{FOLDER_NAME}” in your Drive. "
+                + ("The service account has access only to the folder shared with it."
+                   if _service_account_configured() else
+                   "This connection can see only files it created in your Drive.")),
         }
 
 
