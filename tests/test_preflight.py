@@ -114,8 +114,8 @@ def test_a_review_store_inside_the_code_directory_is_flagged(monkeypatch):
 
 def test_no_drive_is_a_decision_not_a_failure(monkeypatch):
     for name in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
-                 "GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64",
-                 "GOOGLE_DRIVE_FOLDER_ID"):
+                 "GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_APPS_SCRIPT_URL",
+                 "GOOGLE_DRIVE_APPS_SCRIPT_SECRET"):
         monkeypatch.delenv(name, raising=False)
     preflight.check_drive()
     assert _statuses()["Radiograph backup"] == preflight.CHECK

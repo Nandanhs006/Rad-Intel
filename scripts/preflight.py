@@ -241,7 +241,7 @@ def check_drive() -> None:
         say(OK, "Radiograph backup", f"Copied to “{status['folder_name']}” in Drive.")
     else:
         say(FIX, "Radiograph backup", status.get("detail", "Drive is not answering."),
-            "Reconnect with scripts/connect_drive.py.")
+            "Check the Apps Script URL and secret in .env, then restart Rad-Intel.")
 
 
 def check_reporting() -> None:

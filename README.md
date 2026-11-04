@@ -385,6 +385,7 @@ What to point it at, cheapest first:
 |---|---|---|
 | **A mounted disk** on the host (Railway/Render/Fly volume, or a VPS) | the obvious answer: no extra account, no API, ordinary file I/O | costs a little per GB; a free tier may not offer one |
 | **A Google Drive folder mounted with `rclone`** | free up to the Drive quota, and it is the one account already in use here | it is a network filesystem — slower, and a dropped mount looks like missing images, so training should not run against it directly |
+| **The Apps Script Drive backup in `DEPLOY.md`** | the deployed study: a second copy without an OAuth testing-token expiry | intended for reviewed images, not a live filesystem or a training directory |
 | **Object storage** (S3, R2, GCS) | the right answer at scale | needs an SDK and a rewrite of the store; not worth it for a study |
 
 A Drive mount works **without any code change**: `rclone mount` it, point
