@@ -316,11 +316,11 @@ SMTP_FROM=poorabng@gmail.com
 GEMINI_API_KEY=<copy from your own machine's .env>
 ```
 
-**Google Drive** — Step 4b fills these in.
+**Google Drive backup** — Step 4b fills these in.
 
 ```
-GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64=
-GOOGLE_DRIVE_FOLDER_ID=
+GOOGLE_DRIVE_APPS_SCRIPT_URL=
+GOOGLE_DRIVE_APPS_SCRIPT_SECRET=
 ```
 
 **Leave these empty.** They are for development, and on a machine the public
@@ -357,31 +357,43 @@ there if the server ever comes up with an empty disk.
 
 ### The permanent free setup
 
-This uses a Google **service account**, not a user OAuth connection. A service
-account key does not carry the seven-day Testing expiry that a user refresh
-token does. The service account can access only the private folder you share
-with its email address.
+This uses a small **Google Apps Script** web app that runs as the Google
+account which owns your Drive folder. It has no user OAuth refresh token, so
+Google's seven-day Testing expiry cannot interrupt a backup. The script is not
+publicly usable: every server request is signed with a random secret that is
+stored only in the script's private properties and this server's `.env`.
 
-1. In Google Cloud, enable **Google Drive API**.
-2. Go to **IAM & Admin → Service Accounts → Create service account**. Give it
-   any name, give it **no IAM role**, and finish.
-3. Open that service account, use **Keys → Add key → Create new key → JSON**,
-   and download the key. Keep it private; it is a password.
-4. In your Google Drive, create a private folder named *Rad-Intel reviewed
-   radiographs*. Share only that folder with the JSON file's `client_email`
-   value as **Editor**. Do not make it link-accessible.
-5. Copy the folder id from the text after `/folders/` in the folder URL.
-6. On your own computer, encode the downloaded JSON file into one line:
+1. In Google Drive, open the existing private *Rad-Intel reviewed
+   radiographs* folder and copy the folder id from the text after `/folders/`
+   in its URL. Do **not** make the folder link-accessible.
+2. Open [script.new](https://script.new/) while signed into the same Google
+   account. Name the standalone project **Rad-Intel Drive Backup**.
+3. Replace the editor contents with
+   `deploy/radintel_drive_gateway.gs` from this repository and save it.
+4. In **Project Settings → Script properties**, add exactly these two values:
+
+   | Property | Value |
+   | --- | --- |
+   | `RAD_INTEL_DRIVE_FOLDER_ID` | the private folder id from step 1 |
+   | `RAD_INTEL_GATEWAY_SECRET` | a fresh random secret from step 5 |
+
+5. On the server, create a secret without displaying it in a shell history:
 
 ```bash
-base64 < /path/to/service-account.json | tr -d '\n'
+openssl rand -hex 32
 ```
 
-7. Put that output and the folder id into the server's `.env`:
+   Copy that one value into the Script property above and keep it ready for
+   the server's `.env`. Never put it in source code or commit it.
+6. In Apps Script select **Deploy → New deployment → Web app**. Set
+   **Execute as** to **Me**, **Who has access** to **Anyone**, then authorise
+   the Drive permission Google asks for. Copy the deployed URL ending in
+   `/exec` (not the editor URL).
+7. Put the URL and same secret into the server's `.env`:
 
 ```ini
-GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64=<the one-line Base64 output>
-GOOGLE_DRIVE_FOLDER_ID=<the folder id>
+GOOGLE_DRIVE_APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
+GOOGLE_DRIVE_APPS_SCRIPT_SECRET=<the random secret from step 5>
 ```
 
 8. Restart the service:
@@ -391,13 +403,14 @@ sudo systemctl restart radintel
 ```
 
 **How to tell it worked:** run `.venv/bin/python scripts/preflight.py`. It
-reports the Drive backup as OK, and the console card links to the shared folder.
+reports the Drive backup as OK, and the console card links to the private folder.
 
 **If you connect it after people have already reviewed cases:** that card
 offers **Copy what is missing**. Press it once.
 
-**To disconnect:** remove the service account from the folder's Share dialog,
-then delete its JSON key in Google Cloud. The files remain in your Drive.
+**To disconnect:** delete the two `GOOGLE_DRIVE_APPS_SCRIPT_*` lines from
+`.env`, restart Rad-Intel, and remove the web-app deployment in Apps Script.
+The files remain in your Drive.
 
 ---
 
