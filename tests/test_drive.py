@@ -15,8 +15,6 @@ it, which is where the decisions are:
 """
 
 import base64
-import hashlib
-import hmac
 import json
 import re
 
@@ -121,53 +119,26 @@ def test_drive_oauth_callback_ignores_the_browser_favicon_request():
 
 def test_nothing_is_attempted_when_drive_is_not_set_up(monkeypatch):
     for name in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
-                 "GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_APPS_SCRIPT_URL",
-                 "GOOGLE_DRIVE_APPS_SCRIPT_SECRET"):
+                 "GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64",
+                 "GOOGLE_DRIVE_FOLDER_ID"):
         monkeypatch.delenv(name, raising=False)
     assert drive.configured() is False
     status = drive.DriveStore().check()
     assert status["configured"] is False
-    assert "server" in status["detail"]
-    with pytest.raises(drive.DriveError, match="not configured"):
+    assert "disk" in status["detail"]
+    with pytest.raises(drive.DriveError, match="service account"):
         drive.DriveStore()._access_token()
 
 
-def test_apps_script_requests_are_signed_and_use_google_redirects(monkeypatch, tmp_path):
-    """The permanent connector authenticates every request without OAuth."""
-    monkeypatch.setenv("GOOGLE_DRIVE_APPS_SCRIPT_URL", "https://script.google.test/exec")
-    monkeypatch.setenv("GOOGLE_DRIVE_APPS_SCRIPT_SECRET", "test-secret")
-    seen = []
-
-    def post(_url, **kwargs):
-        seen.append(kwargs)
-        request = kwargs["json"]
-        unsigned = {key: value for key, value in request.items() if key != "signature"}
-        canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"),
-                               ensure_ascii=True).encode("utf-8")
-        expected = base64.b64encode(hmac.new(
-            b"test-secret", canonical, hashlib.sha256).digest()).decode("ascii")
-        assert request["signature"] == expected
-        assert kwargs["follow_redirects"] is True
-        if request["action"] == "status":
-            return httpx.Response(200, json={"ok": True, "folder_id": "folder-123"})
-        if request["action"] == "upload":
-            return httpx.Response(200, json={"ok": True, "file_id": "file-123"})
-        if request["action"] == "download":
-            return httpx.Response(200, json={"ok": True, "found": True,
-                                              "data_b64": base64.b64encode(b"image").decode()})
-        return httpx.Response(200, json={"ok": True, "deleted": True})
-
-    monkeypatch.setattr(httpx, "post", post)
-    store = drive.DriveStore()
-    source = tmp_path / "x.jpg"
-    source.write_bytes(b"image")
-    assert store.folder_id() == "folder-123"
-    assert store.upload(source, source.name) == "file-123"
-    restored = tmp_path / "restored.jpg"
-    assert store.download("file-123", restored) is True
-    assert restored.read_bytes() == b"image"
-    assert store.delete("file-123") is True
-    assert [call["json"]["action"] for call in seen] == ["status", "upload", "download", "delete"]
+def test_a_shared_folder_service_account_is_a_complete_connection(monkeypatch):
+    """A key is useless without the exact Drive folder it was shared on."""
+    info = {"client_email": "backup@example.iam.gserviceaccount.com",
+            "private_key": "not-a-real-key"}
+    encoded = base64.b64encode(json.dumps(info).encode("utf-8")).decode("ascii")
+    monkeypatch.setenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64", encoded)
+    monkeypatch.setenv("GOOGLE_DRIVE_FOLDER_ID", "folder-123")
+    assert drive.configured() is True
+    assert drive._service_account_info()["client_email"] == info["client_email"]
 
 
 def test_a_revoked_credential_says_what_to_do(monkeypatch):
@@ -179,7 +150,10 @@ def test_a_revoked_credential_says_what_to_do(monkeypatch):
 
     with pytest.raises(drive.DriveError) as exc:
         drive.DriveStore()._access_token()
-    assert "Apps Script" in str(exc.value)
+    # The commonest cause by far, and invisible otherwise: an OAuth app left
+    # in Testing has its refresh token expired after seven days.
+    assert "Testing" in str(exc.value)
+    assert "seven days" in str(exc.value)
 
 
 # --- through the workspace --------------------------------------------------
